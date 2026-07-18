@@ -1,0 +1,41 @@
+# ---- data: never in git ----------------------------------------------------
+# raw captures (GBs, private)
+data/
+Data/
+# generated databases — rebuild with `elidedb` ingest or python/elidedb/migrate.py
+lake/
+store/
+store_oxford/
+stores/
+
+# ---- build artifacts -------------------------------------------------------
+build/
+*.o
+*.a
+*.so
+*.dylib
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+.eggs/
+
+# ---- run/scratch output ----------------------------------------------------
+bench_results.jsonl
+notebooks/.ipynb_checkpoints/
+.ipynb_checkpoints/
+*.log
+nohup.out
+
+# ---- OS / editor -----------------------------------------------------------
+.DS_Store
+.vscode/
+.idea/
+
+# ---- model caches (downloaded on first use) --------------------------------
+.cache/
+
+# ---- internal working notes (not part of the product) ----------------------
+CLAUDE.md
+docs/memory/
+docs/logs/

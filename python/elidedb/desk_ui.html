@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ElideDB Desk</title>
+<style>
+  :root {
+    --ground:#f4f6f7; --panel:#ffffff; --panel-2:#eceff1; --rail:#eef1f3;
+    --ink:#16202a; --muted:#5a6875; --faint:#8b98a5;
+    --line:#d5dbe0; --grid:#e3e8ec;
+    --accent:#177e6e; --accent-soft:#177e6e1c;
+    --sensor-bar:#7d8fa3; --code-bg:#eef1f3;
+    --shadow:0 10px 30px rgba(20,30,40,.12);
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --ground:#10151a; --panel:#161d24; --panel-2:#1c242d; --rail:#0d1216;
+    --ink:#e9eef3; --muted:#93a1ae; --faint:#6b7885;
+    --line:#26303a; --grid:#202a34;
+    --accent:#45b8a4; --accent-soft:#45b8a422;
+    --sensor-bar:#55677a; --code-bg:#0d1216;
+    --shadow:0 12px 34px rgba(0,0,0,.5);
+  }}
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; }
+  body {
+    display:flex; background:var(--ground); color:var(--ink);
+    font:13.5px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    overflow:hidden;
+  }
+  .mono,code,.tnum { font-family:ui-monospace,"SF Mono",Menlo,monospace; }
+  .tnum { font-variant-numeric:tabular-nums; }
+
+  /* ── left rail: the store list (the Atlas cluster rail) ─────────────── */
+  aside {
+    width:250px; flex:none; background:var(--rail);
+    border-right:1px solid var(--line);
+    display:flex; flex-direction:column;
+  }
+  .brand { padding:16px 16px 12px; border-bottom:1px solid var(--line); }
+  .brand b { font-family:ui-monospace,Menlo,monospace; letter-spacing:.08em; font-size:14px; }
+  .brand b::before { content:"▮"; color:var(--accent); margin-right:7px; }
+  .brand div { color:var(--faint); font-size:11px; margin-top:2px; }
+  .stores { flex:1; overflow-y:auto; padding:10px; }
+  .store-card {
+    padding:11px 12px; border-radius:9px; cursor:pointer;
+    border:1px solid transparent; margin-bottom:6px;
+  }
+  .store-card:hover { background:var(--panel); }
+  .store-card.on { background:var(--panel); border-color:var(--accent); }
+  .store-card .n { font-weight:650; font-size:13.5px; }
+  .store-card .m { color:var(--faint); font-size:11.5px; margin-top:2px; }
+  .railfoot { padding:10px 16px; color:var(--faint); font-size:11px; border-top:1px solid var(--line); }
+
+  /* ── main column ────────────────────────────────────────────────────── */
+  .main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .topbar {
+    display:flex; align-items:center; gap:8px; padding:10px 22px;
+    border-bottom:1px solid var(--line); background:var(--ground); flex-wrap:wrap;
+  }
+  .topbar h1 { font-size:16px; margin:0 14px 0 0; font-weight:700; }
+  .seg { display:flex; gap:2px; background:var(--panel-2); padding:3px; border-radius:8px; }
+  .seg button {
+    border:0; background:transparent; color:var(--muted); cursor:pointer;
+    font:600 12px/1 -apple-system,sans-serif; padding:6px 13px; border-radius:6px;
+  }
+  .seg button.on { background:var(--panel); color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.15); }
+  .seg button:focus-visible { outline:2px solid var(--accent); }
+  .content { flex:1; overflow-y:auto; padding:20px 22px; }
+  .view { display:none; } .view.on { display:block; }
+
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin-bottom:16px; }
+  .tile { background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:11px 13px 9px; }
+  .tile .k { font-size:10px; letter-spacing:.11em; text-transform:uppercase; color:var(--faint);
+             font-weight:600; font-family:ui-monospace,Menlo,monospace; margin-bottom:4px; }
+  .tile .v { font-size:20px; font-weight:700; }
+  .tile .v small { font-size:12px; color:var(--muted); font-weight:500; margin-left:2px; }
+  .tile.hero .v { color:var(--accent); }
+
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:11px;
+           padding:16px 18px; margin-bottom:16px; }
+  .panel h2 { margin:0 0 3px; font-size:14px; }
+  .panel .note { color:var(--muted); font-size:12px; margin:0 0 12px; max-width:76ch; }
+
+  table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  th { text-align:left; font-size:10px; letter-spacing:.1em; text-transform:uppercase;
+       color:var(--faint); padding:5px 12px 5px 0; border-bottom:1px solid var(--line);
+       font-family:ui-monospace,Menlo,monospace; }
+  td { padding:6px 12px 6px 0; border-bottom:1px solid var(--grid); color:var(--muted); }
+  td:first-child { color:var(--ink); }
+  td.r,th.r { text-align:right; }
+  tr:last-child td { border-bottom:0; }
+  .tablewrap { overflow-x:auto; }
+  .badge { display:inline-block; font-size:10px; padding:1px 8px; border-radius:999px;
+           border:1px solid var(--line); color:var(--muted);
+           font-family:ui-monospace,Menlo,monospace; }
+
+  /* timeline */
+  .tl-row { display:grid; grid-template-columns:220px 1fr 120px; gap:12px; align-items:center; padding:2.5px 0; }
+  .tl-row .id { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tl-row .meta { font-size:11px; color:var(--faint); text-align:right; }
+  .tl-track { position:relative; height:13px; background:var(--panel-2); border-radius:4px; }
+  .tl-bar { position:absolute; top:2px; bottom:2px; border-radius:3px; min-width:3px; }
+  .tl-bar.frame_index { background:var(--accent); }
+  .tl-bar.timeseries { background:var(--sensor-bar); }
+  .tl-bar.embeddings,.tl-bar.centroids { background:#9085e9; }
+  .tl-axis { display:flex; justify-content:space-between; color:var(--faint); font-size:10.5px;
+             margin-top:6px; padding-left:232px; padding-right:132px; }
+
+  /* map */
+  .mapgrid { display:grid; grid-template-columns:1fr 230px; gap:16px; }
+  .canvasbox { position:relative; }
+  canvas.viz { width:100%; display:block; border-radius:8px; background:var(--panel-2); cursor:crosshair; }
+  .legend { font-size:12px; }
+  .legend h3 { font-size:10px; letter-spacing:.11em; text-transform:uppercase; color:var(--faint);
+               margin:0 0 6px; font-family:ui-monospace,Menlo,monospace; }
+  .legend .li { display:flex; align-items:center; gap:7px; padding:2px 0; color:var(--muted); }
+  .legend .li i { width:9px; height:9px; border-radius:50%; flex:none; }
+  .legend .li.noise i { background:transparent; border:1.5px solid var(--faint); }
+  .legend .cnt { margin-left:auto; color:var(--faint); }
+  .hovercard { position:absolute; z-index:20; pointer-events:none; width:190px;
+               background:var(--panel); border:1px solid var(--line); border-radius:10px;
+               box-shadow:var(--shadow); overflow:hidden; display:none; }
+  .hovercard .ph { width:190px; height:120px; background:var(--panel-2);
+                   display:flex; align-items:center; justify-content:center; color:var(--faint); font-size:11px; }
+  .hovercard img { width:100%; display:block; }
+  .hovercard .m { padding:7px 10px; font-size:11px; color:var(--muted); }
+  .hovercard .m b { color:var(--ink); display:block; font-size:11.5px; }
+
+  /* query console */
+  .qmodes { margin-bottom:12px; }
+  textarea,input[type=text] {
+    width:100%; background:var(--code-bg); color:var(--ink);
+    border:1px solid var(--line); border-radius:8px; padding:10px 12px;
+    font:12.5px/1.5 ui-monospace,Menlo,monospace; resize:vertical;
+  }
+  textarea:focus,input:focus { outline:2px solid var(--accent); border-color:transparent; }
+  .runrow { display:flex; gap:10px; align-items:center; margin-top:10px; }
+  button.run {
+    background:var(--accent); color:#fff; border:0; border-radius:8px;
+    font:600 13px/1 -apple-system,sans-serif; padding:9px 20px; cursor:pointer;
+  }
+  button.run:hover { filter:brightness(1.08); }
+  .qstat { color:var(--faint); font-size:11.5px; }
+  .hitgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; margin-top:14px; }
+  .hit { background:var(--panel-2); border-radius:9px; overflow:hidden; border:1px solid var(--line); }
+  .hit img { width:100%; aspect-ratio:4/3; object-fit:cover; display:block; background:var(--grid); }
+  .hit .m { padding:7px 10px; font-size:11px; color:var(--muted); }
+  .hit .m b { color:var(--ink); }
+  .err { color:#e66767; font-size:12px; margin-top:10px; white-space:pre-wrap; }
+  .empty { color:var(--faint); padding:40px; text-align:center; }
+  .hit { cursor:pointer; position:relative; }
+  .hit .play {
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    aspect-ratio:4/3; opacity:0; transition:opacity .12s; pointer-events:none;
+  }
+  .hit:hover .play { opacity:1; }
+  .hit .play span {
+    width:44px; height:44px; border-radius:50%; background:rgba(10,14,18,.65);
+    color:#fff; display:flex; align-items:center; justify-content:center;
+    font-size:17px; padding-left:3px; backdrop-filter:blur(2px);
+  }
+
+  /* player modal */
+  .player-back {
+    position:fixed; inset:0; background:rgba(6,10,14,.72); z-index:100;
+    display:none; align-items:center; justify-content:center; backdrop-filter:blur(3px);
+  }
+  .player-back.on { display:flex; }
+  .player {
+    width:min(760px, 92vw); background:var(--panel); border:1px solid var(--line);
+    border-radius:14px; box-shadow:var(--shadow); overflow:hidden;
+  }
+  .player video { width:100%; display:block; background:#000; min-height:280px; }
+  .player .loading { height:340px; display:flex; align-items:center; justify-content:center;
+                     color:var(--faint); font-size:13px; gap:10px; }
+  .spin { width:16px; height:16px; border:2px solid var(--line); border-top-color:var(--accent);
+          border-radius:50%; animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation:none; } }
+  .player .bar { display:flex; align-items:center; gap:12px; padding:10px 14px; }
+  .player .bar b { font-size:13px; }
+  .player .bar .t { color:var(--faint); font-size:12px; }
+  .player .bar button {
+    margin-left:auto; background:var(--panel-2); border:1px solid var(--line);
+    color:var(--muted); border-radius:7px; padding:6px 12px; cursor:pointer; font-size:12px;
+  }
+  .player .bar button:hover { color:var(--ink); }
+</style>
+</head>
+<body>
+<aside>
+  <div class="brand"><b>ELIDEDB</b><div>desk — the best read is the read elided</div></div>
+  <div class="stores" id="stores"></div>
+  <div class="railfoot">every table is Parquet under a<br>transaction log · read-only view</div>
+</aside>
+
+<div class="main">
+  <div class="topbar">
+    <h1 id="store-title">—</h1>
+    <div class="seg" id="views" role="tablist">
+      <button data-v="overview" class="on">Overview</button>
+      <button data-v="timeline">Timeline</button>
+      <button data-v="map">Semantic map</button>
+      <button data-v="geo" id="geo-btn" style="display:none">Geo</button>
+      <button data-v="query">Query</button>
+    </div>
+    <span class="qstat tnum" id="store-sub" style="margin-left:auto"></span>
+  </div>
+  <div class="content">
+    <div class="view on" id="v-overview"></div>
+    <div class="view" id="v-timeline"></div>
+    <div class="view" id="v-map">
+      <div class="panel">
+        <h2>Semantic map</h2>
+        <p class="note">Each dot is one embedded window (UMAP layout, visualization only —
+          retrieval ranks in full embedding space). Hover any point: its frame is decoded
+          live through the byte-range path. <b>Click a point to play the clip</b> (with the
+          sensor's microphone track where the store has one).</p>
+        <div class="mapgrid">
+          <div class="canvasbox">
+            <canvas id="scatter" class="viz" height="470"></canvas>
+            <div class="hovercard" id="card"><div class="ph">decoding…</div><div class="m"></div></div>
+          </div>
+          <div class="legend" id="legend"></div>
+        </div>
+      </div>
+    </div>
+    <div class="view" id="v-geo">
+      <div class="panel"><h2>Geo trace</h2>
+        <p class="note" id="geo-note"></p>
+        <canvas id="route" class="viz" height="420" style="cursor:default"></canvas></div>
+    </div>
+    <div class="view" id="v-query">
+      <div class="panel">
+        <h2>Query console</h2>
+        <div class="seg qmodes" id="qmodes">
+          <button data-q="text" class="on">Semantic text</button>
+          <button data-q="sql">SQL</button>
+          <button data-q="window">Window</button>
+        </div>
+        <div id="q-text">
+          <input type="text" id="text-input" placeholder='describe a moment… e.g. "pedestrians crossing the street"'>
+        </div>
+        <div id="q-sql" style="display:none">
+          <textarea id="sql-input" rows="4">SELECT count(*) AS rows, min(ts) AS min_ts, max(ts) AS max_ts FROM gps</textarea>
+        </div>
+        <div id="q-window" style="display:none">
+          <input type="text" id="win-input" placeholder="t0,t1 as capture-relative seconds — e.g. 650,652">
+        </div>
+        <div class="runrow">
+          <button class="run" id="run">Run</button>
+          <span class="qstat" id="q-stat"></span>
+        </div>
+        <div id="q-out"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="player-back" id="player-back">
+  <div class="player">
+    <div id="player-media"><div class="loading"><div class="spin"></div>decoding + muxing clip…</div></div>
+    <div class="bar"><b id="player-title"></b><span class="t" id="player-time"></span>
+      <button id="player-pin">open in query console</button>
+      <button id="player-close">close</button></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const CAT = {
+  light:["#2a78d6","#1baf7a","#eda100","#008300","#4a3aa7","#e34948","#e87ba4","#eb6834"],
+  dark: ["#3987e5","#199e70","#c98500","#008300","#9085e9","#e66767","#d55181","#d95926"],
+  otherLight:"#9aa5b0", otherDark:"#5c6873",
+};
+const $ = id => document.getElementById(id);
+const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const mode = () => matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+const fmtB = b => b >= 1e9 ? (b/1e9).toFixed(2)+" GB" : b >= 1e6 ? (b/1e6).toFixed(1)+" MB" : (b/1e3).toFixed(0)+" KB";
+const fmtN = n => n >= 1e6 ? (n/1e6).toFixed(2)+" M" : n >= 1e3 ? (n/1e3).toFixed(1)+" k" : ""+n;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+let STORES = [], CUR = null, MAP = null, GEO = null, PIN = null;
+const rel = ns => ((ns - CUR.min_ts) / 1e9);
+
+async function j(url, opts) {
+  const r = await fetch(url, opts);
+  const d = await r.json().catch(() => ({error: r.statusText}));
+  if (!r.ok) throw new Error(d.error || r.statusText);
+  return d;
+}
+
+/* ── stores rail ── */
+async function loadStores() {
+  STORES = await j("/api/stores");
+  $("stores").innerHTML = STORES.map(s => `
+    <div class="store-card" data-k="${s.key}">
+      <div class="n">${esc(s.name)}</div>
+      <div class="m tnum">${s.tables.length} tables · ${fmtN(s.rows)} rows · ${fmtB(s.bytes + s.media_bytes)}</div>
+    </div>`).join("") || `<div class="empty">no stores under lake/</div>`;
+  document.querySelectorAll(".store-card").forEach(el =>
+    el.addEventListener("click", () => selectStore(el.dataset.k)));
+  if (STORES.length) selectStore(STORES[0].key);
+}
+
+async function selectStore(key) {
+  CUR = STORES.find(s => s.key === key);
+  MAP = GEO = PIN = null;
+  document.querySelectorAll(".store-card").forEach(el =>
+    el.classList.toggle("on", el.dataset.k === key));
+  $("store-title").textContent = CUR.name;
+  $("store-sub").textContent =
+    `${fmtB(CUR.bytes)} store · ${fmtB(CUR.media_bytes)} media referenced · span ${Math.round((CUR.max_ts - CUR.min_ts)/1e9)} s`;
+  renderOverview(); renderTimeline();
+  $("geo-btn").style.display = "none";
+  j(`/api/geo?store=${key}`).then(g => {
+    GEO = g;
+    if (g.points.length) { $("geo-btn").style.display = ""; }
+  }).catch(() => {});
+  const cur = document.querySelector("#views button.on").dataset.v;
+  if (cur === "map") loadMap();
+  if (cur === "geo") drawGeo();
+}
+
+/* ── overview ── */
+function renderOverview() {
+  const s = CUR;
+  const tiles = [
+    {k:"tables", v: s.tables.length},
+    {k:"rows", v: fmtN(s.rows)},
+    {k:"store size", v: fmtB(s.bytes), hero:true},
+    {k:"media referenced", v: fmtB(s.media_bytes)},
+    {k:"embedded windows", v: s.windows},
+    {k:"span", v: Math.round((s.max_ts - s.min_ts)/1e9) + " s"},
+  ];
+  let h = `<div class="tiles">` + tiles.map(t =>
+    `<div class="tile${t.hero?" hero":""}"><div class="k">${t.k}</div><div class="v tnum">${t.v}</div></div>`).join("") + `</div>`;
+  h += `<div class="panel"><h2>Tables</h2>
+    <p class="note">Each table is Parquet files + a transaction log. Version = number of commits;
+    reading any older version is free (time travel).</p>
+    <div class="tablewrap"><table><thead><tr>
+      <th>table</th><th>kind</th><th class="r">rows</th><th class="r">size</th>
+      <th class="r">files</th><th class="r">version</th><th>window</th></tr></thead><tbody>`;
+  for (const t of s.tables) {
+    h += `<tr><td class="mono">${esc(t.table)}</td>
+      <td><span class="badge">${t.kind}</span></td>
+      <td class="r tnum">${t.rows.toLocaleString()}</td>
+      <td class="r tnum">${fmtB(t.bytes)}</td>
+      <td class="r tnum">${t.files}</td><td class="r tnum">v${t.version}</td>
+      <td class="tnum">${t.table === "centroids" ? "—"
+        : `+${rel(t.min_ts).toFixed(1)} → +${rel(t.max_ts).toFixed(1)} s`}</td></tr>`;
+  }
+  h += `</tbody></table></div></div>`;
+  if (s.model) h += `<div class="panel"><h2>Semantic run</h2>
+    <p class="note">model <code>${esc(s.model)}</code> · ${s.windows} windows —
+    query it in the Query tab or via <code>store.search_text(...)</code>.</p></div>`;
+  $("v-overview").innerHTML = h;
+}
+
+/* ── timeline ── */
+function renderTimeline() {
+  const s = CUR, lo = s.min_ts, hi = s.max_ts || lo + 1;
+  let h = `<div class="panel"><h2>Stream timeline</h2>
+    <p class="note">Every table on the store's timeline. A query window outside a bar
+    never touches that table's files (log-level pruning).</p>`;
+  for (const t of s.tables) {
+    if (!t.rows || t.table === "centroids") continue;
+    const l = ((t.min_ts - lo) / (hi - lo)) * 100;
+    const w = Math.max(((t.max_ts - t.min_ts) / (hi - lo)) * 100, 0.35);
+    h += `<div class="tl-row"><div class="id mono">${esc(t.table)}</div>
+      <div class="tl-track"><div class="tl-bar ${t.kind}" style="left:${l.toFixed(2)}%;width:${w.toFixed(2)}%"></div></div>
+      <div class="meta tnum">${fmtN(t.rows)} · ${fmtB(t.bytes)}</div></div>`;
+  }
+  h += `<div class="tl-axis tnum"><span>+0 s</span><span>+${Math.round((hi-lo)/2e9)} s</span><span>+${Math.round((hi-lo)/1e9)} s</span></div></div>`;
+  $("v-timeline").innerHTML = h;
+}
+
+/* ── semantic map ── */
+async function loadMap() {
+  if (!MAP) {
+    $("legend").innerHTML = `<h3>clusters</h3><div class="li">computing layout…</div>`;
+    try { MAP = await j(`/api/map?store=${CUR.key}`); }
+    catch (e) { $("legend").innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  }
+  drawScatter();
+}
+
+function drawScatter() {
+  const canvas = $("scatter"), pts = MAP.points;
+  const pal = CAT[mode()], other = mode() === "dark" ? CAT.otherDark : CAT.otherLight;
+  const dpr = devicePixelRatio || 1, W = canvas.clientWidth, H = 470;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const ctx = canvas.getContext("2d"); ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+  if (!pts.length) {
+    ctx.fillStyle = cssVar("--faint"); ctx.font = "13px -apple-system";
+    ctx.fillText("no embeddings table in this store — run store.embed_windows()", 24, 40);
+    $("legend").innerHTML = ""; return;
+  }
+  const counts = {};
+  for (const p of pts) if (p.c >= 0) counts[p.c] = (counts[p.c] || 0) + 1;
+  const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const slot = new Map(ranked.map(([c], i) => [+c, i < 8 ? i : -2]));
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const pad = 24;
+  for (const p of pts) {
+    p.X = pad + ((p.x - x0) / (x1 - x0 || 1)) * (W - 2 * pad);
+    p.Y = H - pad - ((p.y - y0) / (y1 - y0 || 1)) * (H - 2 * pad);
+  }
+  ctx.strokeStyle = cssVar("--grid");
+  for (let g = 1; g < 4; g++) {
+    ctx.beginPath(); ctx.moveTo(W*g/4, 8); ctx.lineTo(W*g/4, H-8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(8, H*g/4); ctx.lineTo(W-8, H*g/4); ctx.stroke();
+  }
+  const r = pts.length > 400 ? 3.4 : 5;
+  for (const p of pts) {
+    ctx.beginPath(); ctx.arc(p.X, p.Y, r, 0, 7);
+    if (p.c < 0) { ctx.strokeStyle = cssVar("--faint"); ctx.lineWidth = 1.4; ctx.stroke(); }
+    else {
+      const s = slot.get(p.c);
+      ctx.fillStyle = s === -2 ? other : pal[s]; ctx.fill();
+      ctx.strokeStyle = cssVar("--panel-2"); ctx.lineWidth = 1; ctx.stroke();
+    }
+  }
+  let lh = `<h3>clusters</h3>`;
+  ranked.slice(0, 8).forEach(([c, n], i) =>
+    lh += `<div class="li"><i style="background:${pal[i]}"></i>cluster ${c}<span class="cnt tnum">${n}</span></div>`);
+  const otherN = ranked.slice(8).reduce((a, [, n]) => a + n, 0);
+  if (otherN) lh += `<div class="li"><i style="background:${other}"></i>${ranked.length - 8} small clusters<span class="cnt tnum">${otherN}</span></div>`;
+  const noise = pts.filter(p => p.c < 0).length;
+  if (noise) lh += `<div class="li noise"><i></i>noise<span class="cnt tnum">${noise}</span></div>`;
+  lh += `<h3 style="margin-top:14px">windows</h3><div class="li">total<span class="cnt tnum">${pts.length}</span></div>
+    <div class="li">previews<span class="cnt">decoded live</span></div>`;
+  $("legend").innerHTML = lh;
+}
+
+let hoverP = null, thumbTimer = null;
+$("scatter").addEventListener("pointermove", e => {
+  if (!MAP) return;
+  const rect = $("scatter").getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  let best = null, bd = 400;
+  for (const p of MAP.points) {
+    const d = (p.X - mx) ** 2 + (p.Y - my) ** 2;
+    if (d < bd) { bd = d; best = p; }
+  }
+  const card = $("card");
+  if (!best) { card.style.display = "none"; hoverP = null; return; }
+  if (best !== hoverP) {
+    hoverP = best;
+    card.querySelector(".m").innerHTML =
+      `<b>${esc(best.s)}</b>+${rel(best.t0).toFixed(1)} → +${rel(best.t1).toFixed(1)} s · cluster ${best.c}`;
+    card.querySelector(".ph") ? null : null;
+    let ph = card.querySelector(".ph"), img = card.querySelector("img");
+    if (img) img.remove();
+    if (!ph) { ph = document.createElement("div"); ph.className = "ph"; ph.textContent = "decoding…"; card.prepend(ph); }
+    clearTimeout(thumbTimer);
+    thumbTimer = setTimeout(() => {
+      const im = new Image();
+      im.onload = () => { if (hoverP === best) { card.querySelector(".ph")?.remove(); card.prepend(im); } };
+      im.src = `/api/thumb?store=${CUR.key}&stream=${encodeURIComponent(best.s)}&t=${best.t0}&w=380`;
+    }, 120);
+  }
+  card.style.left = Math.min(Math.max(best.X + 14, 0), $("scatter").clientWidth - 200) + "px";
+  card.style.top = Math.max(best.Y - 175, 4) + "px";
+  card.style.display = "block";
+});
+$("scatter").addEventListener("pointerleave", () => { $("card").style.display = "none"; hoverP = null; });
+$("scatter").addEventListener("click", () => {
+  if (!hoverP) return;
+  openPlayer(hoverP.s, hoverP.t0, hoverP.t1);  // a window IS a clip: play it
+});
+
+/* ── geo ── */
+function drawGeo() {
+  if (!GEO || !GEO.points.length) return;
+  const canvas = $("route"), R = GEO.points;
+  $("geo-note").textContent =
+    `table “${GEO.table}” · ${R.length} fixes (downsampled) — teal marks the span covered by frame-indexed video`;
+  const dpr = devicePixelRatio || 1, W = canvas.clientWidth, H = 420;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const ctx = canvas.getContext("2d"); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, W, H);
+  const las = R.map(p => p.la), los = R.map(p => p.lo);
+  const la0 = Math.min(...las), la1 = Math.max(...las), lo0 = Math.min(...los), lo1 = Math.max(...los);
+  const sc = Math.cos(((la0 + la1) / 2) * Math.PI / 180);
+  const k = Math.min((W - 48) / ((lo1 - lo0) * sc || 1), (H - 48) / ((la1 - la0) || 1));
+  const px = p => (W - (lo1 - lo0) * sc * k) / 2 + (p.lo - lo0) * sc * k;
+  const py = p => H - (H - (la1 - la0) * k) / 2 - (p.la - la0) * k;
+  const vids = CUR.tables.filter(t => t.kind === "frame_index");
+  const vlo = Math.min(...vids.map(t => t.min_ts), Infinity);
+  const vhi = Math.max(...vids.map(t => t.max_ts), -Infinity);
+  ctx.strokeStyle = cssVar("--sensor-bar"); ctx.lineWidth = 2; ctx.lineJoin = "round";
+  ctx.beginPath(); R.forEach((p, i) => i ? ctx.lineTo(px(p), py(p)) : ctx.moveTo(px(p), py(p))); ctx.stroke();
+  ctx.strokeStyle = cssVar("--accent"); ctx.lineWidth = 6; ctx.lineCap = "round";
+  ctx.beginPath(); let st = false;
+  for (const p of R) if (p.t >= vlo && p.t <= vhi) { st ? ctx.lineTo(px(p), py(p)) : ctx.moveTo(px(p), py(p)); st = true; }
+  ctx.stroke();
+  ctx.fillStyle = cssVar("--muted"); ctx.font = "11px ui-monospace,Menlo";
+  const s0 = R[0], s1 = R[R.length - 1];
+  ctx.beginPath(); ctx.arc(px(s0), py(s0), 4, 0, 7); ctx.fill(); ctx.fillText("start", px(s0) + 8, py(s0) + 4);
+  ctx.beginPath(); ctx.arc(px(s1), py(s1), 4, 0, 7); ctx.fill(); ctx.fillText("end", px(s1) + 8, py(s1) + 4);
+}
+
+/* ── clip player ── */
+function openPlayer(stream, t0, t1) {
+  PIN = {s: stream, t0, t1};
+  $("player-back").classList.add("on");
+  $("player-title").textContent = stream;
+  $("player-time").textContent =
+    `+${rel(t0).toFixed(2)} → +${rel(t1).toFixed(2)} s · ${((t1 - t0)/1e9).toFixed(1)} s clip`;
+  $("player-media").innerHTML =
+    `<div class="loading"><div class="spin"></div>decoding + muxing clip…</div>`;
+  const v = document.createElement("video");
+  v.controls = true; v.autoplay = true; v.loop = true; v.playsInline = true;
+  v.src = `/api/clip?store=${CUR.key}&stream=${encodeURIComponent(stream)}&t0=${t0}&t1=${t1}&w=720`;
+  v.addEventListener("loadeddata", () => {
+    $("player-media").innerHTML = ""; $("player-media").appendChild(v);
+  });
+  v.addEventListener("error", () => {
+    $("player-media").innerHTML =
+      `<div class="loading">could not build a clip for this window</div>`;
+  });
+}
+function closePlayer() {
+  $("player-back").classList.remove("on");
+  $("player-media").querySelector("video")?.pause();
+  $("player-media").innerHTML = "";
+}
+$("player-close").addEventListener("click", closePlayer);
+$("player-back").addEventListener("click", e => { if (e.target === $("player-back")) closePlayer(); });
+addEventListener("keydown", e => { if (e.key === "Escape") closePlayer(); });
+$("player-pin").addEventListener("click", () => {
+  if (!PIN) return;
+  closePlayer();
+  setQMode("window");
+  $("win-input").value = `${rel(PIN.t0).toFixed(2)},${rel(PIN.t1).toFixed(2)}`;
+  document.querySelector('#views button[data-v="query"]').click();
+});
+
+/* ── query console ── */
+function setQMode(m) {
+  document.querySelectorAll("#qmodes button").forEach(b => b.classList.toggle("on", b.dataset.q === m));
+  $("q-text").style.display = m === "text" ? "" : "none";
+  $("q-sql").style.display = m === "sql" ? "" : "none";
+  $("q-window").style.display = m === "window" ? "" : "none";
+}
+document.querySelectorAll("#qmodes button").forEach(b =>
+  b.addEventListener("click", () => setQMode(b.dataset.q)));
+
+$("run").addEventListener("click", runQuery);
+$("text-input").addEventListener("keydown", e => { if (e.key === "Enter") runQuery(); });
+$("win-input").addEventListener("keydown", e => { if (e.key === "Enter") runQuery(); });
+
+async function runQuery() {
+  const m = document.querySelector("#qmodes button.on").dataset.q;
+  const out = $("q-out"), stat = $("q-stat");
+  out.innerHTML = ""; stat.textContent = "running…";
+  try {
+    let body = {store: CUR.key};
+    if (m === "text") Object.assign(body, {type: "text", text: $("text-input").value, k: 8});
+    if (m === "sql") Object.assign(body, {type: "sql", sql: $("sql-input").value});
+    if (m === "window") {
+      const [a, b] = $("win-input").value.split(",").map(Number);
+      Object.assign(body, {type: "window",
+        t0: Math.round(CUR.min_ts + a * 1e9), t1: Math.round(CUR.min_ts + b * 1e9)});
+    }
+    const r = await j("/api/query", {method: "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+    if (m === "sql") {
+      stat.textContent = `${r.rows.length} rows · ${r.ms} ms`;
+      out.innerHTML = `<div class="tablewrap" style="margin-top:14px"><table><thead><tr>` +
+        r.columns.map(c => `<th>${esc(c)}</th>`).join("") + `</tr></thead><tbody>` +
+        r.rows.map(row => `<tr>` + row.map(v => `<td class="tnum">${esc(v ?? "∅")}</td>`).join("") + `</tr>`).join("") +
+        `</tbody></table></div>`;
+    } else if (m === "text" || body.type === "clip") {
+      stat.textContent = `scanned ${r.stats.scanned}/${r.stats.total} vectors · probed ${r.stats.clusters_probed}/${r.stats.clusters_total} clusters · ${r.ms} ms · click a hit to play`;
+      out.innerHTML = `<div class="hitgrid">` + r.hits.map(h => `
+        <div class="hit" data-s="${esc(h.stream)}" data-t0="${h.t0}" data-t1="${h.t1}">
+          <img loading="lazy" src="/api/thumb?store=${CUR.key}&stream=${encodeURIComponent(h.stream)}&t=${h.t0}&w=420" alt="">
+          <div class="play"><span>▶</span></div>
+          <div class="m"><b>${h.score.toFixed(3)}</b> · ${esc(h.stream)}<br>
+            <span class="tnum">+${rel(h.t0).toFixed(1)} → +${rel(h.t1).toFixed(1)} s</span></div>
+        </div>`).join("") + `</div>`;
+      out.querySelectorAll(".hit").forEach(el => el.addEventListener("click", () =>
+        openPlayer(el.dataset.s, +el.dataset.t0, +el.dataset.t1)));
+    } else if (m === "window") {
+      const s = r.stats;
+      stat.textContent = `${s.files} files · ${fmtB(s.bytes_touched)} of ${fmtB(s.corpus_bytes)} touched (${s.elided_pct}% elided) · ${r.ms} ms`;
+      let h = "";
+      for (const [name, t] of Object.entries(r.tables)) {
+        if (t.kind === "frames") {
+          const [wa, wb] = $("win-input").value.split(",").map(Number);
+          const wt0 = Math.round(CUR.min_ts + wa * 1e9), wt1 = Math.round(CUR.min_ts + wb * 1e9);
+          h += `<div style="margin-top:14px"><b class="mono">${esc(name)}</b>
+            <span class="qstat"> ${t.count} frames · ${t.streams.length} streams · click to play</span>
+            <div class="hitgrid" style="margin-top:8px">` + t.streams.map(sname => `
+              <div class="hit" data-s="${esc(sname)}" data-t0="${wt0}" data-t1="${wt1}">
+                <img loading="lazy" src="/api/thumb?store=${CUR.key}&stream=${encodeURIComponent(sname)}&t=${wt0}&w=420">
+                <div class="play"><span>▶</span></div>
+                <div class="m"><b>${esc(sname)}</b></div></div>`).join("") + `</div></div>`;
+        } else if (t.count) {
+          h += `<div style="margin-top:14px"><b class="mono">${esc(name)}</b>
+            <span class="qstat"> ${t.count.toLocaleString()} rows</span>
+            <div class="tablewrap"><table><thead><tr>` +
+            t.columns.slice(0, 8).map(c => `<th>${esc(c)}</th>`).join("") +
+            `</tr></thead><tbody>` + t.head.map(row =>
+              `<tr>` + row.slice(0, 8).map(v => `<td class="tnum">${esc(typeof v === "number" && !Number.isInteger(v) ? v.toFixed(3) : v)}</td>`).join("") + `</tr>`).join("") +
+            `</tbody></table></div></div>`;
+        }
+      }
+      out.innerHTML = h || `<div class="empty">window is empty</div>`;
+    }
+  } catch (e) {
+    stat.textContent = "";
+    out.innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }
+}
+
+/* ── view switching ── */
+document.querySelectorAll("#views button").forEach(b =>
+  b.addEventListener("click", () => {
+    document.querySelectorAll("#views button").forEach(x => x.classList.toggle("on", x === b));
+    document.querySelectorAll(".view").forEach(v => v.classList.remove("on"));
+    $("v-" + b.dataset.v).classList.add("on");
+    if (b.dataset.v === "map") loadMap();
+    if (b.dataset.v === "geo") drawGeo();
+  }));
+
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { drawScatter(); drawGeo(); });
+addEventListener("resize", () => { clearTimeout(window._rz); window._rz = setTimeout(() => { if (MAP) drawScatter(); drawGeo(); }, 150); });
+loadStores();
+</script>
+</body>
+</html>

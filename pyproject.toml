@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elidedb"
+version = "2.0.0"
+description = "Parquet-native, timestamp-first multimodal database — the best read is the read elided"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "pyarrow>=15",
+  "numpy",
+  "pandas",
+  "duckdb",
+  "pillow",
+]
+
+[project.optional-dependencies]
+# semantic search (local SigLIP on Apple Silicon) + clustering + map layout
+ml = ["mlx-embeddings", "scikit-learn", "hdbscan", "umap-learn"]
+
+[project.scripts]
+elidedb = "elidedb.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "python" }
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.setuptools.package-data]
+elidedb = ["desk_ui.html"]
