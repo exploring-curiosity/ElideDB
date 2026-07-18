@@ -1,0 +1,10 @@
+#!/bin/zsh
+# ElideDB Desk launcher: starts the local server (if not already running)
+# and opens the browser UI. The repo root is baked at build time.
+REPO="/Users/sudharshanramesh/Studies/MyProjects/StreetDex"
+cd "$REPO"
+if ! nc -z 127.0.0.1 8787 2>/dev/null; then
+  nohup /Users/sudharshanramesh/.pyenv/shims/python3 desk/desk.py --port 8787 >/tmp/elidedb_desk.log 2>&1 &
+  sleep 1
+fi
+open "http://localhost:8787"
