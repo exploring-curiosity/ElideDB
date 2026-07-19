@@ -74,6 +74,15 @@ def cmd_video(a):
           f"'{a.stream or a.file}' -> version {v}")
 
 
+def cmd_adopt(a):
+    db = Store.open(a.store)
+    for d in db.describe():
+        if d["kind"] == "frame_index":
+            r = db.adopt_media(d["table"])
+            print(f"{d['table']}: adopted {r['adopted']} media files "
+                  f"({r['bytes'] / 1e6:.1f} MB) into {a.store}/media/")
+
+
 def cmd_embed(a):
     db = Store.open(a.store)
     print(db.embed_windows(window_s=a.window_s,
@@ -170,6 +179,11 @@ def main():
                    help="file with one ns timestamp per frame; omitted = "
                         "container timestamps")
     p.set_defaults(f=cmd_video)
+
+    p = sub.add_parser("adopt", help="copy referenced media into the store "
+                                     "(makes it standalone)")
+    p.add_argument("store")
+    p.set_defaults(f=cmd_adopt)
 
     p = sub.add_parser("embed", help="embed video windows + cluster (local ML)")
     p.add_argument("store")

@@ -50,25 +50,63 @@ def store_summary(key: str):
     lo = min((d["min_ts"] for d in span_tabs), default=0)
     hi = max((d["max_ts"] for d in span_tabs), default=0)
     emb = next((d for d in desc if d["table"] == "embeddings"), None)
-    # source media referenced (not stored) by frame_index tables
-    media_bytes = 0
+    # The database size is the STORE DIRECTORY: managed media + parquet
+    # tables + logs. A standalone store carries everything; only stores with
+    # reference-in-place media (copy=False ingest) have external bytes, and
+    # those are flagged separately, never mixed into the database size.
+    media_bytes = sum(p.stat().st_size
+                      for p in (db.dir / "media").glob("*")
+                      if p.is_file()) if (db.dir / "media").is_dir() else 0
+    db_bytes = sum(p.stat().st_size for p in db.dir.rglob("*") if p.is_file())
+    external_bytes = 0
     for d in desc:
         if d["kind"] != "frame_index":
             continue
         t = db.table(d["table"]).scan(columns=["source"])
         for s in set(t.column("source").to_pylist()):
-            p = Path(s)
-            if p.exists():
-                media_bytes += p.stat().st_size
+            if not s.startswith("@") and Path(s).exists():
+                external_bytes += Path(s).stat().st_size
     return {
         "key": key, "name": db.name, "path": str(db.dir),
         "tables": desc, "rows": total_rows, "bytes": total_bytes,
-        "media_bytes": media_bytes,
+        "db_bytes": db_bytes, "media_bytes": media_bytes,
+        "emb_bytes": emb["bytes"] if emb else 0,
+        "external_bytes": external_bytes,
         "min_ts": lo, "max_ts": hi,
         "windows": emb["rows"] if emb else 0,
         "model": (emb or {}).get("meta", {}).get("model", ""),
         "display": db.meta.get("display", {}),
     }
+
+
+def api_storage(key: str, table: str):
+    """The Parquet format, made visible: this table's commit log plus every
+    active file's row-group layout straight from the Parquet footers."""
+    import pyarrow.parquet as pq
+    db = STORES[key]
+    tab = db.table(table)
+    st = tab.state()
+    files = []
+    for f in st.files:
+        pf = pq.ParquetFile(db.dir / "tables" / table / f.path)
+        md = pf.metadata
+        names = md.schema.names
+        ts_i = names.index("ts") if "ts" in names else 0
+        rgs = []
+        for g in range(md.num_row_groups):
+            rg = md.row_group(g)
+            s = rg.column(ts_i).statistics
+            rgs.append({"rows": rg.num_rows,
+                        "bytes": sum(rg.column(c).total_compressed_size
+                                     for c in range(rg.num_columns)),
+                        "min_ts": s.min if s else None,
+                        "max_ts": s.max if s else None})
+        files.append({"name": f.path, "bytes": f.bytes, "rows": f.rows,
+                      "min_ts": f.min_ts, "max_ts": f.max_ts,
+                      "footer_bytes": md.serialized_size,
+                      "columns": names, "row_groups": rgs})
+    return {"table": table, "kind": st.kind, "version": st.version,
+            "schema": st.schema, "history": tab.history(), "files": files}
 
 
 def api_map(key: str):
@@ -178,8 +216,9 @@ def api_clip(key: str, stream: str, t0: int, t1: int, width: int = 640):
     import hashlib
     import subprocess
     import tempfile
-    if t1 - t0 > 30_000_000_000:
-        raise ValueError("clip window capped at 30 s")
+    # Merged segments can be minutes long; the player previews the first 30 s
+    # rather than refusing (full-range export belongs to the Python API).
+    t1 = min(t1, t0 + 30_000_000_000)
     cache_dir = Path(tempfile.gettempdir()) / "elidedb_clips"
     cache_dir.mkdir(exist_ok=True)
     ck = hashlib.sha1(f"{key}|{stream}|{t0}|{t1}|{width}".encode()).hexdigest()
@@ -205,7 +244,8 @@ def api_clip(key: str, stream: str, t0: int, t1: int, width: int = 640):
     if wav:
         wav_path = cache_dir / f"{ck}.wav"
         wav_path.write_bytes(wav)
-    cmd = ["ffmpeg", "-v", "error", "-y",
+    from .fftools import find
+    cmd = [find("ffmpeg"), "-v", "error", "-y",
            "-f", "image2pipe", "-framerate", str(fps), "-i", "-"]
     if wav_path:
         cmd += ["-i", str(wav_path)]
@@ -214,21 +254,26 @@ def api_clip(key: str, stream: str, t0: int, t1: int, width: int = 640):
     if wav_path:
         cmd += ["-c:a", "aac", "-b:a", "96k", "-shortest"]
     cmd += [str(out_path)]
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-    for (_ts, arr) in decoded:
-        img = Image.fromarray(arr)
-        if rot:
-            img = img.rotate(rot, expand=True)
-        # libx264 yuv420 needs even dimensions
-        if img.width % 2 or img.height % 2:
-            img = img.crop((0, 0, img.width & ~1, img.height & ~1))
-        img.save(proc.stdin, "JPEG", quality=90)
-    proc.stdin.close()
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    try:
+        for (_ts, arr) in decoded:
+            img = Image.fromarray(arr)
+            if rot:
+                img = img.rotate(rot, expand=True)
+            # libx264 yuv420 needs even dimensions
+            if img.width % 2 or img.height % 2:
+                img = img.crop((0, 0, img.width & ~1, img.height & ~1))
+            img.save(proc.stdin, "JPEG", quality=90)
+        proc.stdin.close()
+    except BrokenPipeError:
+        pass  # ffmpeg died early; the stderr below explains why
+    err = proc.stderr.read().decode(errors="replace").strip()
     proc.wait()
     if wav_path:
         wav_path.unlink(missing_ok=True)
     if proc.returncode != 0 or not out_path.exists():
-        raise RuntimeError("ffmpeg mux failed")
+        raise RuntimeError(f"ffmpeg mux failed: {err or 'no output produced'}")
     return out_path.read_bytes()
 
 
@@ -336,6 +381,8 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/history":
                 db = STORES[q["store"]]
                 return self._json(db.table(q["table"]).history())
+            if u.path == "/api/storage":
+                return self._json(api_storage(q["store"], q["table"]))
             if u.path == "/api/thumb":
                 jpg = api_thumb(q["store"], q.get("stream", ""),
                                 int(q["t"]), int(q.get("w", "360")))

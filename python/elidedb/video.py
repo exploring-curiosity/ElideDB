@@ -16,8 +16,11 @@ def scan_video_packets(video_path, timestamps_ns=None) -> dict:
     Returns columnar dict for the frame_index schema."""
     import json
     import subprocess
+
+    from .fftools import find
     r = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_packets",
+        [find("ffprobe"), "-v", "error", "-select_streams", "v:0",
+         "-show_packets",
          "-show_entries", "packet=pos,size,flags,pts",
          "-show_entries", "stream=codec_name,width,height",
          "-of", "json", str(video_path)],
@@ -84,7 +87,11 @@ class FrameSet:
             for i in idx:
                 src = rows.column("source")[i].as_py()
                 if src not in handles:
-                    handles[src] = open(src, "rb")
+                    # "@media/..." = store-managed media (standalone store);
+                    # anything else is an external reference-in-place.
+                    real = (str(self.store.dir / src[1:])
+                            if src.startswith("@") else src)
+                    handles[src] = open(real, "rb")
                 f = handles[src]
                 f.seek(rows.column("byte_offset")[i].as_py())
                 buf = f.read(rows.column("packet_size")[i].as_py())

@@ -27,7 +27,8 @@ from elidedb import Store
 | method | description |
 |---|---|
 | `db.ingest_rows(table, data, ts_column="ts", ts_unit="auto", meta=None)` | append rows from a DataFrame, dict of arrays, pyarrow Table, or a CSV/Parquet **path**. `ts_column` may hold datetimes, ISO strings, or epoch numbers; `"auto"` infers s/ms/us/ns by magnitude. Returns the new version. |
-| `db.ingest_video(table, video_path, timestamps_ns=None, stream=None, meta=None)` | packet-scan a video (ffprobe) into a `frame_index` table: one row per frame with its byte range. `timestamps_ns` (list, one per frame) overrides container time. The media file is referenced, never copied. |
+| `db.ingest_video(table, video_path, timestamps_ns=None, stream=None, meta=None, copy=True)` | packet-scan a video into a `frame_index` table: one row per frame with its byte range. `copy=True` (default) copies the media into the store's `media/` dir — the store directory IS the complete database. `copy=False` references the file in place. |
+| `db.adopt_media(table="frames")` | copy every externally-referenced media file into `media/` and rewrite the index (one replace-commit) — makes an existing store standalone |
 
 ### Queries
 
@@ -36,8 +37,8 @@ from elidedb import Store
 | `db.window(t0, t1, tables=None, columns=None, version=None)` | `(dict, QueryStats)` — every requested table filtered to the window; `frame_index` tables come back as `FrameSet` |
 | `db.aligned(t0, t1, rate_hz, tables=None, interp="nearest"\|"linear", version=None)` | `(dict, QueryStats)` — `{"timeline_ns": array, table: {column: array}}`, all numeric columns resampled onto one timeline |
 | `db.sql(query, version=None)` | pandas DataFrame — DuckDB over the store's own Parquet files; SQL table names = store table names |
-| `db.search_text(text, k=10, nprobe=3)` | `(hits, stats)` — hits are `{"stream", "t0", "t1", "score"}` |
-| `db.search_clip(stream, t0, t1, k=10, nprobe=3)` | same, ranked by similarity to the probe window (probe excluded) |
+| `db.search_text(text, k=10, nprobe=3, merge=True)` | `(hits, stats)` — hits are **dynamic segments** `{"stream", "t0", "t1", "score", "windows"}`: consecutive matching windows merged into one hit of its true duration (an event never comes back as duplicated sub-clips; a narrow match comes back tight). `merge=False` returns raw fixed windows. `stats` includes the per-query score threshold and segment counts. |
+| `db.search_clip(stream, t0, t1, k=10, nprobe=3, merge=True)` | same, ranked by similarity to the probe range (probe excluded) |
 | `db.embed_windows(frame_table="frames", window_s=2.0, frames_per_window=2, model=None, batch=16)` | embed every video stream in tumbling windows (local SigLIP via MLX); commits an `embeddings` table version |
 
 Module-level helpers:
@@ -95,6 +96,7 @@ elidedb add    <store> <table> <file.csv|.parquet> [--ts-col COL] [--ts-unit aut
 elidedb video  <store> <video> [--table frames] [--stream NAME] [--timestamps FILE]
 elidedb embed  <store> [--window-s 2.0] [--frames-per-window 2] [--no-cluster]
 elidedb search <store> "text" [-k 8]
+elidedb adopt  <store>                 (pull referenced media into the store)
 elidedb sql    <store> "SELECT ..."
 elidedb window <store> <t0> <t1> [--dump DIR] [--width 640]
 elidedb desk   [--root lake] [--port 8787] [--no-open]
@@ -108,6 +110,7 @@ elidedb desk   [--root lake] [--port 8787] [--no-open]
 | `GET /api/map?store=` | 2-D layout + cluster per embedded window (UMAP, cached) |
 | `GET /api/geo?store=` | lat/lon trace if any table has latitude+longitude |
 | `GET /api/thumb?store=&stream=&t=&w=` | JPEG — one frame near `t`, decoded on demand |
+| `GET /api/storage?store=&table=` | the table's commit log + every Parquet file's row-group layout (rows/bytes/ts range per group) |
 | `GET /api/clip?store=&stream=&t0=&t1=&w=` | MP4 — the window as H.264 (+AAC mic track when available), Range-request capable |
 | `POST /api/query` | `{store, type: "text"\|"clip"\|"sql"\|"window", ...}` → results |
 

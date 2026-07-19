@@ -55,10 +55,11 @@ ever guesses wrong for your data, pass `--ts-unit s|ms|us|ns` explicitly.
 
 ## 4 · Add video
 
-Your video file is **indexed, not copied** — ElideDB scans it once, stores
-each frame's timestamp and byte location in a Parquet table, and decodes
-straight from the original file at query time. Don't move or delete the
-source file afterwards.
+By default the video file is **copied into the store** (`media/`) and
+indexed there, so the store directory is the complete, portable database.
+Pass `copy=False` / index in place if you'd rather reference the original
+file (then don't move or delete it). An existing store becomes standalone
+with `elidedb adopt <store>`.
 
 ```bash
 # use the container's own timestamps:
@@ -137,6 +138,13 @@ local SigLIP model — nothing leaves your machine — and clusters the results:
 elidedb embed lake/mydb                # first run downloads the model (~2 GB)
 elidedb search lake/mydb "a dog running on grass"
 ```
+
+Results are **dynamic segments**, not fixed chunks: consecutive matching
+windows merge into one hit of the event's true duration (a 40 s event is one
+40 s hit; a 2 s match stays 2 s), and how many hits you get depends on how
+many distinct moments actually match — up to `-k`. Ranking is by visual
+appearance; attributes single frames can't show (speed, motion, sound) are
+weakly captured.
 
 ```python
 hits, stats = db.search_text("a dog running on grass", k=8)

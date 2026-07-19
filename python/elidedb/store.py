@@ -247,17 +247,86 @@ class Store:
             data = pa.Table.from_pandas(df, preserve_index=False)
         return self.table(table).append(data, meta=meta)
 
+    def _media_dest(self, src: Path) -> Path:
+        import hashlib
+        h = hashlib.sha1(str(src.resolve()).encode()).hexdigest()[:8]
+        media = self.dir / "media"
+        media.mkdir(exist_ok=True)
+        return media / f"{src.stem}-{h}{src.suffix}"
+
     def ingest_video(self, table: str, video_path, timestamps_ns=None,
-                     stream=None, meta=None) -> int:
-        """Index a video file: packet scan → frame_index Parquet rows. The
-        media file itself is never copied — the table stores byte ranges."""
+                     stream=None, meta=None, copy=True) -> int:
+        """Index a video file: packet scan → frame_index Parquet rows.
+
+        copy=True (default): the media file is copied into the store's
+        `media/` directory first, so the store directory IS the complete,
+        portable database. copy=False indexes the file in place (byte ranges
+        point at the external path — cheaper, but the store then depends on
+        that file staying put)."""
+        import shutil
         from .video import scan_video_packets
-        rows = scan_video_packets(video_path, timestamps_ns)
-        rows["stream"] = [stream or Path(video_path).stem] * len(rows["ts"])
+        src = Path(video_path)
+        if copy:
+            dest = self._media_dest(src)
+            if not dest.exists():
+                shutil.copy2(src, dest)
+            scanned_path, source_ref = dest, f"@media/{dest.name}"
+        else:
+            scanned_path = src
+            source_ref = str(src.resolve())
+        rows = scan_video_packets(scanned_path, timestamps_ns)
+        n = len(rows["ts"])
+        rows["source"] = pa.array([source_ref] * n)
+        rows["stream"] = [stream or src.stem] * n
         t = pa.table(rows)
         return self.table(table).append(
             t, kind="frame_index",
-            meta={"source": str(Path(video_path).resolve()), **(meta or {})})
+            meta={"source": source_ref, "original": str(src.resolve()),
+                  **(meta or {})})
+
+    def adopt_media(self, table: str = "frames", verbose=True) -> dict:
+        """Make the store standalone: copy every externally-referenced media
+        file into `media/` and rewrite the frame index to store-relative
+        paths. One replace-commit per call — old index versions still resolve
+        (the external files are not deleted)."""
+        import shutil
+        import uuid as _uuid
+        from .log import FileEntry
+        tab = self.table(table)
+        st = tab.state()
+        if st.kind != "frame_index":
+            raise ValueError(f"{table} is not a frame_index table")
+        t = tab.scan()
+        srcs = t.column("source").to_pylist()
+        external = sorted({s for s in srcs if not s.startswith("@")})
+        if not external:
+            return {"adopted": 0, "bytes": 0}
+        mapping, copied = {}, 0
+        for s in external:
+            p = Path(s)
+            if not p.exists():
+                raise FileNotFoundError(f"referenced media missing: {s}")
+            dest = self._media_dest(p)
+            if not dest.exists():
+                shutil.copy2(p, dest)
+            copied += dest.stat().st_size
+            mapping[s] = f"@media/{dest.name}"
+            if verbose:
+                print(f"  adopted {p.name} -> media/{dest.name}")
+        new_src = pa.array([mapping.get(s, s) for s in srcs])
+        t = t.set_column(t.column_names.index("source"), "source", new_src)
+        fname = f"part-{_uuid.uuid4().hex[:12]}.parquet"
+        path = self.dir / "tables" / table / fname
+        pq.write_table(t, path, row_group_size=ROW_GROUP_ROWS,
+                       compression="zstd")
+        tsv = t.column("ts").to_numpy()
+        tab.log.commit(op="adopt-media", kind="frame_index",
+                       schema=str(t.schema),
+                       add=[FileEntry(fname, len(t), path.stat().st_size,
+                                      int(tsv.min()), int(tsv.max()))],
+                       remove=[f.path for f in st.files],
+                       meta={"media_files": len(external)})
+        return {"adopted": len(external), "bytes": copied}
 
     # ---- queries ----------------------------------------------------------
     def window(self, t0: int, t1: int, tables=None, columns=None,

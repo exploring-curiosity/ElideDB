@@ -55,7 +55,7 @@ def _vec_table(store, name="embeddings", version=None):
 
 
 def embed_windows(store, frame_table="frames", window_s=2.0,
-                  frames_per_window=2, model=None, batch=16):
+                  frames_per_window=2, model=None, batch=16, stride_s=None):
     """Tumbling windows over every video stream → mean-pooled SigLIP vectors
     → one commit to the `embeddings` table. Frames come through the same
     byte-range path queries use."""
@@ -64,6 +64,7 @@ def embed_windows(store, frame_table="frames", window_s=2.0,
     tab = store.table(frame_table)
     st = tab.state()
     win_ns = int(window_s * 1e9)
+    stride_ns = int((stride_s or window_s) * 1e9)
     frames = tab.scan()
     streams = sorted(set(frames.column("stream").to_pylist()))
     jobs = []  # (stream, t0, t1)
@@ -77,7 +78,7 @@ def embed_windows(store, frame_table="frames", window_s=2.0,
             if hi > lo:
                 jobs.append((s, max(t, int(ts[0])),
                              min(t + win_ns - 1, int(ts[-1]))))
-            t += win_ns
+            t += stride_ns
     from .video import FrameSet
     t_start = time.time()
     recs = {"ts": [], "t1": [], "stream": [], "vector": []}
@@ -183,7 +184,7 @@ def cluster(store, pca_dims=50, min_cluster_size=8):
             "noise": int((labels < 0).sum()), "windows": len(out)}
 
 
-def _rank(store, q, k, nprobe):
+def _rank(store, q, k, nprobe, merge=True):
     t, vecs = _vec_table(store)
     labels = (t.column("cluster").to_numpy()
               if "cluster" in t.column_names else None)
@@ -200,23 +201,64 @@ def _rank(store, q, k, nprobe):
             scanned = int(mask.sum())
         except RuntimeError:
             pass
-    scores = vecs[mask] @ q
-    rows = np.where(mask)[0][np.argsort(scores)[::-1][:k]]
-    hits = [{"stream": t.column("stream")[int(i)].as_py(),
-             "t0": t.column("ts")[int(i)].as_py(),
-             "t1": t.column("t1")[int(i)].as_py(),
-             "score": float(vecs[int(i)] @ q)} for i in rows]
-    return hits, {"scanned": scanned, "total": len(vecs),
-                  "clusters_probed": probed, "clusters_total": total_clusters}
+    idx = np.where(mask)[0]
+    scores = vecs[idx] @ q
+    streams = t.column("stream").to_numpy(zero_copy_only=False)[idx]
+    w_t0 = t.column("ts").to_numpy()[idx]
+    w_t1 = t.column("t1").to_numpy()[idx]
+
+    stats = {"scanned": scanned, "total": len(vecs),
+             "clusters_probed": probed, "clusters_total": total_clusters}
+
+    if not merge:
+        order = np.argsort(scores)[::-1][:k]
+        hits = [{"stream": str(streams[i]), "t0": int(w_t0[i]),
+                 "t1": int(w_t1[i]), "score": float(scores[i]),
+                 "windows": 1} for i in order]
+        return hits, stats
+
+    # ---- dynamic segments: merge, don't chunk -------------------------------
+    # Fixed embedding windows are an INDEXING granularity, not an answer
+    # granularity. A result is the maximal run of consecutive qualifying
+    # windows on one stream: a 20 s event comes back as ONE 20 s hit (its
+    # sub-windows are never returned separately), while a query that only
+    # matches 2 s of it comes back as that tight 2 s. "Qualifying" is decided
+    # per query from the score distribution — an absolute cutoff cannot work
+    # because SigLIP cosines live on different scales per query.
+    med = float(np.median(scores))
+    top = float(scores.max())
+    thr = med + 0.55 * (top - med)
+    stats["threshold"] = round(thr, 4)
+    qual = np.where(scores >= thr)[0]
+    order = np.lexsort((w_t0[qual], streams[qual]))
+    qual = qual[order]
+
+    gap_ns = int(np.median(w_t1[qual] - w_t0[qual])) + 1 if len(qual) else 0
+    segs = []
+    for i in qual:
+        s, a, b, sc = str(streams[i]), int(w_t0[i]), int(w_t1[i]), float(scores[i])
+        last = segs[-1] if segs else None
+        if last and last["stream"] == s and a - last["t1"] <= gap_ns:
+            last["t1"] = max(last["t1"], b)
+            last["score"] = max(last["score"], sc)   # peak represents the segment
+            last["mean"] = (last["mean"] * last["windows"] + sc) / (last["windows"] + 1)
+            last["windows"] += 1
+        else:
+            segs.append({"stream": s, "t0": a, "t1": b, "score": sc,
+                         "mean": sc, "windows": 1})
+    segs.sort(key=lambda g: -g["score"])
+    stats["qualifying_windows"] = len(qual)
+    stats["segments"] = len(segs)
+    return segs[:k], stats
 
 
-def search_text(store, text, k=10, nprobe=3):
+def search_text(store, text, k=10, nprobe=3, merge=True):
     st = store.table("embeddings").state()
     q = embed_text(text, st.meta.get("model", DEFAULT_MODEL))
-    return _rank(store, q, k, nprobe)
+    return _rank(store, q, k, nprobe, merge=merge)
 
 
-def search_clip(store, stream, t0, t1, k=10, nprobe=3):
+def search_clip(store, stream, t0, t1, k=10, nprobe=3, merge=True):
     t, vecs = _vec_table(store)
     s = t.column("stream").to_numpy(zero_copy_only=False)
     a = t.column("ts").to_numpy()
@@ -226,7 +268,7 @@ def search_clip(store, stream, t0, t1, k=10, nprobe=3):
         raise ValueError(f"no embedded windows overlap {stream} [{t0},{t1}]")
     q = vecs[sel].mean(axis=0)
     q /= np.linalg.norm(q)
-    hits, stats = _rank(store, q, k + 8, nprobe)
+    hits, stats = _rank(store, q, k + 8, nprobe, merge=merge)
     hits = [h for h in hits
             if not (h["stream"] == stream and h["t0"] <= t1 and h["t1"] >= t0)]
     return hits[:k], stats
