@@ -31,7 +31,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-from .log import FileEntry, TableLog
+from .log import FileEntry, TableLog, fsync_file
 
 ROW_GROUP_ROWS = 64 * 1024  # the amortize-vs-overfetch dial (Parquet's
                             # row-group size == SDX's chunk_target_rows)
@@ -48,6 +48,8 @@ def write_parquet(table: pa.Table, path):
                    compression="zstd",
                    use_dictionary=dict_cols,
                    column_encoding={"ts": "DELTA_BINARY_PACKED"})
+    fsync_file(path)  # durability: data reaches disk BEFORE the commit that
+                      # references it — the write-ahead ordering rule
 
 
 class QueryStats:
@@ -94,26 +96,78 @@ class Table:
         return self.log.history()
 
     # ---- write path -------------------------------------------------------
-    def append(self, table: pa.Table, *, kind="timeseries", meta=None) -> int:
+    def _validate(self, table: pa.Table, evolve: bool):
+        """Consistency guarantees enforced at the door: ts present, int64,
+        never null; and the schema must match the table's existing schema
+        (same names ⇒ same types). evolve=True permits ADDING columns —
+        widening reads promote missing columns to null — but a type change
+        for an existing name is always an error, never a silent coercion."""
         if "ts" not in table.column_names:
             raise ValueError(f"table '{self.name}': a `ts` int64-ns column is "
                              "required — timestamps are the one schema law")
         ts = table.column("ts")
         if ts.type != pa.int64():
             raise ValueError("`ts` must be int64 nanoseconds since epoch")
-        order = pc.sort_indices(ts)
+        if ts.null_count:
+            raise ValueError(f"table '{self.name}': `ts` contains "
+                             f"{ts.null_count} null(s) — every row must be "
+                             "timestamped")
+        st = self.state()
+        if st.files:
+            # compare against the LATEST file: after additive evolution the
+            # newest schema is the table's current contract
+            existing = pq.ParquetFile(
+                self.dir / st.files[-1].path).schema_arrow
+            have = {f.name: f.type for f in existing}
+            new = {f.name: f.type for f in table.schema}
+            for name, typ in new.items():
+                if name in have and have[name] != typ:
+                    raise ValueError(
+                        f"table '{self.name}': column '{name}' is "
+                        f"{have[name]} but incoming batch has {typ} — "
+                        "type changes are never implicit")
+            added = set(new) - set(have)
+            missing = set(have) - set(new)
+            if (added or missing) and not evolve:
+                raise ValueError(
+                    f"table '{self.name}': schema differs (new columns "
+                    f"{sorted(added)}, absent columns {sorted(missing)}). "
+                    "Pass evolve=True to allow additive evolution.")
+        return st
+
+    def _sorted(self, table: pa.Table) -> pa.Table:
+        order = pc.sort_indices(table.column("ts"))
         if not pc.all(pc.equal(order, pa.array(range(len(table))))).as_py():
             table = table.take(order)  # ts-sorted files ⇒ tight zone maps
+        return table
+
+    def append(self, table: pa.Table, *, kind="timeseries", meta=None,
+               evolve=False) -> int:
+        return self.append_batches([table], kind=kind, meta=meta,
+                                   evolve=evolve)
+
+    def append_batches(self, batches, *, kind="timeseries", meta=None,
+                       evolve=False) -> int:
+        """Write one file per batch, commit ONCE — a multi-gigabyte load is
+        a single atomic transaction with bounded memory."""
         self.dir.mkdir(parents=True, exist_ok=True)
-        fname = f"part-{uuid.uuid4().hex[:12]}.parquet"
-        path = self.dir / fname
-        write_parquet(table, path)
-        tsv = table.column("ts").to_numpy()
-        entry = FileEntry(fname, len(table), path.stat().st_size,
-                          int(tsv[0]), int(tsv[-1]))
+        adds, schema = [], None
+        for batch in batches:
+            if len(batch) == 0:
+                continue
+            self._validate(batch, evolve)
+            batch = self._sorted(batch)
+            schema = batch.schema
+            fname = f"part-{uuid.uuid4().hex[:12]}.parquet"
+            path = self.dir / fname
+            write_parquet(batch, path)
+            tsv = batch.column("ts")
+            adds.append(FileEntry(fname, len(batch), path.stat().st_size,
+                                  tsv[0].as_py(), tsv[-1].as_py()))
+        if not adds:
+            raise ValueError("nothing to append (all batches empty)")
         return self.log.commit(op="append", kind=kind,
-                               schema=str(table.schema), add=[entry],
-                               meta=meta)
+                               schema=str(schema), add=adds, meta=meta)
 
     def compact(self, target_rows_per_file: int = 8_000_000) -> dict:
         """OPTIMIZE: rewrite the active file set into few large, ts-sorted,
@@ -182,13 +236,12 @@ class Table:
         return {"rows_deleted": dropped, "files_rewritten": len(adds),
                 "files_removed": len(removes)}
 
-    def to_daft(self, version=None):
-        """This table's snapshot as a Daft DataFrame — distributed scans,
-        multimodal UDFs, the whole engine — reading the store's own Parquet
-        files with zero export. (`pip install daft`)"""
-        import daft
-        st = self.state(version)
-        return daft.read_parquet([str(self.dir / f.path) for f in st.files])
+    def files(self, version=None) -> list[str]:
+        """Absolute paths of this snapshot's Parquet files — the open-format
+        contract: hand these to ANY engine (DuckDB, Spark, Polars, a
+        distributed dataframe library) and it reads the table with zero
+        export and zero ElideDB code."""
+        return [str(self.dir / f.path) for f in self.state(version).files]
 
     # ---- read path --------------------------------------------------------
     def scan(self, t0=None, t1=None, columns=None, version=None,
@@ -276,6 +329,63 @@ class Store:
     def name(self):
         return self.meta["name"]
 
+    def snapshot(self) -> dict:
+        """Pin every table's current version in one call. Pass the result as
+        `version=` to window/aligned/sql/scan for a CONSISTENT multi-table
+        read: no writer that commits after this call can skew your view.
+        (Per-table commits are serializable on their own log — the same
+        isolation model as Delta and Iceberg; the pin extends it across
+        tables for readers.)"""
+        return {name: self.table(name).state().version
+                for name in self.tables()}
+
+    @staticmethod
+    def _ver(version, name):
+        if isinstance(version, dict):
+            return version.get(name)
+        return version
+
+    def vacuum(self, retain_versions: int = 3, dry_run: bool = False) -> dict:
+        """Garbage-collect files no snapshot within the retention window can
+        reach: parquet parts removed by compaction/delete, and managed media
+        no retained frame-index version references. Time travel remains
+        intact for the last `retain_versions` versions of every table;
+        earlier versions become unreadable — that is the explicit trade this
+        command makes, and why it is manual."""
+        freed = 0
+        removed = []
+        media_refs: set[str] = set()
+        for name in self.tables():
+            tab = self.table(name)
+            versions = tab.log.versions()
+            keep_versions = versions[-retain_versions:] if versions else []
+            referenced = set()
+            for v in keep_versions:
+                st = tab.state(v)
+                referenced |= {f.path for f in st.files}
+                if st.kind == "frame_index":
+                    tbl = tab.scan(version=v)
+                    if "source" in tbl.column_names:
+                        media_refs |= {s for s in
+                                       set(tbl.column("source").to_pylist())
+                                       if s.startswith("@")}
+            for f in tab.dir.glob("part-*.parquet"):
+                if f.name not in referenced:
+                    freed += f.stat().st_size
+                    removed.append(str(f.relative_to(self.dir)))
+                    if not dry_run:
+                        f.unlink()
+        media = self.dir / "media"
+        if media.is_dir():
+            for m in media.iterdir():
+                if f"@media/{m.name}" not in media_refs:
+                    freed += m.stat().st_size
+                    removed.append(f"media/{m.name}")
+                    if not dry_run:
+                        m.unlink()
+        return {"files_removed": len(removed), "bytes_freed": freed,
+                "dry_run": dry_run, "removed": removed[:10]}
+
     def tables(self) -> list[str]:
         root = self.dir / "tables"
         if not root.is_dir():
@@ -297,42 +407,58 @@ class Store:
 
     # ---- friendly ingest --------------------------------------------------
     def ingest_rows(self, table: str, data, ts_column="ts", ts_unit="auto",
-                    meta=None) -> int:
+                    meta=None, evolve=False) -> int:
         """Append rows from a pandas DataFrame / dict of arrays / pyarrow
         Table / CSV / Parquet path.
 
         Friendly on purpose: `ts_column` may be a datetime column, an ISO-8601
         string column, or epoch numbers in s/ms/us/ns — `ts_unit="auto"`
         detects the epoch unit by magnitude (an explicit unit always wins)."""
+        import os as _os
+
         import pandas as pd
         if isinstance(data, (str, Path)):
             p = str(data)
-            data = (pd.read_parquet(p) if p.endswith((".parquet", ".pq"))
-                    else pd.read_csv(p))
+            if p.endswith((".parquet", ".pq")):
+                data = pd.read_parquet(p)
+            elif _os.path.getsize(p) > 128 * 1024 * 1024:
+                # memory-bounded load: stream the CSV in chunks, one file per
+                # chunk, ONE atomic commit for the whole load
+                def gen():
+                    for chunk in pd.read_csv(p, chunksize=2_000_000):
+                        yield self._normalize_ts(chunk, ts_column, ts_unit)
+                return self.table(table).append_batches(gen(), meta=meta)
+            else:
+                data = pd.read_csv(p)
         if isinstance(data, dict):
             data = pd.DataFrame(data)
         if isinstance(data, pd.DataFrame):
-            if ts_column not in data.columns:
-                raise ValueError(
-                    f"no column '{ts_column}' — available: "
-                    f"{list(data.columns)} (pass ts_column=...)")
-            df = data.rename(columns={ts_column: "ts"}).copy()
-            col = df["ts"]
-            if pd.api.types.is_datetime64_any_dtype(col):
-                df["ts"] = col.astype("int64")  # datetime64 is already ns
-            elif col.dtype == object or pd.api.types.is_string_dtype(col):
-                df["ts"] = pd.to_datetime(col).astype("int64")  # ISO strings
-            else:
-                if ts_unit == "auto":
-                    # epoch magnitude: seconds ~1e9, ms ~1e12, us ~1e15, ns ~1e18
-                    m = float(pd.Series(col).abs().median())
-                    ts_unit = ("s" if m < 1e11 else "ms" if m < 1e14
-                               else "us" if m < 1e17 else "ns")
-                mult = {"ns": 1, "us": 1_000, "ms": 1_000_000,
-                        "s": 1_000_000_000}[ts_unit]
-                df["ts"] = (col.astype("float64") * mult).round().astype("int64")
-            data = pa.Table.from_pandas(df, preserve_index=False)
-        return self.table(table).append(data, meta=meta)
+            data = self._normalize_ts(data, ts_column, ts_unit)
+        return self.table(table).append(data, meta=meta, evolve=evolve)
+
+    @staticmethod
+    def _normalize_ts(df, ts_column, ts_unit) -> pa.Table:
+        import pandas as pd
+        if ts_column not in df.columns:
+            raise ValueError(
+                f"no column '{ts_column}' — available: "
+                f"{list(df.columns)} (pass ts_column=...)")
+        df = df.rename(columns={ts_column: "ts"}).copy()
+        col = df["ts"]
+        if pd.api.types.is_datetime64_any_dtype(col):
+            df["ts"] = col.astype("int64")  # datetime64 is already ns
+        elif col.dtype == object or pd.api.types.is_string_dtype(col):
+            df["ts"] = pd.to_datetime(col).astype("int64")  # ISO strings
+        else:
+            if ts_unit == "auto":
+                # epoch magnitude: seconds ~1e9, ms ~1e12, us ~1e15, ns ~1e18
+                m = float(pd.Series(col).abs().median())
+                ts_unit = ("s" if m < 1e11 else "ms" if m < 1e14
+                           else "us" if m < 1e17 else "ns")
+            mult = {"ns": 1, "us": 1_000, "ms": 1_000_000,
+                    "s": 1_000_000_000}[ts_unit]
+            df["ts"] = (col.astype("float64") * mult).round().astype("int64")
+        return pa.Table.from_pandas(df, preserve_index=False)
 
     def _media_dest(self, src: Path) -> Path:
         import hashlib
@@ -454,27 +580,30 @@ class Store:
         out = {}
         for name in (tables or self.tables()):
             tab = self.table(name)
-            st = tab.state(version)
+            v = self._ver(version, name)
+            st = tab.state(v)
             cols = columns.get(name) if isinstance(columns, dict) else columns
-            data = tab.scan(t0, t1, columns=cols, version=version, stats=stats)
+            data = tab.scan(t0, t1, columns=cols, version=v, stats=stats)
             out[name] = FrameSet(self, name, data) if st.kind == "frame_index" \
                 else data
         stats.wall_ms = (time.perf_counter() - start) * 1e3
         return out, stats
 
     def aligned(self, t0, t1, rate_hz, tables=None, interp="nearest",
-                version=None):
+                version=None, edge_guard_s: float = 1.0):
         """Query-time alignment: resample numeric columns of the requested
         timeseries tables onto one [t0, t1] timeline at rate_hz."""
         timeline = np.arange(t0, t1 + 1, int(1e9 / rate_hz), dtype=np.int64)
-        guard = int(1e9)  # neighbors just outside the window make edges exact
+        guard = int(edge_guard_s * 1e9)  # neighbors just outside the window
+                                         # make edge interpolation exact
         out = {"timeline_ns": timeline}
         stats = QueryStats()
         for name in (tables or self.tables()):
             tab = self.table(name)
-            if tab.state(version).kind != "timeseries":
+            v = self._ver(version, name)
+            if tab.state(v).kind != "timeseries":
                 continue
-            data = tab.scan(t0 - guard, t1 + guard, version=version, stats=stats)
+            data = tab.scan(t0 - guard, t1 + guard, version=v, stats=stats)
             if len(data) == 0:
                 continue
             ts = data.column("ts").to_numpy()
@@ -505,7 +634,7 @@ class Store:
         import duckdb
         con = duckdb.connect()
         for name in self.tables():
-            st = self.table(name).state(version)
+            st = self.table(name).state(self._ver(version, name))
             files = [str(self.dir / "tables" / name / f.path) for f in st.files]
             if files:
                 quoted = ", ".join(f"'{f}'" for f in files)

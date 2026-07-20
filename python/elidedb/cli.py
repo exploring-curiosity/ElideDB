@@ -84,6 +84,13 @@ def cmd_adopt(a):
                   f"({r['bytes'] / 1e6:.1f} MB) into {a.store}/media/")
 
 
+def cmd_vacuum(a):
+    db = Store.open(a.store)
+    r = db.vacuum(retain_versions=a.retain, dry_run=a.dry_run)
+    verb = "would free" if a.dry_run else "freed"
+    print(f"{r['files_removed']} files, {verb} {r['bytes_freed']/1e6:.1f} MB")
+
+
 def cmd_optimize(a):
     db = Store.open(a.store)
     for d in db.describe():
@@ -210,6 +217,13 @@ def main():
     p.add_argument("store")
     p.add_argument("--table")
     p.set_defaults(f=cmd_optimize)
+
+    p = sub.add_parser("vacuum", help="garbage-collect unreachable files "
+                                      "(keeps last N versions readable)")
+    p.add_argument("store")
+    p.add_argument("--retain", type=int, default=3)
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(f=cmd_vacuum)
 
     p = sub.add_parser("embed", help="embed video windows + cluster (local ML)")
     p.add_argument("store")

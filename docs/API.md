@@ -21,6 +21,8 @@ from elidedb import Store
 | `db.tables()` | table names |
 | `db.table(name)` | a `Table` handle (see below) |
 | `db.describe()` | one dict per table: kind, rows, bytes, min/max ts, files, version, meta |
+| `db.snapshot()` | pin every table's version in one call; pass as `version=` to any query for a consistent multi-table read |
+| `db.vacuum(retain_versions=3, dry_run=False)` | garbage-collect parquet parts and managed media unreachable from the last N versions |
 
 ### Ingest
 
@@ -40,7 +42,8 @@ becomes GOP-granular (reads one GOP span per window).
 |---|---|
 | `t.compact(target_rows_per_file=8_000_000)` | OPTIMIZE: rewrite the active file set into few large ts-sorted files with current encodings — one atomic replace-commit |
 | `t.delete_range(t0, t1)` | delete rows in a time range (scrub a run / PII / retention); untouched files stay, covered files drop, overlapping files rewrite — one atomic commit; earlier versions still see the data |
-| `t.to_daft(version=None)` | the snapshot as a **Daft DataFrame** — distributed scans and multimodal UDFs over the store's own Parquet files |
+| `t.files(version=None)` | absolute paths of the snapshot's Parquet files — hand them to any engine (DuckDB, Spark, Polars, distributed dataframes) with zero export |
+| `t.append_batches(iterable)` | many files, ONE atomic commit — bounded-memory bulk loads |
 
 ### Queries
 
@@ -110,6 +113,7 @@ elidedb embed  <store> [--window-s 2.0] [--frames-per-window 2] [--no-cluster]
 elidedb search <store> "text" [-k 8]
 elidedb adopt  <store>                 (pull referenced media into the store)
 elidedb optimize <store> [--table T]   (compact into fewer, delta-encoded files)
+elidedb vacuum   <store> [--retain N] [--dry-run]
 elidedb sql    <store> "SELECT ..."
 elidedb window <store> <t0> <t1> [--dump DIR] [--width 640]
 elidedb desk   [--root lake] [--port 8787] [--no-open]

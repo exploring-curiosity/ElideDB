@@ -68,9 +68,45 @@ Table kinds (all just Parquet schemas; `ts` int64-ns is the one law):
   of embedding, never a re-run of history.
 - **Parallel decode**: packet reads are sequential, JPEG decode fans out on
   threads (cv2 releases the GIL) — 49×4K frames 618 ms → 94 ms (6.6×).
-- **Daft-native**: `table.to_daft()` hands any snapshot to Daft as a
-  DataFrame over the store's own Parquet — distributed scans and multimodal
-  UDFs with zero export.
+- **Engine-neutral**: `table.files(version)` hands any snapshot's Parquet
+  paths to any engine — DuckDB is wired in (`Store.sql`), and distributed
+  dataframe/query engines read the same files with zero export.
+
+## ACID guarantees (stated precisely, because you will check)
+
+**Atomicity.** A commit becomes visible by hard-linking a fully-written,
+fsynced entry into its version name — `link()` is atomic *and* exclusive, so
+a torn entry can never appear under a version name; a crash leaves only an
+ignorable temp file (tested by planting one). Multi-file operations —
+bulk loads (`append_batches`), `compact`, `delete_range`, `adopt_media` —
+are each ONE commit: all their files appear together or not at all.
+
+**Consistency.** Enforced at the door, never coerced: `ts` must exist, be
+int64 ns, and contain no nulls; a column's type can never change implicitly;
+schema changes are additive-only and require explicit `evolve=True`. Every
+file is ts-sorted at write, which is what keeps both zone-map layers
+truthful.
+
+**Isolation.** Writers are serializable per table: optimistic commits with
+conflict detection (a commit that removes files revalidates and raises
+`CommitConflict` if a concurrent writer got there first — verified with
+racing writers). Readers get snapshot isolation for free from immutability,
+and `store.snapshot()` pins every table's version in one call so a
+multi-table read is consistent even while writers land commits (tested).
+Scope, stated plainly: write transactions span one table — the same scope as
+Delta and Iceberg — which fits capture workloads exactly, because each
+stream is its own table.
+
+**Durability.** Write-ahead ordering: data files are fsynced *before* the
+commit that references them; the commit entry is fsynced, and so is the log
+directory (file existence is directory metadata — skipping that fsync is the
+classic durability bug). A power cut leaves you at the last commit, never in
+between.
+
+**Lifecycle.** `vacuum(retain_versions=N)` garbage-collects parquet parts
+and managed media unreachable from the last N versions of every table
+(tested: a deleted run's 500 MB media file is reclaimed). Retention is the
+explicit trade against time-travel depth, which is why vacuum is manual.
 
 ## Positioning: what the target user gives up (and doesn't)
 
@@ -85,7 +121,7 @@ this:
 | point-lookup latency | checkpointed state (sub-ms) + footer caching; the workload is windows and scans, not OLTP point reads — OLTP stays out of lane deliberately |
 | secondary predicates | DuckDB over the same files brings a full optimizer; Parquet column stats prune non-time predicates when data is locally sorted |
 | security / backup / replication | delegated to the object store (IAM, bucket versioning, cross-region replication) — the enterprise norm for every lakehouse, not a gap: the store is plain files, so S3/ADLS/GCS machinery applies unmodified |
-| ecosystem lock-in | none: any Parquet reader consumes the store; Daft/DuckDB demonstrated in-repo |
+| ecosystem lock-in | none: any Parquet reader consumes the store; DuckDB wired in-repo, `files()` exposes snapshots to every other engine |
 
 Remaining honest roadmap (not yet built): fsspec/object-store URIs with
 range-request coalescing, ANN indexing past ~10⁶ windows (IVF-PQ/HNSW), and

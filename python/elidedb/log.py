@@ -67,6 +67,24 @@ class TableState:
 CHECKPOINT_EVERY = 10  # Delta checkpoints every 10th commit; same dial here
 
 
+def _fsync_dir(path: Path):
+    """Durability of a file's *existence* requires fsyncing its directory —
+    the metadata write that makes the entry reachable after power loss."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def fsync_file(path: Path):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 class CommitConflict(RuntimeError):
     """A concurrent commit removed files this transaction depended on."""
 
@@ -151,18 +169,35 @@ class TableLog:
                 "meta": meta or {},
             }
             path = self.log_dir / f"{version:020d}.json"
-            try:
-                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except FileExistsError:
-                continue  # lost the race — re-read state, take the next slot
+            # Torn-write-proof commit: the entry is fully written and fsynced
+            # under a temp name, then hard-LINKED to its final name. link()
+            # is atomic AND exclusive (fails if the name exists), so a
+            # partially-written entry can never appear under a version name —
+            # a crash leaves only an ignorable *.tmp. Atomicity + durability
+            # in one primitive; fsync of the directory makes the rename
+            # itself survive power loss.
+            tmp = self.log_dir / f".{version:020d}.{os.getpid()}.tmp"
+            fd = os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC)
             with os.fdopen(fd, "w") as f:
                 f.write(json.dumps(entry, indent=1))
+                f.flush()
+                os.fsync(f.fileno())
+            try:
+                os.link(tmp, path)
+            except FileExistsError:
+                os.unlink(tmp)
+                continue  # lost the race — re-read state, take the next slot
+            os.unlink(tmp)
+            _fsync_dir(self.log_dir)
             if version % CHECKPOINT_EVERY == 0:
                 st = self.read_state(version)
-                (self.log_dir / f"{version:020d}.checkpoint.json").write_text(
+                cp_tmp = self.log_dir / f".cp{version}.{os.getpid()}.tmp"
+                cp_tmp.write_text(
                     json.dumps({"version": st.version, "kind": st.kind,
                                 "schema": st.schema, "meta": st.meta,
                                 "files": [f.to_json() for f in st.files]}))
+                os.replace(cp_tmp,  # checkpoints are derived: replace is fine
+                           self.log_dir / f"{version:020d}.checkpoint.json")
             return version
         raise CommitConflict(f"lost the commit race {retries} times")
 
