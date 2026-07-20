@@ -30,6 +30,18 @@ from elidedb import Store
 | `db.ingest_video(table, video_path, timestamps_ns=None, stream=None, meta=None, copy=True)` | packet-scan a video into a `frame_index` table: one row per frame with its byte range. `copy=True` (default) copies the media into the store's `media/` dir — the store directory IS the complete database. `copy=False` references the file in place. |
 | `db.adopt_media(table="frames")` | copy every externally-referenced media file into `media/` and rewrite the index (one replace-commit) — makes an existing store standalone |
 
+`ingest_video(..., transcode="hevc"|"h264", gop_s=1.0, crf=26)` re-encodes the
+managed copy ~10-25x smaller with a keyframe every `gop_s` seconds; decode
+becomes GOP-granular (reads one GOP span per window).
+
+### Maintenance
+
+| method | description |
+|---|---|
+| `t.compact(target_rows_per_file=8_000_000)` | OPTIMIZE: rewrite the active file set into few large ts-sorted files with current encodings — one atomic replace-commit |
+| `t.delete_range(t0, t1)` | delete rows in a time range (scrub a run / PII / retention); untouched files stay, covered files drop, overlapping files rewrite — one atomic commit; earlier versions still see the data |
+| `t.to_daft(version=None)` | the snapshot as a **Daft DataFrame** — distributed scans and multimodal UDFs over the store's own Parquet files |
+
 ### Queries
 
 | method | returns |
@@ -39,7 +51,7 @@ from elidedb import Store
 | `db.sql(query, version=None)` | pandas DataFrame — DuckDB over the store's own Parquet files; SQL table names = store table names |
 | `db.search_text(text, k=10, nprobe=3, merge=True)` | `(hits, stats)` — hits are **dynamic segments** `{"stream", "t0", "t1", "score", "windows"}`: consecutive matching windows merged into one hit of its true duration (an event never comes back as duplicated sub-clips; a narrow match comes back tight). `merge=False` returns raw fixed windows. `stats` includes the per-query score threshold and segment counts. |
 | `db.search_clip(stream, t0, t1, k=10, nprobe=3, merge=True)` | same, ranked by similarity to the probe range (probe excluded) |
-| `db.embed_windows(frame_table="frames", window_s=2.0, frames_per_window=2, model=None, batch=16)` | embed every video stream in tumbling windows (local SigLIP via MLX); commits an `embeddings` table version |
+| `db.embed_windows(frame_table="frames", window_s=2.0, frames_per_window=2, model=None, batch=16, stride_s=None, incremental=True)` | embed video streams in windows (local SigLIP via MLX). **Incremental by default**: only windows past what the embeddings table already covers get embedded — new footage costs new embedding, never a re-run of history |
 
 Module-level helpers:
 
@@ -97,6 +109,7 @@ elidedb video  <store> <video> [--table frames] [--stream NAME] [--timestamps FI
 elidedb embed  <store> [--window-s 2.0] [--frames-per-window 2] [--no-cluster]
 elidedb search <store> "text" [-k 8]
 elidedb adopt  <store>                 (pull referenced media into the store)
+elidedb optimize <store> [--table T]   (compact into fewer, delta-encoded files)
 elidedb sql    <store> "SELECT ..."
 elidedb window <store> <t0> <t1> [--dump DIR] [--width 640]
 elidedb desk   [--root lake] [--port 8787] [--no-open]

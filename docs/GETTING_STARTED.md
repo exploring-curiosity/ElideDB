@@ -70,9 +70,11 @@ elidedb video lake/mydb cam0.avi --stream cam0 --timestamps cam0_times.txt
 ```
 
 Add as many videos as you like; each `--stream` name identifies a camera in
-query results. Best supported today: MJPEG-family codecs (every frame
-independent). H.264/H.265 index fine but Python-side decode of arbitrary
-windows is on the roadmap.
+query results. For big corpora add `--transcode hevc --gop-s 1.0`: the
+managed copy is re-encoded ~10-25x smaller, with a keyframe every `gop_s`
+seconds — window decode then reads exactly one GOP span (`gop_s` is the
+seekability-vs-compression dial). Without transcoding, MJPEG-family files
+get frame-exact byte-range decode.
 
 ## 5 · Look at what you have
 

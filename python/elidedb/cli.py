@@ -69,7 +69,8 @@ def cmd_video(a):
     ts = None
     if a.timestamps:
         ts = [int(line) for line in open(a.timestamps)]
-    v = db.ingest_video(a.table, a.file, timestamps_ns=ts, stream=a.stream)
+    v = db.ingest_video(a.table, a.file, timestamps_ns=ts, stream=a.stream,
+                        transcode=a.transcode, gop_s=a.gop_s, crf=a.crf)
     print(f"{a.table}: indexed {a.file} as stream "
           f"'{a.stream or a.file}' -> version {v}")
 
@@ -81,6 +82,18 @@ def cmd_adopt(a):
             r = db.adopt_media(d["table"])
             print(f"{d['table']}: adopted {r['adopted']} media files "
                   f"({r['bytes'] / 1e6:.1f} MB) into {a.store}/media/")
+
+
+def cmd_optimize(a):
+    db = Store.open(a.store)
+    for d in db.describe():
+        if a.table and d["table"] != a.table:
+            continue
+        r = db.table(d["table"]).compact()
+        if r.get("bytes_before"):
+            print(f"  {d['table']}: {r['files_before']}->{r['files_after']} files, "
+                  f"{r['bytes_before']/1e6:.1f}->{r['bytes_after']/1e6:.1f} MB "
+                  f"({r['ratio']}x)")
 
 
 def cmd_embed(a):
@@ -178,12 +191,25 @@ def main():
     p.add_argument("--timestamps",
                    help="file with one ns timestamp per frame; omitted = "
                         "container timestamps")
+    p.add_argument("--transcode", choices=["hevc", "h264"],
+                   help="re-encode the managed copy (~10-25x smaller; "
+                        "random access becomes GOP-granular)")
+    p.add_argument("--gop-s", type=float, default=1.0,
+                   help="keyframe interval in seconds (the seekability-vs-"
+                        "compression dial)")
+    p.add_argument("--crf", type=int, default=26)
     p.set_defaults(f=cmd_video)
 
     p = sub.add_parser("adopt", help="copy referenced media into the store "
                                      "(makes it standalone)")
     p.add_argument("store")
     p.set_defaults(f=cmd_adopt)
+
+    p = sub.add_parser("optimize", help="compact tables (fewer, larger, "
+                                        "delta-encoded files)")
+    p.add_argument("store")
+    p.add_argument("--table")
+    p.set_defaults(f=cmd_optimize)
 
     p = sub.add_parser("embed", help="embed video windows + cluster (local ML)")
     p.add_argument("store")

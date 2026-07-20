@@ -64,6 +64,13 @@ class TableState:
         return max((f.max_ts for f in self.files), default=0)
 
 
+CHECKPOINT_EVERY = 10  # Delta checkpoints every 10th commit; same dial here
+
+
+class CommitConflict(RuntimeError):
+    """A concurrent commit removed files this transaction depended on."""
+
+
 class TableLog:
     def __init__(self, table_dir: Path):
         self.dir = Path(table_dir)
@@ -72,11 +79,35 @@ class TableLog:
     def versions(self) -> list[int]:
         if not self.log_dir.is_dir():
             return []
-        return sorted(int(p.stem) for p in self.log_dir.glob("*.json"))
+        return sorted(int(p.stem) for p in self.log_dir.glob("*.json")
+                      if p.stem.isdigit())
+
+    def _checkpoints(self) -> list[int]:
+        if not self.log_dir.is_dir():
+            return []
+        return sorted(int(p.name.split(".")[0])
+                      for p in self.log_dir.glob("*.checkpoint.json"))
 
     def read_state(self, version: int | None = None) -> TableState:
         st = TableState()
+        start = 0
+        # Checkpoints make the fold O(commits since checkpoint) instead of
+        # O(all commits) — the log stays an audit trail without becoming a
+        # read cost. Same move as Delta's _last_checkpoint.
+        for v in reversed(self._checkpoints()):
+            if version is None or v <= version:
+                c = json.loads(
+                    (self.log_dir / f"{v:020d}.checkpoint.json").read_text())
+                st.version = c["version"]
+                st.kind = c["kind"]
+                st.schema = c["schema"]
+                st.meta = dict(c["meta"])
+                st.files = [FileEntry.from_json(f) for f in c["files"]]
+                start = v
+                break
         for v in self.versions():
+            if v <= start:
+                continue
             if version is not None and v > version:
                 break
             entry = json.loads((self.log_dir / f"{v:020d}.json").read_text())
@@ -92,26 +123,48 @@ class TableLog:
 
     def commit(self, *, op: str, kind: str, schema: str = "",
                add: list[FileEntry] = (), remove: list[str] = (),
-               meta: dict | None = None) -> int:
+               meta: dict | None = None, retries: int = 5) -> int:
+        """Optimistic concurrency, Delta-style: O_EXCL on the next log entry
+        is the lock. Losing the race means retrying at the next version —
+        append-vs-append never truly conflicts. Commits that REMOVE files
+        revalidate against the fresh state first: if a concurrent writer
+        already removed one of ours, that is a real conflict and we fail
+        cleanly instead of double-applying."""
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        version = (self.versions() or [0])[-1] + 1
-        entry = {
-            "version": version,
-            "ts_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "op": op,
-            "table_kind": kind,
-            "schema": schema,
-            "add": [f.to_json() for f in add],
-            "remove": list(remove),
-            "meta": meta or {},
-        }
-        path = self.log_dir / f"{version:020d}.json"
-        # O_EXCL: two writers racing on the same version — one wins, one gets
-        # a clean error instead of a corrupted table. This IS the transaction.
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        with os.fdopen(fd, "w") as f:
-            f.write(json.dumps(entry, indent=1))
-        return version
+        for _ in range(retries):
+            version = (self.versions() or [0])[-1] + 1
+            if remove:
+                active = {f.path for f in self.read_state().files}
+                missing = [r for r in remove if r not in active]
+                if missing:
+                    raise CommitConflict(
+                        "files no longer active (concurrent rewrite?): "
+                        f"{missing[:3]}")
+            entry = {
+                "version": version,
+                "ts_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "op": op,
+                "table_kind": kind,
+                "schema": schema,
+                "add": [f.to_json() for f in add],
+                "remove": list(remove),
+                "meta": meta or {},
+            }
+            path = self.log_dir / f"{version:020d}.json"
+            try:
+                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                continue  # lost the race — re-read state, take the next slot
+            with os.fdopen(fd, "w") as f:
+                f.write(json.dumps(entry, indent=1))
+            if version % CHECKPOINT_EVERY == 0:
+                st = self.read_state(version)
+                (self.log_dir / f"{version:020d}.checkpoint.json").write_text(
+                    json.dumps({"version": st.version, "kind": st.kind,
+                                "schema": st.schema, "meta": st.meta,
+                                "files": [f.to_json() for f in st.files]}))
+            return version
+        raise CommitConflict(f"lost the commit race {retries} times")
 
     def history(self) -> list[dict]:
         out = []

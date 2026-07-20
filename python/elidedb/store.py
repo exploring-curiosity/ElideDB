@@ -37,6 +37,19 @@ ROW_GROUP_ROWS = 64 * 1024  # the amortize-vs-overfetch dial (Parquet's
                             # row-group size == SDX's chunk_target_rows)
 
 
+def write_parquet(table: pa.Table, path):
+    """One writer for every file in the store. `ts` gets
+    DELTA_BINARY_PACKED — timestamps are near-arithmetic, so delta encoding
+    beats generic zstd ~3x on that column (the Gorilla/TSDB observation);
+    string columns keep dictionary encoding; everything rides zstd."""
+    dict_cols = [f.name for f in table.schema
+                 if pa.types.is_string(f.type) or pa.types.is_large_string(f.type)]
+    pq.write_table(table, path, row_group_size=ROW_GROUP_ROWS,
+                   compression="zstd",
+                   use_dictionary=dict_cols,
+                   column_encoding={"ts": "DELTA_BINARY_PACKED"})
+
+
 class QueryStats:
     """Bytes accounting: the elision number, file-granular.
 
@@ -94,14 +107,88 @@ class Table:
         self.dir.mkdir(parents=True, exist_ok=True)
         fname = f"part-{uuid.uuid4().hex[:12]}.parquet"
         path = self.dir / fname
-        pq.write_table(table, path, row_group_size=ROW_GROUP_ROWS,
-                       compression="zstd")
+        write_parquet(table, path)
         tsv = table.column("ts").to_numpy()
         entry = FileEntry(fname, len(table), path.stat().st_size,
                           int(tsv[0]), int(tsv[-1]))
         return self.log.commit(op="append", kind=kind,
                                schema=str(table.schema), add=[entry],
                                meta=meta)
+
+    def compact(self, target_rows_per_file: int = 8_000_000) -> dict:
+        """OPTIMIZE: rewrite the active file set into few large, ts-sorted,
+        delta-encoded files — one atomic replace-commit. Fixes the many-
+        small-files tax that every append-only log accumulates, and applies
+        the current encodings to data written before them."""
+        st = self.state()
+        if not st.files:
+            return {"files_before": 0, "files_after": 0}
+        data = self.scan()
+        before_bytes = st.bytes
+        from .log import FileEntry as FE
+        adds = []
+        for lo in range(0, len(data), target_rows_per_file):
+            part = data.slice(lo, target_rows_per_file)
+            fname = f"part-{uuid.uuid4().hex[:12]}.parquet"
+            path = self.dir / fname
+            write_parquet(part, path)
+            tsv = part.column("ts")
+            adds.append(FE(fname, len(part), path.stat().st_size,
+                           tsv[0].as_py(), tsv[-1].as_py()))
+        self.log.commit(op="compact", kind=st.kind, schema=str(data.schema),
+                        add=adds, remove=[f.path for f in st.files],
+                        meta={"files_before": len(st.files),
+                              "bytes_before": before_bytes})
+        after = sum(a.bytes for a in adds)
+        return {"files_before": len(st.files), "files_after": len(adds),
+                "bytes_before": before_bytes, "bytes_after": after,
+                "ratio": round(before_bytes / max(after, 1), 2)}
+
+    def delete_range(self, t0: int, t1: int) -> dict:
+        """Delete rows with ts in [t0, t1] — the 'scrub that run' operation
+        (bad takes, PII, retention). Files fully inside the range are just
+        dropped; overlapping files are rewritten without the range; files
+        outside are untouched. One atomic commit; prior versions still see
+        the data (time travel is the audit trail) until their files are
+        garbage-collected."""
+        import pyarrow.compute as pc
+        from .log import FileEntry as FE
+        st = self.state()
+        removes, adds, dropped = [], [], 0
+        for f in st.files:
+            if f.max_ts < t0 or f.min_ts > t1:
+                continue  # untouched
+            removes.append(f.path)
+            if t0 <= f.min_ts and f.max_ts <= t1:
+                dropped += f.rows
+                continue  # fully covered: no rewrite needed
+            t = pq.read_table(self.dir / f.path)
+            keep = t.filter(pc.or_(pc.less(t.column("ts"), t0),
+                                   pc.greater(t.column("ts"), t1)))
+            dropped += len(t) - len(keep)
+            if len(keep):
+                fname = f"part-{uuid.uuid4().hex[:12]}.parquet"
+                write_parquet(keep, self.dir / fname)
+                tsv = keep.column("ts")
+                adds.append(FE(fname, len(keep),
+                               (self.dir / fname).stat().st_size,
+                               tsv[0].as_py(), tsv[-1].as_py()))
+        if not removes:
+            return {"rows_deleted": 0}
+        self.log.commit(op="delete", kind=st.kind, schema=st.schema,
+                        add=adds, remove=removes,
+                        meta={"deleted_range": [t0, t1],
+                              "rows_deleted": dropped})
+        return {"rows_deleted": dropped, "files_rewritten": len(adds),
+                "files_removed": len(removes)}
+
+    def to_daft(self, version=None):
+        """This table's snapshot as a Daft DataFrame — distributed scans,
+        multimodal UDFs, the whole engine — reading the store's own Parquet
+        files with zero export. (`pip install daft`)"""
+        import daft
+        st = self.state(version)
+        return daft.read_parquet([str(self.dir / f.path) for f in st.files])
 
     # ---- read path --------------------------------------------------------
     def scan(self, t0=None, t1=None, columns=None, version=None,
@@ -255,18 +342,45 @@ class Store:
         return media / f"{src.stem}-{h}{src.suffix}"
 
     def ingest_video(self, table: str, video_path, timestamps_ns=None,
-                     stream=None, meta=None, copy=True) -> int:
+                     stream=None, meta=None, copy=True, transcode=None,
+                     gop_s: float = 1.0, crf: int = 26) -> int:
         """Index a video file: packet scan → frame_index Parquet rows.
 
         copy=True (default): the media file is copied into the store's
         `media/` directory first, so the store directory IS the complete,
-        portable database. copy=False indexes the file in place (byte ranges
-        point at the external path — cheaper, but the store then depends on
-        that file staying put)."""
+        portable database. copy=False indexes the file in place.
+
+        transcode="hevc"|"h264": re-encode the managed copy as a compressed
+        elementary stream (≈10-25x smaller than MJPEG at like quality) with a
+        forced keyframe every `gop_s` seconds. Random access becomes
+        GOP-granular instead of frame-exact — `gop_s` IS the seekability-vs-
+        compression dial, chosen per table at ingest, and decode reads
+        exactly one GOP span per window."""
         import shutil
+        import subprocess
+
+        from .fftools import find
         from .video import scan_video_packets
         src = Path(video_path)
-        if copy:
+        if transcode:
+            assert transcode in ("hevc", "h264")
+            if timestamps_ns is None:  # take pts from the source container
+                probe = scan_video_packets(src)
+                timestamps_ns = probe["ts"].to_pylist()
+            n_in = len(timestamps_ns)
+            span_s = max((timestamps_ns[-1] - timestamps_ns[0]) / 1e9, 0.1)
+            fps = max((n_in - 1) / span_s, 1.0)
+            g = max(1, round(gop_s * fps))
+            dest = self._media_dest(src).with_suffix(f".{transcode}")
+            if not dest.exists():
+                enc = "libx265" if transcode == "hevc" else "libx264"
+                subprocess.run(
+                    [find("ffmpeg"), "-v", "error", "-y", "-i", str(src),
+                     "-c:v", enc, "-preset", "fast", "-crf", str(crf),
+                     "-g", str(g), "-keyint_min", str(g), "-an",
+                     "-f", transcode, str(dest)], check=True)
+            scanned_path, source_ref = dest, f"@media/{dest.name}"
+        elif copy:
             dest = self._media_dest(src)
             if not dest.exists():
                 shutil.copy2(src, dest)
@@ -282,6 +396,8 @@ class Store:
         return self.table(table).append(
             t, kind="frame_index",
             meta={"source": source_ref, "original": str(src.resolve()),
+                  **({"transcode": transcode, "gop_s": gop_s, "crf": crf}
+                     if transcode else {}),
                   **(meta or {})})
 
     def adopt_media(self, table: str = "frames", verbose=True) -> dict:
@@ -317,8 +433,7 @@ class Store:
         t = t.set_column(t.column_names.index("source"), "source", new_src)
         fname = f"part-{_uuid.uuid4().hex[:12]}.parquet"
         path = self.dir / "tables" / table / fname
-        pq.write_table(t, path, row_group_size=ROW_GROUP_ROWS,
-                       compression="zstd")
+        write_parquet(t, path)
         tsv = t.column("ts").to_numpy()
         tab.log.commit(op="adopt-media", kind="frame_index",
                        schema=str(t.schema),

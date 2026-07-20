@@ -55,7 +55,8 @@ def _vec_table(store, name="embeddings", version=None):
 
 
 def embed_windows(store, frame_table="frames", window_s=2.0,
-                  frames_per_window=2, model=None, batch=16, stride_s=None):
+                  frames_per_window=2, model=None, batch=16, stride_s=None,
+                  incremental=True):
     """Tumbling windows over every video stream → mean-pooled SigLIP vectors
     → one commit to the `embeddings` table. Frames come through the same
     byte-range path queries use."""
@@ -67,6 +68,20 @@ def embed_windows(store, frame_table="frames", window_s=2.0,
     stride_ns = int((stride_s or window_s) * 1e9)
     frames = tab.scan()
     streams = sorted(set(frames.column("stream").to_pylist()))
+    # Incremental: only embed windows past what the embeddings table already
+    # covers per stream — adding a new day of footage costs a new day of
+    # embedding, not a re-run of history.
+    done_until = {}
+    if incremental:
+        try:
+            prev = store.table("embeddings").scan()
+            if len(prev):
+                s_arr = prev.column("stream").to_pylist()
+                t1_arr = prev.column("t1").to_pylist()
+                for s_, e_ in zip(s_arr, t1_arr):
+                    done_until[s_] = max(done_until.get(s_, 0), e_)
+        except Exception:
+            pass
     jobs = []  # (stream, t0, t1)
     import pyarrow.compute as pc
     for s in streams:
@@ -75,12 +90,15 @@ def embed_windows(store, frame_table="frames", window_s=2.0,
         t = (int(ts[0]) // win_ns) * win_ns
         while t <= ts[-1]:
             lo, hi = np.searchsorted(ts, [t, t + win_ns])
-            if hi > lo:
+            if hi > lo and t >= done_until.get(s, -1):
                 jobs.append((s, max(t, int(ts[0])),
                              min(t + win_ns - 1, int(ts[-1]))))
             t += stride_ns
     from .video import FrameSet
     t_start = time.time()
+    if not jobs:
+        return {"windows": 0, "dim": None, "version": None, "seconds": 0.0,
+                "note": "nothing new to embed (incremental)"}
     recs = {"ts": [], "t1": [], "stream": [], "vector": []}
     imgs, owners = [], []
 
@@ -153,8 +171,8 @@ def cluster(store, pca_dims=50, min_cluster_size=8):
     import pyarrow.parquet as pq
     import uuid as _uuid
     fname = f"part-{_uuid.uuid4().hex[:12]}.parquet"
-    pq.write_table(out, store.dir / "tables" / "embeddings" / fname,
-                   compression="zstd")
+    from .store import write_parquet
+    write_parquet(out, store.dir / "tables" / "embeddings" / fname)
     from .log import FileEntry
     p = store.dir / "tables" / "embeddings" / fname
     tsv = out.column("ts").to_numpy()

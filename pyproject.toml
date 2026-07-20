@@ -14,6 +14,13 @@ dependencies = [
   "pandas",
   "duckdb",
   "pillow",
+  "opencv-python",
+  "mlx-embeddings",
+  "scikit-learn",   
+  "hdbscan",
+  "umap-learn",
+  "matplotlib",
+  "jupyter",
 ]
 
 [project.optional-dependencies]
