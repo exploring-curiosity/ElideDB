@@ -202,12 +202,37 @@ def cluster(store, pca_dims=50, min_cluster_size=8):
             "noise": int((labels < 0).sum()), "windows": len(out)}
 
 
+def _score_windows(vecs, idx, pos_vecs, neg_vecs, neg_weight):
+    """Compositional scoring over a candidate set.
+
+    - ONE positive term  → plain cosine (classic semantic search).
+    - MANY positive terms → the window's score is the WORST of its per-term
+      cosines (min-pool). This is the compositional AND: 'two people' AND
+      'a laptop' means a clip of two people with NO laptop scores low on the
+      laptop term and is therefore rejected — the fix for 'it returns every
+      clip with two people'.
+    - negative terms      → each subtracts its cosine (weighted), so
+      '... NOT a phone' pushes phone-heavy frames down.
+    """
+    cand = vecs[idx]                          # [m, d]
+    pos = cand @ pos_vecs.T                    # [m, n_pos]
+    score = pos.min(axis=1)                    # min-pool = AND
+    if neg_vecs is not None and len(neg_vecs):
+        score = score - neg_weight * (cand @ neg_vecs.T).max(axis=1)
+    return score
+
+
 def _rank(store, q, k, nprobe, merge=True, t0=None, t1=None, streams=None,
-          method="auto"):
+          method="auto", pos_vecs=None, neg_vecs=None, neg_weight=0.5,
+          min_score=None, percentile=None):
     t, vecs = _vec_table(store)
     all_t0 = t.column("ts").to_numpy()
     all_t1 = t.column("t1").to_numpy()
     all_s = t.column("stream").to_numpy(zero_copy_only=False)
+    # `q` (the coarse retrieval direction) is the mean of positive terms;
+    # `pos_vecs` carries the individual terms for compositional scoring.
+    if pos_vecs is None:
+        pos_vecs = q[None, :]
 
     # ---- hybrid retrieval: predicates pushed INTO candidate selection ------
     # Time and stream are first-class dimensions of this database; vector
@@ -263,15 +288,32 @@ def _rank(store, q, k, nprobe, merge=True, t0=None, t1=None, streams=None,
             except RuntimeError:
                 pass
         idx = np.where(mask)[0]
-        scores = vecs[idx] @ q
+        scores = None
     scanned = len(idx)
+    # Final score is ALWAYS the compositional/exact function over the
+    # candidate set (the coarse tier only shortlists; it never answers).
+    scores = _score_windows(vecs, idx, pos_vecs, neg_vecs, neg_weight)
     streams_sel = all_s[idx]
     w_t0 = all_t0[idx]
     w_t1 = all_t1[idx]
 
+    # ---- precision floor: an ABSOLUTE cut the user controls ----------------
+    # A percentile keeps only the strongest fraction; min_score is a hard
+    # cosine floor. Either turns "top-k of everything" into "only real hits",
+    # so a query with 6 true matches returns 6, not 50.
+    keep = np.ones(len(idx), bool)
+    if percentile is not None and len(scores):
+        keep &= scores >= np.percentile(scores, percentile)
+    if min_score is not None:
+        keep &= scores >= min_score
+    if not keep.all():
+        idx, scores = idx[keep], scores[keep]
+        streams_sel, w_t0, w_t1 = streams_sel[keep], w_t0[keep], w_t1[keep]
+
     stats = {"scanned": scanned, "total": len(vecs), "method": used,
              "clusters_probed": probed, "clusters_total": total_clusters,
-             "predicate_candidates": int(pred.sum())}
+             "predicate_candidates": int(pred.sum()),
+             "after_floor": int(len(idx))}
 
     if not merge:
         order = np.argsort(scores)[::-1][:k]
@@ -279,6 +321,10 @@ def _rank(store, q, k, nprobe, merge=True, t0=None, t1=None, streams=None,
                  "t1": int(w_t1[i]), "score": float(scores[i]),
                  "windows": 1} for i in order]
         return hits, stats
+    if len(idx) == 0:
+        stats["qualifying_windows"] = 0
+        stats["segments"] = 0
+        return [], stats
 
     # ---- dynamic segments: merge, don't chunk -------------------------------
     # Fixed embedding windows are an INDEXING granularity, not an answer
@@ -316,12 +362,70 @@ def _rank(store, q, k, nprobe, merge=True, t0=None, t1=None, streams=None,
     return segs[:k], stats
 
 
-def search_text(store, text, k=10, nprobe=3, merge=True, t0=None, t1=None,
-                streams=None, method="auto"):
+def _parse_query(text):
+    """Parse a compositional query string into (positive terms, negatives).
+
+    Grammar (all optional, combinable):
+      'a AND b'      — every term must match (compositional AND)
+      'a NOT b'      — exclude b   (also '-b' or 'a -b')
+      'a; b'         — same as AND
+    Plain text with none of these is a single positive term (classic search).
+    """
+    import re
+    neg = []
+    # split on NOT / leading-minus tokens
+    parts = re.split(r'\bNOT\b', text)
+    head = parts[0]
+    for extra in parts[1:]:
+        neg.append(extra.strip())
+    pos_raw = re.split(r'\bAND\b|;', head)
+    pos = []
+    for term in pos_raw:
+        term = term.strip()
+        # pull out inline -word exclusions
+        toks = term.split()
+        keep = []
+        for tk in toks:
+            if tk.startswith("-") and len(tk) > 1:
+                neg.append(tk[1:])
+            else:
+                keep.append(tk)
+        if keep:
+            pos.append(" ".join(keep))
+    pos = [p for p in pos if p]
+    neg = [n for n in neg if n]
+    return (pos or [text]), neg
+
+
+def search(store, text, k=10, nprobe=3, merge=True, t0=None, t1=None,
+           streams=None, method="auto", neg_weight=0.5, min_score=None,
+           percentile=None):
+    """Compositional text search. `text` may use AND / NOT / -term:
+        'two people AND a laptop NOT a phone'
+    `min_score` (absolute cosine floor) or `percentile` (keep top X%) turn
+    ranked-everything into precise retrieval."""
     st = store.table("embeddings").state()
-    q = embed_text(text, st.meta.get("model", DEFAULT_MODEL))
-    return _rank(store, q, k, nprobe, merge=merge, t0=t0, t1=t1,
-                 streams=streams, method=method)
+    model = st.meta.get("model", DEFAULT_MODEL)
+    pos_terms, neg_terms = _parse_query(text)
+    pos_vecs = np.stack([embed_text(p, model) for p in pos_terms])
+    neg_vecs = (np.stack([embed_text(n, model) for n in neg_terms])
+                if neg_terms else None)
+    q = pos_vecs.mean(axis=0)
+    q /= np.linalg.norm(q)  # coarse retrieval direction
+    hits, stats = _rank(store, q, k, nprobe, merge=merge, t0=t0, t1=t1,
+                        streams=streams, method=method, pos_vecs=pos_vecs,
+                        neg_vecs=neg_vecs, neg_weight=neg_weight,
+                        min_score=min_score, percentile=percentile)
+    stats["positive_terms"] = pos_terms
+    stats["negative_terms"] = neg_terms
+    return hits, stats
+
+
+def search_text(store, text, k=10, nprobe=3, merge=True, t0=None, t1=None,
+                streams=None, method="auto", **kw):
+    # backward-compatible alias; forwards compositional kwargs too
+    return search(store, text, k=k, nprobe=nprobe, merge=merge, t0=t0, t1=t1,
+                  streams=streams, method=method, **kw)
 
 
 def search_clip(store, stream, t0, t1, k=10, nprobe=3, merge=True,

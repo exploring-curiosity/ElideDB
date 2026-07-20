@@ -139,6 +139,8 @@ local SigLIP model — nothing leaves your machine — and clusters the results:
 ```bash
 elidedb embed lake/mydb                # first run downloads the model (~2 GB)
 elidedb search lake/mydb "a dog running on grass"
+# compositional: require BOTH, exclude one
+elidedb search lake/mydb "a dog AND green grass NOT a person"
 ```
 
 Results are **dynamic segments**, not fixed chunks: consecutive matching

@@ -134,8 +134,32 @@
     border:1px solid var(--line); border-radius:8px; padding:10px 12px;
     font:12.5px/1.5 ui-monospace,Menlo,monospace; resize:vertical;
   }
-  textarea:focus,input:focus { outline:2px solid var(--accent); border-color:transparent; }
-  .runrow { display:flex; gap:10px; align-items:center; margin-top:10px; }
+  textarea:focus,input:focus,select:focus { outline:2px solid var(--accent); border-color:transparent; }
+  select { background:var(--code-bg); color:var(--ink); border:1px solid var(--line);
+    border-radius:6px; padding:6px 8px; font:12px ui-monospace,Menlo,monospace; }
+  .hint2 { color:var(--faint); font-size:11.5px; margin:7px 2px 0; line-height:1.5; }
+  .hint2 b { color:var(--muted); font-family:ui-monospace,Menlo,monospace; }
+  .ctrlgrid { display:flex; flex-wrap:wrap; gap:14px; margin-top:12px; align-items:center; }
+  .ctrlgrid label { display:flex; align-items:center; gap:6px; font-size:11.5px;
+    color:var(--muted); font-weight:600; }
+  .ctrlgrid input[type=number] { width:64px; }
+  .ctrlgrid input[type=range] { width:120px; accent-color:var(--accent); }
+  /* index / maintenance cards */
+  .ixrow { display:flex; align-items:center; gap:12px; padding:9px 0;
+    border-bottom:1px solid var(--grid); font-size:13px; }
+  .ixrow:last-child { border-bottom:0; }
+  .ixrow .grow { flex:1; }
+  .btn { background:var(--panel-2); border:1px solid var(--line); color:var(--ink);
+    border-radius:7px; padding:6px 13px; cursor:pointer; font:600 12px -apple-system,sans-serif; }
+  .btn:hover { border-color:var(--accent); }
+  .btn.danger { color:#e66767; }
+  .btn.danger:hover { border-color:#e66767; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .pill { font-size:10px; padding:1px 8px; border-radius:999px; border:1px solid var(--line);
+    color:var(--muted); font-family:ui-monospace,Menlo,monospace; }
+  .pill.warn { color:#c98500; border-color:#c98500; }
+  .pill.ok { color:var(--accent); border-color:var(--accent); }
+  .runrow { display:flex; gap:10px; align-items:center; margin-top:14px; }
   button.run {
     background:var(--accent); color:#fff; border:0; border-radius:8px;
     font:600 13px/1 -apple-system,sans-serif; padding:9px 20px; cursor:pointer;
@@ -202,9 +226,11 @@
       <button data-v="overview" class="on">Overview</button>
       <button data-v="timeline">Timeline</button>
       <button data-v="storage">Storage</button>
+      <button data-v="indexes">Indexes</button>
       <button data-v="map">Semantic map</button>
       <button data-v="geo" id="geo-btn" style="display:none">Geo</button>
       <button data-v="query">Query</button>
+      <button data-v="maintenance">Maintenance</button>
     </div>
     <span class="qstat tnum" id="store-sub" style="margin-left:auto"></span>
   </div>
@@ -242,21 +268,71 @@
         <p class="note" id="geo-note"></p>
         <canvas id="route" class="viz" height="420" style="cursor:default"></canvas></div>
     </div>
+    <div class="view" id="v-indexes"></div>
+    <div class="view" id="v-maintenance"></div>
     <div class="view" id="v-query">
       <div class="panel">
         <h2>Query console</h2>
         <div class="seg qmodes" id="qmodes">
-          <button data-q="text" class="on">Semantic text</button>
+          <button data-q="text" class="on">Semantic</button>
+          <button data-q="predicate">Predicate</button>
           <button data-q="sql">SQL</button>
           <button data-q="window">Window</button>
         </div>
+
+        <!-- ── SEMANTIC (compositional) ── -->
         <div id="q-text">
-          <input type="text" id="text-input" placeholder='describe a moment… e.g. "pedestrians crossing the street"'>
-          <p class="note" style="margin:8px 0 0">Results are <b>dynamic segments</b>: consecutive
-            matching windows merge into one hit of its true duration — nothing fixed-size, no
-            sub-clip duplicates. Ranking is by visual appearance (SigLIP); attributes the pixels
-            of single frames can't show — speed, direction, sound — are weakly captured.</p>
+          <input type="text" id="text-input"
+            placeholder='describe a moment… try  two people AND a laptop  NOT a phone'>
+          <div class="hint2">
+            <b>AND</b> = every term must match (a clip with people but no laptop is rejected) ·
+            <b>NOT</b> / <b>-term</b> = exclude · plain text = classic semantic search
+          </div>
+          <div class="ctrlgrid">
+            <label>Precision
+              <select id="floor-mode">
+                <option value="none">rank all</option>
+                <option value="percentile" selected>top percentile</option>
+                <option value="min_score">min cosine</option>
+              </select></label>
+            <label id="floor-wrap">keep top
+              <input type="range" id="floor" min="50" max="99" value="90">
+              <span id="floor-val" class="tnum">10%</span></label>
+            <label>Vector tier
+              <select id="method">
+                <option value="auto">auto</option>
+                <option value="exact">exact</option>
+                <option value="hnsw">HNSW</option>
+                <option value="ivfpq">IVF-PQ</option>
+              </select></label>
+            <label>Max results
+              <input type="number" id="k-input" value="12" min="1" max="48"></label>
+          </div>
+          <div class="ctrlgrid">
+            <label>Stream <select id="stream-filter"><option value="">any</option></select></label>
+            <label>From +s <input type="number" id="hyb-t0" placeholder="any" style="width:90px"></label>
+            <label>To +s <input type="number" id="hyb-t1" placeholder="any" style="width:90px"></label>
+          </div>
         </div>
+
+        <!-- ── PREDICATE (B+ / zone-map pushdown on a column) ── -->
+        <div id="q-predicate" style="display:none">
+          <div class="ctrlgrid">
+            <label>Table <select id="pred-table"></select></label>
+            <label>Column <select id="pred-col"></select></label>
+            <label>Op <select id="pred-op">
+              <option value=">=">&ge;</option><option value="<=">&le;</option>
+              <option value="==">=</option><option value="between">between</option>
+            </select></label>
+            <label>Value <input type="number" step="any" id="pred-val" style="width:110px"></label>
+            <label id="pred-val2-wrap" style="display:none">and
+              <input type="number" step="any" id="pred-val2" style="width:110px"></label>
+          </div>
+          <div class="hint2">Non-time predicate pushdown. With a B+ index on the column it reads
+            <b>only the row groups containing hits</b>; without one it honestly full-scans.
+            Build indexes in the <b>Indexes</b> tab.</div>
+        </div>
+
         <div id="q-sql" style="display:none">
           <textarea id="sql-input" rows="4">SELECT count(*) AS rows, min(ts) AS min_ts, max(ts) AS max_ts FROM gps</textarea>
         </div>
@@ -265,9 +341,6 @@
         </div>
         <div class="runrow">
           <button class="run" id="run">Run</button>
-          <label class="qstat" style="display:flex;align-items:center;gap:6px">max results
-            <input type="number" id="k-input" value="12" min="1" max="48"
-              style="width:60px;padding:5px 8px"></label>
           <span class="qstat" id="q-stat"></span>
         </div>
         <div id="q-out"></div>
@@ -322,23 +395,38 @@ async function loadStores() {
   if (STORES.length) selectStore(STORES[0].key);
 }
 
-async function selectStore(key) {
+async function selectStore(key, refresh) {
+  if (refresh) {   // reload store summary after a mutating op
+    STORES = await j("/api/stores");
+  }
   CUR = STORES.find(s => s.key === key);
-  MAP = GEO = PIN = null;
+  MAP = GEO = PIN = IXDATA = null;
   document.querySelectorAll(".store-card").forEach(el =>
     el.classList.toggle("on", el.dataset.k === key));
   $("store-title").textContent = CUR.name;
   $("store-sub").textContent =
     `${fmtB(CUR.db_bytes)} database · span ${Math.round((CUR.max_ts - CUR.min_ts)/1e9)} s`;
+  // stream filter for hybrid semantic search
+  const vstreams = CUR.tables.filter(t => t.kind === "frame_index");
+  // stream names come from the map payload; populate lazily but seed "any"
+  $("stream-filter").innerHTML = `<option value="">any stream</option>`;
   renderOverview(); renderTimeline(); renderStorageTabs();
   $("geo-btn").style.display = "none";
   j(`/api/geo?store=${key}`).then(g => {
     GEO = g;
     if (g.points.length) { $("geo-btn").style.display = ""; }
   }).catch(() => {});
+  // fetch stream list (for the hybrid filter) from the semantic map payload
+  j(`/api/map?store=${key}`).then(mp => {
+    const names = [...new Set((mp.points || []).map(p => p.s))].sort();
+    $("stream-filter").innerHTML = `<option value="">any stream</option>` +
+      names.map(n => `<option>${esc(n)}</option>`).join("");
+  }).catch(() => {});
   const cur = document.querySelector("#views button.on").dataset.v;
   if (cur === "map") loadMap();
   if (cur === "geo") drawGeo();
+  if (cur === "indexes") loadIndexes();
+  if (cur === "maintenance") renderMaintenance();
 }
 
 /* ── overview ── */
@@ -623,11 +711,39 @@ $("player-pin").addEventListener("click", () => {
 function setQMode(m) {
   document.querySelectorAll("#qmodes button").forEach(b => b.classList.toggle("on", b.dataset.q === m));
   $("q-text").style.display = m === "text" ? "" : "none";
+  $("q-predicate").style.display = m === "predicate" ? "" : "none";
   $("q-sql").style.display = m === "sql" ? "" : "none";
   $("q-window").style.display = m === "window" ? "" : "none";
+  if (m === "predicate") fillPredicate();
 }
 document.querySelectorAll("#qmodes button").forEach(b =>
   b.addEventListener("click", () => setQMode(b.dataset.q)));
+
+// precision-floor slider live label + mode gating
+$("floor-mode").addEventListener("change", syncFloor);
+$("floor").addEventListener("input", syncFloor);
+function syncFloor() {
+  const mode = $("floor-mode").value, f = $("floor");
+  $("floor-wrap").style.display = mode === "none" ? "none" : "";
+  if (mode === "min_score") { f.min = 0; f.max = 30; f.step = 1;
+    $("floor-val").textContent = (f.value / 100).toFixed(2); }
+  else { f.min = 50; f.max = 99; f.step = 1;
+    $("floor-val").textContent = "top " + (100 - +f.value) + "%"; }
+}
+// predicate dropdowns from /api/indexes
+let IXDATA = null;
+async function fillPredicate() {
+  IXDATA = IXDATA || await j(`/api/indexes?store=${CUR.key}`).catch(() => ({indexable:{}}));
+  const tsel = $("pred-table");
+  tsel.innerHTML = Object.keys(IXDATA.indexable).map(t => `<option>${esc(t)}</option>`).join("");
+  tsel.onchange = () => {
+    $("pred-col").innerHTML = (IXDATA.indexable[tsel.value] || [])
+      .map(c => `<option>${esc(c)}</option>`).join("");
+  };
+  tsel.onchange();
+}
+$("pred-op").addEventListener("change", () =>
+  $("pred-val2-wrap").style.display = $("pred-op").value === "between" ? "" : "none");
 
 $("run").addEventListener("click", runQuery);
 $("text-input").addEventListener("keydown", e => { if (e.key === "Enter") runQuery(); });
@@ -639,8 +755,24 @@ async function runQuery() {
   out.innerHTML = ""; stat.textContent = "running…";
   try {
     let body = {store: CUR.key};
-    if (m === "text") Object.assign(body, {type: "text", text: $("text-input").value,
-                                           k: +$("k-input").value || 12});
+    if (m === "text") {
+      body.type = "text"; body.text = $("text-input").value;
+      body.k = +$("k-input").value || 12;
+      body.method = $("method").value;
+      const fm = $("floor-mode").value;
+      if (fm !== "none") { body.floor_mode = fm;
+        body.floor = fm === "min_score" ? +$("floor").value / 100 : +$("floor").value; }
+      const s = $("stream-filter").value; if (s) body.streams = [s];
+      const a = $("hyb-t0").value, b = $("hyb-t1").value;
+      if (a !== "") body.t0 = Math.round(CUR.min_ts + +a * 1e9);
+      if (b !== "") body.t1 = Math.round(CUR.min_ts + +b * 1e9);
+    }
+    if (m === "predicate") {
+      body.type = "predicate"; body.table = $("pred-table").value;
+      body.column = $("pred-col").value; body.op = $("pred-op").value;
+      body.value = $("pred-val").value;
+      if (body.op === "between") body.value2 = $("pred-val2").value;
+    }
     if (m === "sql") Object.assign(body, {type: "sql", sql: $("sql-input").value});
     if (m === "window") {
       const [a, b] = $("win-input").value.split(",").map(Number);
@@ -649,16 +781,24 @@ async function runQuery() {
     }
     const r = await j("/api/query", {method: "POST",
       headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
-    if (m === "sql") {
-      stat.textContent = `${r.rows.length} rows · ${r.ms} ms`;
+    if (m === "sql" || m === "predicate") {
+      const st = r.stats;
+      stat.textContent = (m === "predicate"
+        ? `${r.count.toLocaleString()} rows · ${st.files} files · ${st.elided_pct}% elided · `
+        : `${r.rows.length} rows · `) + `${r.ms} ms`;
       out.innerHTML = `<div class="tablewrap" style="margin-top:14px"><table><thead><tr>` +
         r.columns.map(c => `<th>${esc(c)}</th>`).join("") + `</tr></thead><tbody>` +
-        r.rows.map(row => `<tr>` + row.map(v => `<td class="tnum">${esc(v ?? "∅")}</td>`).join("") + `</tr>`).join("") +
+        r.rows.map(row => `<tr>` + row.map(v => `<td class="tnum">${esc(typeof v === "number" && !Number.isInteger(v) ? v.toFixed(4) : (v ?? "∅"))}</td>`).join("") + `</tr>`).join("") +
         `</tbody></table></div>`;
     } else if (m === "text" || body.type === "clip") {
-      const seg = r.stats.segments != null
-        ? ` · ${r.hits.length} of ${r.stats.segments} segment${r.stats.segments === 1 ? "" : "s"} (from ${r.stats.qualifying_windows} matching windows)` : "";
-      stat.textContent = `scanned ${r.stats.scanned}/${r.stats.total} vectors · probed ${r.stats.clusters_probed}/${r.stats.clusters_total} clusters${seg} · ${r.ms} ms · click a hit to play`;
+      const S = r.stats;
+      const terms = (S.positive_terms || []).map(t => `<span class="pill ok">${esc(t)}</span>`).join(" ")
+        + (S.negative_terms || []).map(t => `<span class="pill warn">NOT ${esc(t)}</span>`).join(" ");
+      const seg = S.segments != null
+        ? `${r.hits.length} of ${S.segments} segment${S.segments === 1 ? "" : "s"} · ` : "";
+      const floor = S.after_floor != null ? `floor→${S.after_floor} windows · ` : "";
+      stat.innerHTML = `${terms} &nbsp; ${seg}${floor}tier <b>${esc(S.method)}</b> · `
+        + `scanned ${S.scanned}/${S.total} · ${r.ms} ms · click a hit to play`;
       out.innerHTML = `<div class="hitgrid">` + r.hits.map(h => {
         const dur = (h.t1 - h.t0) / 1e9;
         const mid = Math.round((+h.t0 + +h.t1) / 2);
@@ -706,6 +846,121 @@ async function runQuery() {
   }
 }
 
+/* ── indexes view ── */
+async function loadIndexes() {
+  const el = $("v-indexes");
+  el.innerHTML = `<div class="panel"><h2>Indexes</h2><div class="empty">reading…</div></div>`;
+  const d = await j(`/api/indexes?store=${CUR.key}`).catch(e => ({error: e.message}));
+  IXDATA = d;
+  if (d.error) { el.innerHTML = `<div class="panel"><div class="err">${esc(d.error)}</div></div>`; return; }
+  let h = `<div class="panel"><h2>Secondary indexes — B+ trees</h2>
+    <p class="note">Zone maps prune the time axis for free; a B+ tree on any other numeric
+      column makes range/point predicates read only the row groups with hits. Immutable,
+      bulk-loaded, rebuilt per version.</p>`;
+  const built = new Set(d.bptree.map(x => x.table + "." + x.column));
+  for (const [tbl, cols] of Object.entries(d.indexable)) {
+    for (const c of cols) {
+      const ex = d.bptree.find(x => x.table === tbl && x.column === c);
+      h += `<div class="ixrow"><span class="mono">${esc(tbl)}.${esc(c)}</span>
+        <span class="grow"></span>
+        ${ex ? `<span class="pill ok">v${ex.version} · ${fmtB(ex.bytes)}</span>` : ""}
+        <button class="btn" data-ix-t="${esc(tbl)}" data-ix-c="${esc(c)}">${ex ? "rebuild" : "build B+ index"}</button></div>`;
+    }
+  }
+  if (!Object.keys(d.indexable).length) h += `<div class="empty">no numeric columns to index</div>`;
+  h += `</div>`;
+  if (d.has_embeddings) {
+    h += `<div class="panel"><h2>Vector indexes — ANN tiers</h2>
+      <p class="note">Over the embeddings table. HNSW = graph ANN (sub-ms at scale); IVF-PQ =
+        product-quantized shortlist + exact rerank. Auto-selected at query time; exact and
+        learned-cell IVF need no build.</p>`;
+    for (const kind of ["hnsw", "ivfpq"]) {
+      const ex = d.ann.find(x => x.kind === kind);
+      h += `<div class="ixrow"><span class="mono">${kind.toUpperCase()}</span><span class="grow"></span>
+        ${ex ? `<span class="pill ${ex.stale ? "warn" : "ok"}">v${ex.version}${ex.stale ? " (stale)" : ""} · ${fmtB(ex.bytes)}</span>` : ""}
+        <button class="btn" data-ann="${kind}">${ex ? "rebuild" : "build " + kind.toUpperCase()}</button></div>`;
+    }
+    h += `</div>`;
+  }
+  el.innerHTML = h;
+  el.querySelectorAll("[data-ix-t]").forEach(btn => btn.onclick = () =>
+    buildIx(btn, {table: btn.dataset.ixT, column: btn.dataset.ixC}));
+  el.querySelectorAll("[data-ann]").forEach(btn => btn.onclick = () =>
+    buildIx(btn, {ann: btn.dataset.ann}));
+}
+async function buildIx(btn, spec) {
+  btn.disabled = true; const old = btn.textContent; btn.textContent = "building…";
+  try {
+    const r = await j("/api/build_index", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({store: CUR.key, ...spec})});
+    btn.textContent = `done · ${r.ms} ms`;
+    setTimeout(loadIndexes, 700);
+  } catch (e) { btn.textContent = "failed"; btn.title = e.message; btn.disabled = false;
+    setTimeout(() => btn.textContent = old, 1500); }
+}
+
+/* ── maintenance view ── */
+function renderMaintenance() {
+  const el = $("v-maintenance");
+  let h = `<div class="panel"><h2>Maintenance — lakehouse operations</h2>
+    <p class="note">Every operation is one atomic commit; earlier versions stay readable
+      (time travel) until vacuumed. All honest about what they touch.</p></div>`;
+  h += `<div class="panel"><h2>Compact <span class="pill">OPTIMIZE</span></h2>
+    <p class="note">Rewrite a table's active files into few large, ts-sorted, delta-encoded
+      files. Fixes the many-small-files tax of append-only logs.</p>
+    <div class="ctrlgrid"><label>Table <select id="mt-compact-tbl"></select></label>
+      <button class="btn" id="mt-compact">Compact</button>
+      <span class="qstat" id="mt-compact-out"></span></div></div>`;
+  h += `<div class="panel"><h2>Vacuum <span class="pill">GC</span></h2>
+    <p class="note">Delete parquet parts and managed media unreachable from the last N versions.
+      Frees space; shortens time-travel depth — that's the trade.</p>
+    <div class="ctrlgrid"><label>Keep last <input type="number" id="mt-retain" value="3" min="1" style="width:56px"> versions</label>
+      <button class="btn" id="mt-vacuum-dry">Dry run</button>
+      <button class="btn danger" id="mt-vacuum">Vacuum</button>
+      <span class="qstat" id="mt-vacuum-out"></span></div></div>`;
+  h += `<div class="panel"><h2>Delete range <span class="pill warn">destructive</span></h2>
+    <p class="note">Scrub a time range (bad run / PII / retention). Covered files drop,
+      overlapping files rewrite — one atomic commit.</p>
+    <div class="ctrlgrid"><label>Table <select id="mt-del-tbl"></select></label>
+      <label>from +s <input type="number" id="mt-del-t0" style="width:90px"></label>
+      <label>to +s <input type="number" id="mt-del-t1" style="width:90px"></label>
+      <button class="btn danger" id="mt-del">Delete range</button>
+      <span class="qstat" id="mt-del-out"></span></div></div>`;
+  el.innerHTML = h;
+  const tbls = CUR.tables.filter(t => t.rows && t.table !== "centroids")
+    .map(t => `<option>${esc(t.table)}</option>`).join("");
+  $("mt-compact-tbl").innerHTML = tbls; $("mt-del-tbl").innerHTML = tbls;
+  const post = (o) => j("/api/maintenance", {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({store: CUR.key, ...o})});
+  $("mt-compact").onclick = async () => {
+    $("mt-compact-out").textContent = "…";
+    try { const r = await post({op: "compact", table: $("mt-compact-tbl").value});
+      $("mt-compact-out").textContent = `${r.files_before}→${r.files_after} files · ${r.ratio}× · ${r.ms} ms`;
+      selectStore(CUR.key, true);
+    } catch (e) { $("mt-compact-out").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  };
+  const vac = (dry) => async () => {
+    const out = $("mt-vacuum-out"); out.textContent = "…";
+    try { const r = await post({op: "vacuum", retain: +$("mt-retain").value, dry_run: dry});
+      out.textContent = `${dry ? "would free" : "freed"} ${fmtB(r.bytes_freed)} · ${r.files_removed} files · ${r.ms} ms`;
+      if (!dry) selectStore(CUR.key, true);
+    } catch (e) { out.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  };
+  $("mt-vacuum-dry").onclick = vac(true); $("mt-vacuum").onclick = vac(false);
+  $("mt-del").onclick = async () => {
+    if (!confirm("Delete rows in this time range? Earlier versions keep the data until vacuum.")) return;
+    const out = $("mt-del-out"); out.textContent = "…";
+    try { const r = await post({op: "delete_range", table: $("mt-del-tbl").value,
+        t0: Math.round(CUR.min_ts + +$("mt-del-t0").value * 1e9),
+        t1: Math.round(CUR.min_ts + +$("mt-del-t1").value * 1e9)});
+      out.textContent = `deleted ${r.rows_deleted.toLocaleString()} rows · ${r.files_rewritten} rewritten · ${r.ms} ms`;
+      selectStore(CUR.key, true);
+    } catch (e) { out.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  };
+}
+
 /* ── view switching ── */
 document.querySelectorAll("#views button").forEach(b =>
   b.addEventListener("click", () => {
@@ -715,10 +970,13 @@ document.querySelectorAll("#views button").forEach(b =>
     if (b.dataset.v === "map") loadMap();
     if (b.dataset.v === "storage") loadStorage();
     if (b.dataset.v === "geo") drawGeo();
+    if (b.dataset.v === "indexes") loadIndexes();
+    if (b.dataset.v === "maintenance") renderMaintenance();
   }));
 
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { drawScatter(); drawGeo(); });
 addEventListener("resize", () => { clearTimeout(window._rz); window._rz = setTimeout(() => { if (MAP) drawScatter(); drawGeo(); }, 150); });
+syncFloor();
 loadStores();
 </script>
 </body>

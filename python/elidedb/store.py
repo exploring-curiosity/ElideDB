@@ -765,10 +765,21 @@ class Store:
         return embed_windows(self, frame_table, window_s, frames_per_window,
                              model, batch)
 
-    def search_text(self, text: str, k=10, nprobe=3):
-        from .embeddings import search_text
-        return search_text(self, text, k, nprobe)
+    def search(self, text: str, k=10, nprobe=3, merge=True, t0=None, t1=None,
+               streams=None, method="auto", neg_weight=0.5, min_score=None,
+               percentile=None):
+        """Compositional text search. `text` supports AND / NOT / -term;
+        `min_score`/`percentile` add a precision floor. See embeddings.search."""
+        from .embeddings import search
+        return search(self, text, k=k, nprobe=nprobe, merge=merge, t0=t0,
+                      t1=t1, streams=streams, method=method,
+                      neg_weight=neg_weight, min_score=min_score,
+                      percentile=percentile)
 
-    def search_clip(self, stream: str, t0: int, t1: int, k=10, nprobe=3):
+    def search_text(self, text: str, k=10, nprobe=3, **kw):
+        from .embeddings import search_text
+        return search_text(self, text, k=k, nprobe=nprobe, **kw)
+
+    def search_clip(self, stream: str, t0: int, t1: int, k=10, nprobe=3, **kw):
         from .embeddings import search_clip
-        return search_clip(self, stream, t0, t1, k, nprobe)
+        return search_clip(self, stream, t0, t1, k=k, nprobe=nprobe, **kw)

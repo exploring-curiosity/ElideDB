@@ -277,6 +277,79 @@ def api_clip(key: str, stream: str, t0: int, t1: int, width: int = 640):
     return out_path.read_bytes()
 
 
+def api_indexes(key: str):
+    """Every index in the store: B+ trees per table + ANN tiers on
+    embeddings, with size and the data version each was built for."""
+    db = STORES[key]
+    out = {"bptree": [], "ann": []}
+    for name in db.tables():
+        ixdir = db.dir / "tables" / name / "_index"
+        if not ixdir.is_dir():
+            continue
+        for p in ixdir.glob("*.bpt"):
+            col, ver = p.stem.rsplit(".v", 1)
+            out["bptree"].append({"table": name, "column": col,
+                                  "version": int(ver),
+                                  "bytes": p.stat().st_size})
+        for p in list(ixdir.glob("hnsw.v*.bin")) + list(ixdir.glob("ivfpq.v*.npz")):
+            kind = "hnsw" if p.name.startswith("hnsw") else "ivfpq"
+            ver = int(p.name.split(".v")[1].split(".")[0])
+            cur = db.table("embeddings").state().version
+            out["ann"].append({"kind": kind, "version": ver,
+                               "current": cur, "stale": ver != cur,
+                               "bytes": p.stat().st_size})
+    # candidate numeric columns for B+ indexing
+    out["indexable"] = {}
+    for name in db.tables():
+        st = db.table(name).state()
+        if st.kind != "timeseries" or not st.files:
+            continue
+        import pyarrow.parquet as pq
+        schema = pq.ParquetFile(db.dir / "tables" / name / st.files[0].path) \
+            .schema_arrow
+        import pyarrow as pa
+        cols = [f.name for f in schema
+                if f.name != "ts" and (pa.types.is_integer(f.type)
+                                       or pa.types.is_floating(f.type))]
+        if cols:
+            out["indexable"][name] = cols
+    out["has_embeddings"] = "embeddings" in db.tables() and \
+        db.table("embeddings").state().rows > 0
+    return out
+
+
+def api_build_index(key: str, body: dict):
+    db = STORES[key]
+    t0 = time.perf_counter()
+    if body.get("ann"):
+        from . import ann
+        r = (ann.build_hnsw(db) if body["ann"] == "hnsw"
+             else ann.build_ivfpq(db))
+        r["ms"] = round((time.perf_counter() - t0) * 1e3)
+        return r
+    r = db.table(body["table"]).create_index(body["column"])
+    r["ms"] = round((time.perf_counter() - t0) * 1e3)
+    return r
+
+
+def api_maintenance(key: str, body: dict):
+    db = STORES[key]
+    op = body["op"]
+    t0 = time.perf_counter()
+    if op == "compact":
+        r = db.table(body["table"]).compact()
+    elif op == "vacuum":
+        r = db.vacuum(retain_versions=int(body.get("retain", 3)),
+                      dry_run=bool(body.get("dry_run", False)))
+    elif op == "delete_range":
+        r = db.table(body["table"]).delete_range(int(body["t0"]),
+                                                 int(body["t1"]))
+    else:
+        raise ValueError(f"unknown maintenance op {op!r}")
+    r["ms"] = round((time.perf_counter() - t0) * 1e3)
+    return r
+
+
 def api_query(key: str, body: dict):
     db = STORES[key]
     kind = body.get("type")
@@ -287,13 +360,41 @@ def api_query(key: str, body: dict):
                 "rows": json.loads(df.to_json(orient="values")),
                 "ms": round((time.perf_counter() - t_start) * 1e3, 1)}
     if kind == "text":
-        hits, stats = db.search_text(body["text"], k=int(body.get("k", 8)),
-                                     nprobe=int(body.get("nprobe", 3)))
+        floor = body.get("floor")
+        kw = {}
+        if body.get("floor_mode") == "percentile" and floor is not None:
+            kw["percentile"] = float(floor)
+        elif body.get("floor_mode") == "min_score" and floor is not None:
+            kw["min_score"] = float(floor)
+        hits, stats = db.search(
+            body["text"], k=int(body.get("k", 8)),
+            nprobe=int(body.get("nprobe", 3)),
+            method=body.get("method", "auto"),
+            neg_weight=float(body.get("neg_weight", 0.5)),
+            t0=body.get("t0"), t1=body.get("t1"),
+            streams=body.get("streams") or None, **kw)
         return {"hits": hits, "stats": stats,
+                "ms": round((time.perf_counter() - t_start) * 1e3, 1)}
+    if kind == "predicate":
+        from elidedb.store import QueryStats
+        qs = QueryStats()
+        tab = db.table(body["table"])
+        vals = [float(body["value"])] if body.get("value2") in (None, "") \
+            else [float(body["value"]), float(body["value2"])]
+        out = tab.where(body["column"], body["op"], *vals, stats=qs).to_pandas()
+        return {"columns": list(out.columns[:8]),
+                "rows": json.loads(out.head(50).iloc[:, :8].to_json(
+                    orient="values")),
+                "count": len(out),
+                "stats": {"files": f"{qs.files_touched}/{qs.files_total}",
+                          "bytes_touched": qs.bytes_touched,
+                          "corpus_bytes": qs.corpus_bytes,
+                          "elided_pct": round(qs.elided_pct, 3)},
                 "ms": round((time.perf_counter() - t_start) * 1e3, 1)}
     if kind == "clip":
         hits, stats = db.search_clip(body["stream"], int(body["t0"]),
-                                     int(body["t1"]), k=int(body.get("k", 8)))
+                                     int(body["t1"]), k=int(body.get("k", 8)),
+                                     method=body.get("method", "auto"))
         return {"hits": hits, "stats": stats,
                 "ms": round((time.perf_counter() - t_start) * 1e3, 1)}
     if kind == "window":
@@ -383,6 +484,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(db.table(q["table"]).history())
             if u.path == "/api/storage":
                 return self._json(api_storage(q["store"], q["table"]))
+            if u.path == "/api/indexes":
+                return self._json(api_indexes(q["store"]))
             if u.path == "/api/thumb":
                 jpg = api_thumb(q["store"], q.get("stream", ""),
                                 int(q["t"]), int(q.get("w", "360")))
@@ -407,6 +510,10 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n) or b"{}")
             if u.path == "/api/query":
                 return self._json(api_query(body["store"], body))
+            if u.path == "/api/build_index":
+                return self._json(api_build_index(body["store"], body))
+            if u.path == "/api/maintenance":
+                return self._json(api_maintenance(body["store"], body))
             return self._json({"error": "not found"}, 404)
         except Exception as e:
             return self._json({"error": f"{type(e).__name__}: {e}"}, 500)
