@@ -36,6 +36,15 @@ from elidedb import Store
 managed copy ~10-25x smaller with a keyframe every `gop_s` seconds; decode
 becomes GOP-granular (reads one GOP span per window).
 
+### Secondary & vector indexes
+
+| method | description |
+|---|---|
+| `t.create_index(column, order=256)` | immutable bulk-loaded **B+ tree** (BPT1) over any numeric column; rebuild after appends |
+| `t.where(column, op, value, value2=None, columns=None)` | predicate pushdown on a non-time column (`==`,`>=`,`<=`,`between`) — with a B+ index reads only the row groups with hits; without one, honest full-scan fallback |
+| `elidedb.ann.build_hnsw(db)` / `build_ivfpq(db)` | **HNSW** graph / **IVF-PQ** (product-quantized shortlist + exact rerank) over the embeddings table |
+| `search_text/clip(..., method="auto"\|"exact"\|"hnsw"\|"ivfpq", t0=, t1=, streams=)` | tier auto-selected; **hybrid**: time-range & stream predicates pushed into candidate selection |
+
 ### Maintenance
 
 | method | description |
@@ -114,6 +123,7 @@ elidedb search <store> "text" [-k 8]
 elidedb adopt  <store>                 (pull referenced media into the store)
 elidedb optimize <store> [--table T]   (compact into fewer, delta-encoded files)
 elidedb vacuum   <store> [--retain N] [--dry-run]
+elidedb index    <store> [--table T --column C | --ann hnsw|ivfpq]
 elidedb sql    <store> "SELECT ..."
 elidedb window <store> <t0> <t1> [--dump DIR] [--width 640]
 elidedb desk   [--root lake] [--port 8787] [--no-open]

@@ -39,6 +39,8 @@ Table kinds (all just Parquet schemas; `ts` int64-ns is the one law):
 | late materialization of media | C-Store | pixels decode LAST, from `pread(byte_offset, packet_size)`; the media file is never copied, re-encoded, or even opened until a query needs it |
 | open format ⇒ multi-engine | the lakehouse thesis | `Store.sql()` is DuckDB pointed at the same files — SQL came for free, zero export |
 | learned-cell IVF (centroid prune → exact rank) | Faiss IVF, with HDBSCAN cells | noise rows always scanned: pruning can cost recall nothing |
+| immutable bulk-loaded B+ tree (BPT1) | classic B+ trees, but read-only | secondary index on ANY numeric column: zone maps prune nothing off-time, a B+ tree does — descent + leaf scan → read only the row groups with hits. C++20 + numpy twin, identical bytes |
+| HNSW / IVF-PQ vector tiers | Malkov-Yashunin HNSW, SCANN/Faiss PQ | graph ANN + product-quantized shortlist with EXACT rerank; auto-selected past the matmul crossover; hybrid (time+stream) pushed into candidate selection |
 | ETL adapters at the edge, generic core | every warehouse's loader ecosystem | `ingest_rows` / `ingest_video` are the core; REIP and Oxford are ~100-line adapters |
 
 ## Engineering state (each of these is implemented and measured)

@@ -91,6 +91,20 @@ def cmd_vacuum(a):
     print(f"{r['files_removed']} files, {verb} {r['bytes_freed']/1e6:.1f} MB")
 
 
+def cmd_index(a):
+    db = Store.open(a.store)
+    if a.ann:
+        from . import ann
+        r = (ann.build_hnsw(db) if a.ann == "hnsw"
+             else ann.build_ivfpq(db))
+        print(f"{a.ann} index: {r['n']:,} vectors, "
+              f"{r['bytes']/1e6:.1f} MB (embeddings v{r['version']})")
+    else:
+        r = db.table(a.table).create_index(a.column)
+        print(f"B+ index on {a.table}.{a.column}: {r['keys']:,} keys, "
+              f"{r['bytes']/1e3:.0f} KB (v{r['version']})")
+
+
 def cmd_optimize(a):
     db = Store.open(a.store)
     for d in db.describe():
@@ -224,6 +238,15 @@ def main():
     p.add_argument("--retain", type=int, default=3)
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(f=cmd_vacuum)
+
+    p = sub.add_parser("index", help="build a B+ tree on a column, or an "
+                                     "ANN index (hnsw/ivfpq) on embeddings")
+    p.add_argument("store")
+    p.add_argument("--table", default="frames")
+    p.add_argument("--column", help="numeric column for a B+ secondary index")
+    p.add_argument("--ann", choices=["hnsw", "ivfpq"],
+                   help="build a vector index over the embeddings table")
+    p.set_defaults(f=cmd_index)
 
     p = sub.add_parser("embed", help="embed video windows + cluster (local ML)")
     p.add_argument("store")

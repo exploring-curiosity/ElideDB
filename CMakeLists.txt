@@ -63,6 +63,7 @@ add_library(streetdex STATIC
   src/streetdex/align/resample.cpp
   src/streetdex/query/planner.cpp
   src/streetdex/index/vector_index.cpp
+  src/streetdex/index/bptree.cpp
   src/streetdex/query/semantic.cpp
 )
 target_include_directories(streetdex PUBLIC src)
@@ -91,6 +92,7 @@ if(STREETDEX_BUILD_TESTS)
     tests/test_wav.cpp
     tests/test_planner.cpp
     tests/test_vector_index.cpp
+    tests/test_bptree.cpp
   )
   target_compile_options(streetdex_tests PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(streetdex_tests PRIVATE streetdex Catch2::Catch2WithMain)

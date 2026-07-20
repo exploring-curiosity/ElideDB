@@ -236,6 +236,121 @@ class Table:
         return {"rows_deleted": dropped, "files_rewritten": len(adds),
                 "files_removed": len(removes)}
 
+    # ---- secondary indexes (B+ tree over any numeric column) --------------
+    def create_index(self, column: str, order: int = 256) -> dict:
+        """Build an immutable, bulk-loaded B+ tree over `column` for the
+        CURRENT version (BPT1 — same bytes the C++ engine reads). Zone maps
+        prune nothing on unsorted columns; this re-sorts (value → row
+        location) once, so point/range predicates touch only the row groups
+        that actually contain hits. Rebuild after appends (`create_index`
+        again) — the artifact is version-suffixed like any derived state."""
+        from . import bptree
+        st = self.state()
+        keys, vals = [], []
+        for fi, f in enumerate(st.files):
+            col = pq.read_table(self.dir / f.path, columns=[column]) \
+                .column(column).to_numpy(zero_copy_only=False)
+            keys.append(bptree.encode_key(col))
+            vals.append((np.uint64(fi) << np.uint64(40)) |
+                        np.arange(len(col), dtype=np.uint64))
+        img = bptree.build(np.concatenate(keys) if keys else
+                           np.array([], np.int64),
+                           np.concatenate(vals) if vals else
+                           np.array([], np.uint64), order=order)
+        ixdir = self.dir / "_index"
+        ixdir.mkdir(exist_ok=True)
+        # A secondary index is a DERIVED sidecar, not table data: building it
+        # does NOT advance the log (that would be a version with identical
+        # data). The artifact is keyed to the version it was built for; a
+        # reader accepts it only while that version's FILE SET still matches
+        # the current one — appends invalidate it, so rebuild after appends.
+        path = ixdir / f"{column}.v{st.version}.bpt"
+        tmp = ixdir / f".{column}.tmp"
+        tmp.write_bytes(img)
+        fsync_file(tmp)
+        tmp.replace(path)
+        return {"column": column, "keys": int(sum(len(k) for k in keys)),
+                "bytes": len(img), "version": st.version}
+
+    def _open_index(self, column: str, st):
+        from . import bptree
+        ixdir = self.dir / "_index"
+        if not ixdir.is_dir():
+            return None
+        current = {f.path for f in st.files}
+        for p in sorted(ixdir.glob(f"{column}.v*.bpt"), reverse=True):
+            v = int(p.stem.split(".v")[-1])
+            if {f.path for f in self.state(v).files} == current:
+                return bptree.Reader.open(p), p.stat().st_size
+        return None
+
+    def where(self, column: str, op: str, value, value2=None, columns=None,
+              stats: QueryStats | None = None) -> pa.Table:
+        """Predicate pushdown on a NON-time column. With a B+ index: descend,
+        map hits to (file, row group), read ONLY those row groups, then take
+        the exact rows. Without one: zone-map scan + filter, honestly counted
+        as such. ops: ==, >=, <=, between."""
+        from . import bptree
+        stats = stats if stats is not None else QueryStats()
+        st = self.state()
+        stats.files_total += len(st.files)
+        stats.corpus_bytes += st.bytes
+        NEG_INF, POS_INF = -(1 << 63), (1 << 63) - 1  # full i64 range:
+        # float encodings legitimately occupy the far ends of int64
+        lo, hi = {"==": (value, value),
+                  ">=": (value, None), "<=": (None, value),
+                  "between": (value, value2)}[op]
+        ix = self._open_index(column, st)
+        if ix is None:
+            # fallback: full scan with an honest bill
+            t = self.scan(stats=stats)
+            arr = t.column(column)
+            m = None
+            if lo is not None:
+                m = pc.greater_equal(arr, lo)
+            if hi is not None:
+                c = pc.less_equal(arr, hi)
+                m = c if m is None else pc.and_(m, c)
+            out = t.filter(m)
+            stats.rows_returned += len(out)
+            return out
+        reader, ix_bytes = ix
+        stats.bytes_touched += ix_bytes  # the index read is real I/O too
+        locs = reader.range(
+            bptree.encode_scalar(lo) if lo is not None else NEG_INF,
+            bptree.encode_scalar(hi) if hi is not None else POS_INF)
+        locs = np.sort(np.asarray(locs, dtype=np.uint64))
+        file_ids = (locs >> np.uint64(40)).astype(np.int64)
+        rows = (locs & np.uint64((1 << 40) - 1)).astype(np.int64)
+        parts = []
+        want_cols = None if columns is None else \
+            (["ts", *columns] if "ts" not in columns else list(columns))
+        for fi in np.unique(file_ids):
+            fmask = file_ids == fi
+            frows = rows[fmask]
+            pf = pq.ParquetFile(self.dir / st.files[fi].path)
+            groups = np.unique(frows // ROW_GROUP_ROWS).tolist()
+            md = pf.metadata
+            for g in groups:
+                for c in range(md.row_group(g).num_columns):
+                    name = md.schema.names[c]
+                    if want_cols is None or name in want_cols:
+                        stats.bytes_touched += \
+                            md.row_group(g).column(c).total_compressed_size
+            tbl = pf.read_row_groups(groups, columns=want_cols)
+            # map absolute rows -> positions inside the concatenated groups
+            base = np.cumsum([0] + [md.row_group(g).num_rows for g in groups])
+            gpos = np.searchsorted(np.asarray(groups) * ROW_GROUP_ROWS,
+                                   frows, side="right") - 1
+            local = frows - np.asarray(groups)[gpos] * ROW_GROUP_ROWS + \
+                base[gpos]
+            parts.append(tbl.take(pa.array(np.sort(local))))
+            stats.files_touched += 1
+        out = pa.concat_tables(parts) if parts else \
+            self.scan(0, -1, columns=columns)  # empty, right schema
+        stats.rows_returned += len(out)
+        return out
+
     def files(self, version=None) -> list[str]:
         """Absolute paths of this snapshot's Parquet files — the open-format
         contract: hand these to ANY engine (DuckDB, Spark, Polars, a

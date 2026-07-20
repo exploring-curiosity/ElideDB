@@ -202,35 +202,80 @@ def cluster(store, pca_dims=50, min_cluster_size=8):
             "noise": int((labels < 0).sum()), "windows": len(out)}
 
 
-def _rank(store, q, k, nprobe, merge=True):
+def _rank(store, q, k, nprobe, merge=True, t0=None, t1=None, streams=None,
+          method="auto"):
     t, vecs = _vec_table(store)
+    all_t0 = t.column("ts").to_numpy()
+    all_t1 = t.column("t1").to_numpy()
+    all_s = t.column("stream").to_numpy(zero_copy_only=False)
+
+    # ---- hybrid retrieval: predicates pushed INTO candidate selection ------
+    # Time and stream are first-class dimensions of this database; vector
+    # search composes with them instead of post-filtering a global top-k
+    # (which silently starves filtered queries of results).
+    pred = np.ones(len(vecs), bool)
+    if t0 is not None:
+        pred &= all_t1 >= t0
+    if t1 is not None:
+        pred &= all_t0 <= t1
+    if streams:
+        pred &= np.isin(all_s, list(streams))
+
     labels = (t.column("cluster").to_numpy()
               if "cluster" in t.column_names else None)
-    scanned = len(vecs)
-    mask = np.ones(len(vecs), bool)
     probed = total_clusters = 0
-    if labels is not None and nprobe > 0:
-        try:
-            _, cents = _vec_table(store, "centroids")
-            total_clusters = len(cents)
-            order = np.argsort(cents @ q)[::-1][:nprobe]
-            probed = len(order)
-            mask = np.isin(labels, order) | (labels < 0)  # noise always scanned
-            scanned = int(mask.sum())
-        except RuntimeError:
-            pass
-    idx = np.where(mask)[0]
-    scores = vecs[idx] @ q
-    streams = t.column("stream").to_numpy(zero_copy_only=False)[idx]
-    w_t0 = t.column("ts").to_numpy()[idx]
-    w_t1 = t.column("t1").to_numpy()[idx]
+    used = "exact"
 
-    stats = {"scanned": scanned, "total": len(vecs),
-             "clusters_probed": probed, "clusters_total": total_clusters}
+    idx = scores = None
+    if method in ("auto", "hnsw"):
+        from . import ann
+        hx = ann.load_hnsw(store)
+        if hx is not None:
+            # overfetch beyond k so predicate filtering and segment merging
+            # still see the event's neighborhood, then score exactly
+            fetch = int(min(len(vecs), max(k * 8, 64)))
+            hx.set_ef(max(fetch, 64))
+            cand, _ = hx.knn_query(q, k=fetch)
+            cand = cand[0]
+            cand = cand[pred[cand]]
+            if len(cand) >= min(k, pred.sum()):
+                idx = np.asarray(cand)
+                scores = vecs[idx] @ q
+                used = "hnsw"
+    if idx is None and method in ("auto", "ivfpq"):
+        from . import ann
+        r = ann.search_ivfpq(store, q, k=max(k * 4, 32), nprobe=max(nprobe, 8),
+                             mask=pred) if method == "ivfpq" else None
+        if r is not None and r[0]:
+            idx = np.array([i for i, _ in r[0]])
+            scores = np.array([s for _, s in r[0]])
+            used = "ivfpq"
+    if idx is None:
+        mask = pred.copy()
+        if labels is not None and nprobe > 0:
+            try:
+                _, cents = _vec_table(store, "centroids")
+                total_clusters = len(cents)
+                order = np.argsort(cents @ q)[::-1][:nprobe]
+                probed = len(order)
+                mask &= np.isin(labels, order) | (labels < 0)  # noise stays
+                used = "ivf"
+            except RuntimeError:
+                pass
+        idx = np.where(mask)[0]
+        scores = vecs[idx] @ q
+    scanned = len(idx)
+    streams_sel = all_s[idx]
+    w_t0 = all_t0[idx]
+    w_t1 = all_t1[idx]
+
+    stats = {"scanned": scanned, "total": len(vecs), "method": used,
+             "clusters_probed": probed, "clusters_total": total_clusters,
+             "predicate_candidates": int(pred.sum())}
 
     if not merge:
         order = np.argsort(scores)[::-1][:k]
-        hits = [{"stream": str(streams[i]), "t0": int(w_t0[i]),
+        hits = [{"stream": str(streams_sel[i]), "t0": int(w_t0[i]),
                  "t1": int(w_t1[i]), "score": float(scores[i]),
                  "windows": 1} for i in order]
         return hits, stats
@@ -248,13 +293,14 @@ def _rank(store, q, k, nprobe, merge=True):
     thr = med + 0.55 * (top - med)
     stats["threshold"] = round(thr, 4)
     qual = np.where(scores >= thr)[0]
-    order = np.lexsort((w_t0[qual], streams[qual]))
+    order = np.lexsort((w_t0[qual], streams_sel[qual]))
     qual = qual[order]
 
     gap_ns = int(np.median(w_t1[qual] - w_t0[qual])) + 1 if len(qual) else 0
     segs = []
     for i in qual:
-        s, a, b, sc = str(streams[i]), int(w_t0[i]), int(w_t1[i]), float(scores[i])
+        s, a, b, sc = (str(streams_sel[i]), int(w_t0[i]), int(w_t1[i]),
+                       float(scores[i]))
         last = segs[-1] if segs else None
         if last and last["stream"] == s and a - last["t1"] <= gap_ns:
             last["t1"] = max(last["t1"], b)
@@ -270,13 +316,16 @@ def _rank(store, q, k, nprobe, merge=True):
     return segs[:k], stats
 
 
-def search_text(store, text, k=10, nprobe=3, merge=True):
+def search_text(store, text, k=10, nprobe=3, merge=True, t0=None, t1=None,
+                streams=None, method="auto"):
     st = store.table("embeddings").state()
     q = embed_text(text, st.meta.get("model", DEFAULT_MODEL))
-    return _rank(store, q, k, nprobe, merge=merge)
+    return _rank(store, q, k, nprobe, merge=merge, t0=t0, t1=t1,
+                 streams=streams, method=method)
 
 
-def search_clip(store, stream, t0, t1, k=10, nprobe=3, merge=True):
+def search_clip(store, stream, t0, t1, k=10, nprobe=3, merge=True,
+                pt0=None, pt1=None, pstreams=None, method="auto"):
     t, vecs = _vec_table(store)
     s = t.column("stream").to_numpy(zero_copy_only=False)
     a = t.column("ts").to_numpy()
@@ -286,7 +335,8 @@ def search_clip(store, stream, t0, t1, k=10, nprobe=3, merge=True):
         raise ValueError(f"no embedded windows overlap {stream} [{t0},{t1}]")
     q = vecs[sel].mean(axis=0)
     q /= np.linalg.norm(q)
-    hits, stats = _rank(store, q, k + 8, nprobe, merge=merge)
+    hits, stats = _rank(store, q, k + 8, nprobe, merge=merge,
+                        t0=pt0, t1=pt1, streams=pstreams, method=method)
     hits = [h for h in hits
             if not (h["stream"] == stream and h["t0"] <= t1 and h["t1"] >= t0)]
     return hits[:k], stats
