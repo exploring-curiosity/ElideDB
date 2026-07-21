@@ -767,14 +767,16 @@ class Store:
 
     def search(self, text: str, k=10, nprobe=3, merge=True, t0=None, t1=None,
                streams=None, method="auto", neg_weight=0.5, min_score=None,
-               percentile=None):
+               percentile=None, rerank=False, rerank_top=12,
+               rerank_alpha=0.7):
         """Compositional text search. `text` supports AND / NOT / -term;
         `min_score`/`percentile` add a precision floor. See embeddings.search."""
         from .embeddings import search
         return search(self, text, k=k, nprobe=nprobe, merge=merge, t0=t0,
                       t1=t1, streams=streams, method=method,
                       neg_weight=neg_weight, min_score=min_score,
-                      percentile=percentile)
+                      percentile=percentile, rerank=rerank,
+                      rerank_top=rerank_top, rerank_alpha=rerank_alpha)
 
     def search_text(self, text: str, k=10, nprobe=3, **kw):
         from .embeddings import search_text

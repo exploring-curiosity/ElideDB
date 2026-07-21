@@ -277,6 +277,41 @@ def api_clip(key: str, stream: str, t0: int, t1: int, width: int = 640):
     return out_path.read_bytes()
 
 
+def api_schema(key: str, table: str | None = None):
+    """What the data actually IS: columns, types, and real sample rows.
+    The first thing anyone opening a database wants to see."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    db = STORES[key]
+    names = [table] if table else db.tables()
+    out = []
+    for name in names:
+        st = db.table(name).state()
+        if not st.files:
+            continue
+        pf = pq.ParquetFile(db.dir / "tables" / name / st.files[0].path)
+        schema = pf.schema_arrow
+        cols = []
+        for f in schema:
+            t = str(f.type)
+            if pa.types.is_fixed_size_list(f.type):
+                t = f"vector[{f.type.list_size}]"
+            cols.append({"name": f.name, "type": t})
+        sample = []
+        if table:  # only materialise rows for the focused table
+            head = db.table(name).scan(columns=[c["name"] for c in cols
+                                                if not c["type"].startswith("vector")]
+                                       ).slice(0, 8).to_pylist()
+            for row in head:
+                sample.append({k: (round(v, 6) if isinstance(v, float) else v)
+                               for k, v in row.items()})
+        out.append({"table": name, "kind": st.kind, "rows": st.rows,
+                    "bytes": st.bytes, "version": st.version,
+                    "min_ts": st.min_ts, "max_ts": st.max_ts,
+                    "columns": cols, "sample": sample})
+    return out
+
+
 def api_indexes(key: str):
     """Every index in the store: B+ trees per table + ANN tiers on
     embeddings, with size and the data version each was built for."""
@@ -372,7 +407,9 @@ def api_query(key: str, body: dict):
             method=body.get("method", "auto"),
             neg_weight=float(body.get("neg_weight", 0.5)),
             t0=body.get("t0"), t1=body.get("t1"),
-            streams=body.get("streams") or None, **kw)
+            streams=body.get("streams") or None,
+            rerank=bool(body.get("rerank")),
+            rerank_top=int(body.get("rerank_top", 10)), **kw)
         return {"hits": hits, "stats": stats,
                 "ms": round((time.perf_counter() - t_start) * 1e3, 1)}
     if kind == "predicate":
@@ -486,6 +523,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(api_storage(q["store"], q["table"]))
             if u.path == "/api/indexes":
                 return self._json(api_indexes(q["store"]))
+            if u.path == "/api/schema":
+                return self._json(api_schema(q["store"], q.get("table")))
             if u.path == "/api/thumb":
                 jpg = api_thumb(q["store"], q.get("stream", ""),
                                 int(q["t"]), int(q.get("w", "360")))

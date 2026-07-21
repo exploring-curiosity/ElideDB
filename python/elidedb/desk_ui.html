@@ -225,12 +225,11 @@
     <div class="seg" id="views" role="tablist">
       <button data-v="overview" class="on">Overview</button>
       <button data-v="timeline">Timeline</button>
+      <button data-v="data">Data</button>
       <button data-v="storage">Storage</button>
-      <button data-v="indexes">Indexes</button>
       <button data-v="map">Semantic map</button>
       <button data-v="geo" id="geo-btn" style="display:none">Geo</button>
       <button data-v="query">Query</button>
-      <button data-v="maintenance">Maintenance</button>
     </div>
     <span class="qstat tnum" id="store-sub" style="margin-left:auto"></span>
   </div>
@@ -268,8 +267,7 @@
         <p class="note" id="geo-note"></p>
         <canvas id="route" class="viz" height="420" style="cursor:default"></canvas></div>
     </div>
-    <div class="view" id="v-indexes"></div>
-    <div class="view" id="v-maintenance"></div>
+    <div class="view" id="v-data"></div>
     <div class="view" id="v-query">
       <div class="panel">
         <h2>Query console</h2>
@@ -307,6 +305,8 @@
               </select></label>
             <label>Max results
               <input type="number" id="k-input" value="12" min="1" max="48"></label>
+            <label title="A vision model looks at each candidate frame and judges whether the described situation is actually happening — catches relations embeddings miss (slower).">
+              <input type="checkbox" id="rerank"> Verify with vision model</label>
           </div>
           <div class="ctrlgrid">
             <label>Stream <select id="stream-filter"><option value="">any</option></select></label>
@@ -328,9 +328,8 @@
             <label id="pred-val2-wrap" style="display:none">and
               <input type="number" step="any" id="pred-val2" style="width:110px"></label>
           </div>
-          <div class="hint2">Non-time predicate pushdown. With a B+ index on the column it reads
-            <b>only the row groups containing hits</b>; without one it honestly full-scans.
-            Build indexes in the <b>Indexes</b> tab.</div>
+          <div class="hint2">Filter rows by a sensor value — e.g. speed above a threshold.
+            Reports how much of the table it had to read.</div>
         </div>
 
         <div id="q-sql" style="display:none">
@@ -425,8 +424,7 @@ async function selectStore(key, refresh) {
   const cur = document.querySelector("#views button.on").dataset.v;
   if (cur === "map") loadMap();
   if (cur === "geo") drawGeo();
-  if (cur === "indexes") loadIndexes();
-  if (cur === "maintenance") renderMaintenance();
+  if (cur === "data") loadData();
 }
 
 /* ── overview ── */
@@ -763,6 +761,7 @@ async function runQuery() {
       if (fm !== "none") { body.floor_mode = fm;
         body.floor = fm === "min_score" ? +$("floor").value / 100 : +$("floor").value; }
       const s = $("stream-filter").value; if (s) body.streams = [s];
+      if ($("rerank").checked) { body.rerank = true; body.rerank_top = 10; }
       const a = $("hyb-t0").value, b = $("hyb-t1").value;
       if (a !== "") body.t0 = Math.round(CUR.min_ts + +a * 1e9);
       if (b !== "") body.t1 = Math.round(CUR.min_ts + +b * 1e9);
@@ -797,7 +796,8 @@ async function runQuery() {
       const seg = S.segments != null
         ? `${r.hits.length} of ${S.segments} segment${S.segments === 1 ? "" : "s"} · ` : "";
       const floor = S.after_floor != null ? `floor→${S.after_floor} windows · ` : "";
-      stat.innerHTML = `${terms} &nbsp; ${seg}${floor}tier <b>${esc(S.method)}</b> · `
+      const rr = S.rerank ? `<span class="pill ok">vision-verified ${S.rerank.reranked}</span> ` : "";
+      stat.innerHTML = `${terms} ${rr}&nbsp; ${seg}${floor}tier <b>${esc(S.method)}</b> · `
         + `scanned ${S.scanned}/${S.total} · ${r.ms} ms · click a hit to play`;
       out.innerHTML = `<div class="hitgrid">` + r.hits.map(h => {
         const dur = (h.t1 - h.t0) / 1e9;
@@ -806,7 +806,7 @@ async function runQuery() {
         <div class="hit" data-s="${esc(h.stream)}" data-t0="${h.t0}" data-t1="${h.t1}">
           <img loading="lazy" src="/api/thumb?store=${CUR.key}&stream=${encodeURIComponent(h.stream)}&t=${mid}&w=420" alt="">
           <div class="play"><span>▶</span></div>
-          <div class="m"><b>${h.score.toFixed(3)}</b> · ${esc(h.stream)} ·
+          <div class="m"><b>${h.vlm != null ? "vision " + (h.vlm>0?"+":"") + h.vlm.toFixed(2) : h.score.toFixed(3)}</b> · ${esc(h.stream)} ·
             <b class="tnum">${dur.toFixed(1)} s</b>${h.windows > 1 ? ` (${h.windows} windows merged)` : ""}<br>
             <span class="tnum">+${rel(h.t0).toFixed(1)} → +${rel(h.t1).toFixed(1)} s</span></div>
         </div>`;
@@ -844,6 +844,57 @@ async function runQuery() {
     stat.textContent = "";
     out.innerHTML = `<div class="err">${esc(e.message)}</div>`;
   }
+}
+
+/* ── data view: what the data actually IS ── */
+let DATA_TABLE = null;
+async function loadData(table) {
+  const el = $("v-data");
+  if (!table) {
+    el.innerHTML = `<div class="panel"><h2>Data</h2><div class="empty">reading schema…</div></div>`;
+    const all = await j(`/api/schema?store=${CUR.key}`).catch(e => ({error: e.message}));
+    if (all.error) { el.innerHTML = `<div class="panel"><div class="err">${esc(all.error)}</div></div>`; return; }
+    DATA_TABLE = all;
+    let h = `<div class="panel"><h2>Tables &amp; columns</h2>
+      <p class="note">Every table is timestamped (<span class="mono">ts</span>, nanoseconds).
+        Click a table to see its columns and real rows.</p>
+      <div class="seg qmodes" id="data-tabs" style="flex-wrap:wrap"></div>
+      <div id="data-detail"></div></div>`;
+    el.innerHTML = h;
+    $("data-tabs").innerHTML = all.map((t, i) =>
+      `<button data-t="${esc(t.table)}"${i === 0 ? ' class="on"' : ''}>${esc(t.table)}</button>`).join("");
+    document.querySelectorAll("#data-tabs button").forEach(b => b.onclick = () => {
+      document.querySelectorAll("#data-tabs button").forEach(x => x.classList.toggle("on", x === b));
+      loadData(b.dataset.t);
+    });
+    if (all.length) loadData(all[0].table);
+    return;
+  }
+  const d = (await j(`/api/schema?store=${CUR.key}&table=${encodeURIComponent(table)}`))[0];
+  if (!d) return;
+  const span = d.rows ? `+${rel(d.min_ts).toFixed(1)} → +${rel(d.max_ts).toFixed(1)} s` : "—";
+  let h = `<div class="ctrlgrid" style="margin:14px 0 10px">
+      <span class="pill">${esc(d.kind)}</span>
+      <span class="qstat tnum">${d.rows.toLocaleString()} rows · ${fmtB(d.bytes)} · v${d.version} · ${span}</span></div>`;
+  h += `<div class="tablewrap"><table><thead><tr><th>column</th><th>type</th></tr></thead><tbody>` +
+    d.columns.map(c => `<tr><td class="mono">${esc(c.name)}</td>
+      <td class="mono" style="color:var(--faint)">${esc(c.type)}</td></tr>`).join("") +
+    `</tbody></table></div>`;
+  if (d.sample && d.sample.length) {
+    const cols = Object.keys(d.sample[0]).slice(0, 9);
+    h += `<h3 style="font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--faint);
+      margin:20px 0 8px;font-family:ui-monospace,Menlo,monospace">first rows</h3>
+      <div class="tablewrap"><table><thead><tr>` +
+      cols.map(c => `<th>${esc(c)}</th>`).join("") + `</tr></thead><tbody>` +
+      d.sample.map(r => `<tr>` + cols.map(c => {
+        let v = r[c];
+        // centroids carry no real time (ts=0); don't fake a relative stamp
+        if (c === "ts" && typeof v === "number")
+          v = v === 0 ? "—" : `+${rel(v).toFixed(3)} s`;
+        return `<td class="tnum">${esc(v ?? "∅")}</td>`;
+      }).join("") + `</tr>`).join("") + `</tbody></table></div>`;
+  }
+  $("data-detail").innerHTML = h;
 }
 
 /* ── indexes view ── */
@@ -970,8 +1021,7 @@ document.querySelectorAll("#views button").forEach(b =>
     if (b.dataset.v === "map") loadMap();
     if (b.dataset.v === "storage") loadStorage();
     if (b.dataset.v === "geo") drawGeo();
-    if (b.dataset.v === "indexes") loadIndexes();
-    if (b.dataset.v === "maintenance") renderMaintenance();
+    if (b.dataset.v === "data") loadData();
   }));
 
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { drawScatter(); drawGeo(); });

@@ -399,7 +399,7 @@ def _parse_query(text):
 
 def search(store, text, k=10, nprobe=3, merge=True, t0=None, t1=None,
            streams=None, method="auto", neg_weight=0.5, min_score=None,
-           percentile=None):
+           percentile=None, rerank=False, rerank_top=12, rerank_alpha=0.7):
     """Compositional text search. `text` may use AND / NOT / -term:
         'two people AND a laptop NOT a phone'
     `min_score` (absolute cosine floor) or `percentile` (keep top X%) turn
@@ -418,6 +418,12 @@ def search(store, text, k=10, nprobe=3, merge=True, t0=None, t1=None,
                         min_score=min_score, percentile=percentile)
     stats["positive_terms"] = pos_terms
     stats["negative_terms"] = neg_terms
+    if rerank and hits:
+        # relational stage: the expensive operator runs LAST, on the pruned set
+        from .rerank import rerank_hits
+        hits, info = rerank_hits(store, hits, text, top_n=rerank_top,
+                                 alpha=rerank_alpha)
+        stats["rerank"] = info
     return hits, stats
 
 
