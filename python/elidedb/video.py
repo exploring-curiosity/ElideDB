@@ -142,64 +142,122 @@ class FrameSet:
         return out
 
     def _decode_gop(self, rows, sel, codec, width):
-        """GOP-range decode for elementary inter-codec streams: pread
-        [preceding keyframe .. last selected packet], pipe to ffmpeg, keep
-        the selected frames. Bytes read = the GOP span, nothing more."""
+        """GOP-granular decode for inter-codec elementary streams.
+
+        The selection is partitioned into CONTIGUOUS RUNS and each run is read
+        and decoded separately. That partitioning is the whole point: the
+        earlier version read one span from the first selected frame's keyframe
+        to the last selected packet, so a scattered selection — exactly what
+        `stride=N` sampling produces — read and decoded the entire file to
+        return a handful of frames. Measured on a 4103 s Bridge stream: 96
+        frames spread across the file cost 188 ms/frame, against 2.7 ms/frame
+        for a contiguous window, because 20,515 frames were being decoded to
+        hand back 96.
+
+        Runs whose byte ranges touch are merged, so a dense selection still
+        becomes one large sequential read (one ffmpeg call, not one per GOP)
+        while a sparse one becomes many small GOP reads. Both regimes read
+        only the bytes they need.
+        """
         import subprocess
 
         import cv2
         import pyarrow.compute as pc
 
         from .fftools import find
-        first_ts = rows.column("ts")[sel[0]].as_py()
-        last = sel[-1]
         src = rows.column("source")[sel[0]].as_py()
         w = rows.column("width")[0].as_py()
         h = rows.column("height")[0].as_py()
 
-        # The window scan may start mid-GOP; fetch back to the keyframe from
-        # the frame-index table (an index read, not a media read).
-        full = self.store.table(self.table_name).scan(
-            first_ts - 60_000_000_000, first_ts)
-        m = pc.and_(pc.equal(full.column("source"), src),
-                    pc.equal(full.column("keyframe"), True))
-        heads = full.filter(m)
-        key_off = int(rows.column("byte_offset")[sel[0]].as_py())
-        key_ts = first_ts
-        if not rows.column("keyframe")[sel[0]].as_py() and len(heads):
-            key_off = int(heads.column("byte_offset")[-1].as_py())
-            key_ts = heads.column("ts")[-1].as_py()
-        end = (rows.column("byte_offset")[last].as_py() +
-               rows.column("packet_size")[last].as_py())
+        # Full frame index for this source: needed to find each selected
+        # frame's governing keyframe. An index read, not a media read.
+        idx = self.store.table(self.table_name).scan()
+        idx = idx.filter(pc.equal(idx.column("source"), src))
+        ts_all = idx.column("ts").to_numpy()
+        off_all = idx.column("byte_offset").to_numpy()
+        size_all = idx.column("packet_size").to_numpy()
+        key_all = np.asarray(idx.column("keyframe").to_pylist(), dtype=bool)
+        key_pos = np.where(key_all)[0]
+        if len(key_pos) == 0:
+            key_pos = np.array([0])
+
+        sel_ts = np.array([rows.column("ts")[i].as_py() for i in sel],
+                          dtype=np.int64)
+        pos = np.searchsorted(ts_all, sel_ts)
+        pos = np.clip(pos, 0, len(ts_all) - 1)
+        gov = key_pos[np.clip(np.searchsorted(key_pos, pos, side="right") - 1,
+                              0, len(key_pos) - 1)]
+
+        # Build merged [byte_start, byte_end) runs, each tagged with the index
+        # position its first decoded frame corresponds to.
+        runs = []
+        for p, g in zip(pos, gov):
+            a = int(off_all[g])
+            b = int(off_all[p]) + int(size_all[p])
+            if runs and a <= runs[-1]["end"]:
+                runs[-1]["end"] = max(runs[-1]["end"], b)
+                runs[-1]["want"].add(int(p))
+            else:
+                runs.append({"start": a, "end": b, "first": int(g),
+                             "want": {int(p)}})
+
+        frame_bytes = w * h * 3
+        ff = find("ffmpeg")
+        # Each run begins at a keyframe, so the runs concatenate into one
+        # valid elementary stream: N GOP reads still cost only ONE decoder
+        # invocation. Process spawn was the dominant cost once the byte ranges
+        # were correct (96 runs = 96 ffmpeg starts ~= 20 ms each).
+        payloads, spans = [], []
+        total = 0
         with open(self._resolve(src), "rb") as f:
-            f.seek(key_off)
-            payload = f.read(end - key_off)
-        self.last_bytes_read = len(payload)
+            for r in runs:
+                f.seek(r["start"])
+                buf = f.read(r["end"] - r["start"])
+                total += len(buf)
+                payloads.append(buf)
+                spans.append((r["first"], max(r["want"]) - r["first"] + 1,
+                              r["want"]))
+        self.last_bytes_read = total
 
         proc = subprocess.run(
-            [find("ffmpeg"), "-v", "error", "-f", codec, "-i", "pipe:0",
+            [ff, "-v", "error", "-f", codec, "-i", "pipe:0",
              "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"],
-            input=payload, capture_output=True)
-        frame_bytes = w * h * 3
-        n_frames = len(proc.stdout) // frame_bytes
+            input=b"".join(payloads), capture_output=True)
+        n_out = len(proc.stdout) // frame_bytes
+        expected = sum(n for _, n, _ in spans)
 
-        # Frames come out in packet order from the keyframe; align them with
-        # the index rows over [key_ts, last_ts] to recover timestamps.
-        span = self.store.table(self.table_name).scan(
-            key_ts, rows.column("ts")[last].as_py())
-        span = span.filter(pc.equal(span.column("source"), src))
-        span_ts = span.column("ts").to_pylist()[:n_frames]
-        want = {rows.column("ts")[i].as_py() for i in sel}
-        out = []
-        for k, ts in enumerate(span_ts):
-            if ts not in want:
-                continue
-            img = np.frombuffer(
-                proc.stdout, np.uint8, count=frame_bytes,
-                offset=k * frame_bytes).reshape(h, w, 3)
+        def _take(buf, k):
+            img = np.frombuffer(buf, np.uint8, count=frame_bytes,
+                                offset=k * frame_bytes).reshape(h, w, 3)
             if width and w > width:
                 nh = int(h * width / w)
                 img = cv2.resize(img, (width, nh),
                                  interpolation=cv2.INTER_AREA)
-            out.append((ts, img.copy()))
+            return img.copy()
+
+        out = []
+        if n_out == expected:
+            base = 0
+            for first, n, want in spans:
+                for k in range(n):
+                    ip = first + k
+                    if ip in want:
+                        out.append((int(ts_all[ip]), _take(proc.stdout,
+                                                           base + k)))
+                base += n
+        else:
+            # The concatenated decode did not line up (open GOPs, a truncated
+            # tail). Fall back to decoding each run on its own rather than
+            # returning frames under the wrong timestamps — a silently
+            # misaligned frame is worse than a slow one.
+            for buf, (first, _n, want) in zip(payloads, spans):
+                pr = subprocess.run(
+                    [ff, "-v", "error", "-f", codec, "-i", "pipe:0",
+                     "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"],
+                    input=buf, capture_output=True)
+                for k in range(len(pr.stdout) // frame_bytes):
+                    ip = first + k
+                    if ip in want:
+                        out.append((int(ts_all[ip]), _take(pr.stdout, k)))
+        out.sort(key=lambda x: x[0])
         return out

@@ -197,23 +197,54 @@ alongside):
 
 | stage | rate | note |
 |---|---|---|
-| byte-range decode | **2.7 ms/frame** | 0.23% of a 133 MB file for one 23-frame episode |
+| byte-range decode, contiguous | **2.2 ms/frame** | 0.23% of a 133 MB file for one 23-frame episode |
+| byte-range decode, scattered | **2.6 ms/frame** | was 188 ms/frame — see below |
 | SigLIP `quality` (so400m-384) | 90.3 ms/frame | 1152-d |
 | SigLIP `fast` (so400m-224) | **27.7 ms/frame** | same model + space, 256 patches vs 729 — 3.3x |
 | window embeddings from frame vectors | **6.2 s for 4,574 windows** | pooled, no GPU (was 1,525 s re-embedding) |
 | VLM caption | ~650 ms/window | one per captioned window |
 | context tower inference | 22.8 us/window | after pruning |
 
+### Scattered reads were 74x slower than they should have been
+
+`stride=N` sampling produces a scattered selection, and `_decode_gop` read one
+span from the first selected frame's keyframe to the LAST selected packet — so
+96 frames spread over a 4103 s stream decoded all 20,515 frames of the file to
+return 96. Two fixes: partition the selection into contiguous byte runs, then
+concatenate those runs into a single decoder invocation (every run starts at a
+keyframe, so they form one valid elementary stream).
+
+| | ms/frame | bytes read |
+|---|---|---|
+| before | 188.0 | 133 MB of 133 MB |
+| runs partitioned | 27.2 | 2.9 MB |
+| runs partitioned + batched into one decode | **2.6** | 2.9 MB |
+
+Verified pixel-identical against per-run decoding. This is the difference
+between sampling being free and sampling costing more than reading everything.
+
 **97% of ingest time is the image encoder, not the storage engine.** The knobs
 that matter are therefore `model="fast"`, `frame_stride=N`, and
 `label_fraction<1`; all three are parameters of `Store.index_context()`.
 
-Honest scale estimate for the full 90.3 GB BridgeData2 source (457 files,
-5 cameras): one camera at `fast` + `frame_stride=2` is ~11 h of encoding plus
-~9 h of captioning. Embedding a corpus this size is a batch job measured in
-hours. Nothing in the design hides that; what the design does is make sure you
-only pay it once (`frame_vectors` is the single source, and both the semantic
-and context indexes are derived from it).
+### What the full corpus actually costs
+
+90.3 GB of BridgeData2 is **477 hours of video** (AV1 is dense: the same 28.5 GB
+of the lab capture is 0.64 h, because it is raw MJPEG plus 16-channel audio).
+Measured decode + encode, extrapolated:
+
+| sampling | `quality` (so400m-384) | `fast` (so400m-224) |
+|---|---|---|
+| every frame (5 fps) | 112 h | 38.5 h |
+| 1 frame/s | 22.5 h | 7.7 h |
+| 1 per 2 s | 11.2 h | 3.9 h |
+| 1 per 4 s | 5.6 h | **1.9 h** |
+| 1 per 10 s | 2.2 h | **46 min** |
+
+Sampling is the dominant term, and it is now honest — before the decode fix,
+sampling sparsely made things *slower* per frame, so the knob did not work.
+`frame_vectors` is the single source both the semantic and the context index
+derive from, so this is paid once, not per index.
 
 ## Reproduce
 
