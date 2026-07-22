@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import threading
 import time
 
 import numpy as np
@@ -45,6 +46,11 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 _VERDICTS: dict = {}
+# Background verification: one worker at a time, one job per (store, query).
+# The QUERY never waits for a model — verification is index MAINTENANCE that
+# happens to be triggered by traffic (cracking without query-time latency).
+_BG_LOCK = threading.Lock()
+_BG_INFLIGHT: set = set()
 
 
 def _qhash(text: str) -> int:
@@ -106,7 +112,7 @@ def _caption_candidates(store, text, n):
 
 def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                     pad_s=2.0, deep=0, t0=None, t1=None, streams=None,
-                    verbose=False):
+                    verify="async", verbose=False):
     """Union recall -> segment building -> multi-frame VLM verification.
 
     Returns (hits, stats); each hit carries `margin` (the VLM's yes/no
@@ -143,11 +149,15 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     atoms = _atoms(text)
     per = max(pool // len(atoms), 12)
     cand = {}
+    q_full = embed_text(text)
+    app_all = vecs[idx_all] @ q_full          # index signal, reused below
+    app_of = {int(i): float(sc) for i, sc in zip(idx_all, app_all)}
     for a in atoms:
-        qv = embed_text(a)
+        qv = q_full if a == atoms[0] else embed_text(a)
         sub = idx_all[np.argsort(-(vecs[idx_all] @ qv))[:per]]
         for i in sub:
-            cand.setdefault((str(w_s[i]), int(w_t0[i]), int(w_t1[i])), 0.0)
+            cand.setdefault((str(w_s[i]), int(w_t0[i]), int(w_t1[i])),
+                            app_of.get(int(i), 0.0))
     for w in _caption_candidates(store, text, per):
         if streams and w[0] not in streams:
             continue
@@ -188,22 +198,107 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
         segs.append((s, cur[0], cur[1]))
     segs = segs[:pool]
 
-    # ---- VERIFY: 4 ordered frames per segment, verdicts cached ------------
+    # ---- segment index score: best member window's appearance cosine -----
+    seg_score = {}
+    for (s_, a, b), sc in cand.items():
+        for seg in segs:
+            if seg[0] == s_ and seg[1] <= a and b <= seg[2]:
+                seg_score[seg] = max(seg_score.get(seg, -1.0), sc)
+                break
+    for seg in segs:
+        seg_score.setdefault(seg, 0.0)
+
     qh = _qhash(text)
     vmap = _verdict_map(store)
-    # default verifier: 2B on (first, last) frame — AUC 0.75 at 0.5 s/clip.
-    # frames_per_clip > 2 switches to the time-order question (for the deep
-    # tier's 7B, where it measured AUC 0.82).
+    cached_m = {seg: vmap[(seg[0], seg[1], qh)] for seg in segs
+                if (seg[0], seg[1], qh) in vmap}
+    fresh = [seg for seg in segs if seg not in cached_m]
+
+    if verify == "sync":
+        # the old blocking path — scripts and evals that WANT to wait
+        margins = dict(cached_m)
+        margins.update(_verify_segments(store, fresh, text, qh,
+                                        frames_per_clip))
+        hits = [{"stream": s_, "t0": a, "t1": b,
+                 "margin": round(margins[(s_, a, b)], 3),
+                 "score": margins[(s_, a, b)],
+                 "verified": True,
+                 "cached": (s_, a, b) in cached_m}
+                for (s_, a, b) in margins]
+        hits.sort(key=lambda h: -h["score"])
+        if deep and hits:
+            hits = _deep_rerank(store, hits, text, deep, vmap)
+        stats = {"method": "verified", "verify": "sync", "atoms": atoms,
+                 "candidates": len(cand), "segments": len(segs),
+                 "verified_fresh": len(fresh),
+                 "ms": round((time.perf_counter() - t_start) * 1e3, 1)}
+        return hits[:k], stats
+
+    # ---- ASYNC (default): the query is INDEX-ONLY — no model call ever ----
+    # Ranking rule, deliberately explainable:
+    #   1. verified positives, by the VLM's cached margin
+    #   2. unverified candidates, by index score (they are what the
+    #      background worker is judging right now)
+    #   3. verified negatives last — the VLM looked and said no
+    pos = [seg for seg, m in cached_m.items() if m >= 0]
+    neg = [seg for seg, m in cached_m.items() if m < 0]
+    pos.sort(key=lambda g: -cached_m[g])
+    fresh.sort(key=lambda g: -seg_score[g])
+    neg.sort(key=lambda g: -cached_m[g])
+
+    def _hit(seg, verified):
+        return {"stream": seg[0], "t0": seg[1], "t1": seg[2],
+                "margin": round(cached_m[seg], 3) if verified else None,
+                "score": cached_m.get(seg, seg_score[seg]),
+                "verified": verified, "cached": verified}
+    hits = ([_hit(g, True) for g in pos]
+            + [_hit(g, False) for g in fresh]
+            + [_hit(g, True) for g in neg])
+
+    launched = False
+    if fresh:
+        key = (str(store.dir), qh)
+        with _BG_LOCK:
+            if key not in _BG_INFLIGHT:
+                _BG_INFLIGHT.add(key)
+                launched = True
+        if launched:
+            todo = fresh[:pool]
+
+            def worker():
+                try:
+                    _verify_segments(store, todo, text, qh, frames_per_clip)
+                except Exception:
+                    pass
+                finally:
+                    with _BG_LOCK:
+                        _BG_INFLIGHT.discard(key)
+            threading.Thread(target=worker, daemon=True).start()
+
+    stats = {"method": "verified", "verify": "async", "atoms": atoms,
+             "candidates": len(cand), "segments": len(segs),
+             "verified_cached": len(cached_m),
+             "verifying_in_background": len(fresh) if launched else 0,
+             "ms": round((time.perf_counter() - t_start) * 1e3, 1)}
+    return hits[:k], stats
+
+
+def _verify_segments(store, segs, text, qh, frames_per_clip=2):
+    """Decode start/end frames, score with the 2B before/after question,
+    append verdicts to the store. Used sync by evals, async by queries."""
+    from PIL import Image
+
+    from .rerank import as_change_question, as_clip_question, \
+        score_clip_sequences
+    from .video import FrameSet
+    if not segs:
+        return {}
     question = (as_change_question(text) if frames_per_clip == 2
                 else as_clip_question(text))
     frames_tbl = store.table("frames").scan()
-    need, clips, margins, cached = [], [], {}, {}
+    rot = store.meta.get("display", {}).get("rotate", 0)
+    need, clips = [], []
     for seg in segs:
-        key = (seg[0], seg[1], qh)
-        if key in vmap:
-            margins[seg] = vmap[key]
-            cached[seg] = True
-            continue
         s, a, b = seg
         sel = frames_tbl.filter(pc.and_(
             pc.equal(frames_tbl.column("stream"), s),
@@ -216,91 +311,85 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
         dec = FrameSet(store, "frames", sel.take(pick)).decode(width=448)
         if len(dec) < 2:
             continue
-        rot = store.meta.get("display", {}).get("rotate", 0)
         imgs = [Image.fromarray(d[1]) for d in sorted(dec)]
         if rot:
             imgs = [im.rotate(rot, expand=True) for im in imgs]
         need.append(seg)
         clips.append(imgs)
-
-    t_vlm = time.perf_counter()
-    if clips:
-        for seg, m in zip(need, score_clip_sequences(clips, question)):
-            margins[seg] = float(m)
-            cached[seg] = False
-        vt = pa.table({
-            "ts": pa.array([s[1] for s in need], pa.int64()),
-            "t1": pa.array([s[2] for s in need], pa.int64()),
-            "stream": pa.array([s[0] for s in need]),
-            "qhash": pa.array([qh] * len(need), pa.int64()),
-            "margin": pa.array([margins[s] for s in need], pa.float32()),
-        })
+    if not clips:
+        return {}
+    margins = {}
+    for seg, m in zip(need, score_clip_sequences(clips, question)):
+        margins[seg] = float(m)
+    vt = pa.table({
+        "ts": pa.array([g[1] for g in need], pa.int64()),
+        "t1": pa.array([g[2] for g in need], pa.int64()),
+        "stream": pa.array([g[0] for g in need]),
+        "qhash": pa.array([qh] * len(need), pa.int64()),
+        "margin": pa.array([margins[g] for g in need], pa.float32()),
+    })
+    try:
         store.table("vlm_verdicts").append(
             vt, kind="timeseries",
             meta={"written_by": "verified search", "query": text[:120]})
-        for seg in need:
-            vmap[(seg[0], seg[1], qh)] = margins[seg]
-    vlm_ms = (time.perf_counter() - t_vlm) * 1e3
+    except Exception:
+        pass                                   # concurrent commit: retryable
+    vmap = _verdict_map(store)
+    for g in need:
+        vmap[(g[0], g[1], qh)] = margins[g]
+    return margins
 
-    hits = [{"stream": s, "t0": a, "t1": b, "margin": round(margins[(s, a, b)], 3),
-             "score": margins[(s, a, b)], "cached": cached.get((s, a, b), True)}
-            for (s, a, b) in margins]
-    hits.sort(key=lambda h: -h["margin"])
 
-    # ---- optional DEEP tier: 7B, 4 ordered frames, top candidates only ----
-    if deep and hits:
-        head = hits[:deep]
-        clips7 = []
-        keep = []
-        for h in head:
-            s7, a7, b7 = h["stream"], h["t0"], h["t1"]
-            sel = frames_tbl.filter(pc.and_(
-                pc.equal(frames_tbl.column("stream"), s7),
-                pc.and_(pc.greater_equal(frames_tbl.column("ts"), a7),
-                        pc.less_equal(frames_tbl.column("ts"), b7))))
-            if len(sel) < 2:
-                continue
-            pick = np.linspace(0, len(sel) - 1,
-                               min(4, len(sel))).round().astype(int)
-            dec = FrameSet(store, "frames", sel.take(pick)).decode(width=448)
-            if len(dec) < 2:
-                continue
-            clips7.append([Image.fromarray(d[1]) for d in sorted(dec)])
-            keep.append(h)
-        # deep verdicts cache under their own key space, so a warm repeat
-        # skips the 7B entirely
-        dqh = _qhash("deep:" + text)
-        fresh7, fresh_clips = [], []
-        for h, c in zip(keep, clips7):
-            key = (h["stream"], h["t0"], dqh)
-            if key in vmap:
-                h["deep_margin"] = round(vmap[key], 3)
-                h["score"] = vmap[key]
-            else:
-                fresh7.append(h)
-                fresh_clips.append(c)
-        if fresh_clips:
-            deep_m = score_clip_sequences(fresh_clips, as_clip_question(text),
-                                          model_id=DEEP_VLM)
-            for h, m in zip(fresh7, deep_m):
-                h["deep_margin"] = round(float(m), 3)
-                h["score"] = float(m)
-                vmap[(h["stream"], h["t0"], dqh)] = float(m)
-            store.table("vlm_verdicts").append(pa.table({
-                "ts": pa.array([h["t0"] for h in fresh7], pa.int64()),
-                "t1": pa.array([h["t1"] for h in fresh7], pa.int64()),
-                "stream": pa.array([h["stream"] for h in fresh7]),
-                "qhash": pa.array([dqh] * len(fresh7), pa.int64()),
-                "margin": pa.array([h["score"] for h in fresh7],
-                                   pa.float32()),
-            }), kind="timeseries", meta={"written_by": "deep verify",
-                                         "query": text[:120]})
-        keep.sort(key=lambda h: -h["score"])
-        hits = keep + hits[deep:]
-    stats = {"method": "verified", "atoms": atoms,
-             "candidates": len(cand), "segments": len(segs),
-             "verified_fresh": len(need),
-             "verified_cached": sum(1 for h in hits if h["cached"]),
-             "vlm_ms": round(vlm_ms, 1),
-             "ms": round((time.perf_counter() - t_start) * 1e3, 1)}
-    return hits[:k], stats
+def _deep_rerank(store, hits, text, deep, vmap):
+    """7B judge over the top hits — sync callers only."""
+    from PIL import Image
+
+    from .rerank import DEEP_VLM, as_clip_question, score_clip_sequences
+    from .video import FrameSet
+    frames_tbl = store.table("frames").scan()
+    dqh = _qhash("deep:" + text)
+    head = hits[:deep]
+    keep, clips7 = [], []
+    for h in head:
+        key = (h["stream"], h["t0"], dqh)
+        if key in vmap:
+            h["deep_margin"] = round(vmap[key], 3)
+            h["score"] = vmap[key]
+            continue
+        sel = frames_tbl.filter(pc.and_(
+            pc.equal(frames_tbl.column("stream"), h["stream"]),
+            pc.and_(pc.greater_equal(frames_tbl.column("ts"), h["t0"]),
+                    pc.less_equal(frames_tbl.column("ts"), h["t1"]))))
+        if len(sel) < 2:
+            continue
+        pick = np.linspace(0, len(sel) - 1, min(4, len(sel))).round() \
+            .astype(int)
+        dec = FrameSet(store, "frames", sel.take(pick)).decode(width=448)
+        if len(dec) < 2:
+            continue
+        clips7.append([Image.fromarray(d[1]) for d in sorted(dec)])
+        keep.append(h)
+    if clips7:
+        deep_m = score_clip_sequences(clips7, as_clip_question(text),
+                                      model_id=DEEP_VLM)
+        rows = []
+        for h, m in zip(keep, deep_m):
+            h["deep_margin"] = round(float(m), 3)
+            h["score"] = float(m)
+            vmap[(h["stream"], h["t0"], dqh)] = float(m)
+            rows.append(h)
+        if rows:
+            try:
+                store.table("vlm_verdicts").append(pa.table({
+                    "ts": pa.array([h["t0"] for h in rows], pa.int64()),
+                    "t1": pa.array([h["t1"] for h in rows], pa.int64()),
+                    "stream": pa.array([h["stream"] for h in rows]),
+                    "qhash": pa.array([dqh] * len(rows), pa.int64()),
+                    "margin": pa.array([h["score"] for h in rows],
+                                       pa.float32()),
+                }), kind="timeseries", meta={"written_by": "deep verify",
+                                             "query": text[:120]})
+            except Exception:
+                pass
+    head.sort(key=lambda h: -h["score"])
+    return head + hits[deep:]

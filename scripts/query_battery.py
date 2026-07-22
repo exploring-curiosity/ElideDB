@@ -88,7 +88,7 @@ def main():
     report = []
     for q in QUERIES:
         t0 = time.time()
-        hits, st = db.search_context(q, k=3, deep=6)
+        hits, st = db.search_context(q, k=3, deep=6, verify="sync")
         el = time.time() - t0
         qw = content_words(q)
         qv = embed_text(q, model_id="fast")

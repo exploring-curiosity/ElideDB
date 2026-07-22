@@ -616,6 +616,25 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": f"{type(e).__name__}: {e}"}, 500)
 
 
+def _warm():
+    """Pre-build the per-store matrix caches AND load the text tower so the
+    FIRST query of a session is as fast as the hundredth. Off the request
+    path; measured: an unwarmed first query pays ~1 s of model load."""
+    try:
+        from elidedb.embeddings import embed_text
+        embed_text("warmup")
+    except Exception:
+        pass
+    for key, db in list(STORES.items()):
+        try:
+            from elidedb.embeddings import _vec_table
+            _vec_table(db, "embeddings")
+            from elidedb.verified import _verdict_map
+            _verdict_map(db)
+        except Exception:
+            pass
+
+
 def main():
     global LAKE
     ap = argparse.ArgumentParser()
@@ -625,6 +644,7 @@ def main():
     args = ap.parse_args()
     LAKE = Path(args.root).resolve()
     discover()
+    threading.Thread(target=_warm, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"ElideDB Desk: http://localhost:{args.port}  "
           f"({len(STORES)} stores under {LAKE})")

@@ -842,7 +842,8 @@ class Store:
         return out
 
     def search_context(self, text: str, k=8, pool=48, deep=0, t0=None,
-                       t1=None, streams=None, rerank=False, **_legacy):
+                       t1=None, streams=None, rerank=False, verify="async",
+                       **_legacy):
         """THE search: any query, action or not, on any store.
 
         Union recall over every tier the store has (appearance embeddings,
@@ -855,8 +856,10 @@ class Store:
         from .verified import search_verified
         if rerank and not deep:
             deep = 6
+        if deep and verify == "async":
+            verify = "sync"          # deep judging is an explicit wait
         return search_verified(self, text, k=k, pool=pool, deep=deep,
-                               t0=t0, t1=t1, streams=streams)
+                               t0=t0, t1=t1, streams=streams, verify=verify)
 
     def search_verified(self, text: str, k=8, pool=48, deep=0):
         """Any query, action or not: union recall proposes, a VLM shown
