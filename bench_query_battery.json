@@ -1,7 +1,7 @@
 [
   {
     "query": "put a green object in the drawer and close it",
-    "s": 5.2,
+    "s": 9.4,
     "hits": [
       {
         "label": "move the green thing to in the drawer",
@@ -15,16 +15,6 @@
         "caption": ""
       },
       {
-        "label": "moved the green object and put it on the table",
-        "match_words": [
-          "green"
-        ],
-        "label_ok": true,
-        "sig": 0.133,
-        "margin": 0.578,
-        "caption": ""
-      },
-      {
         "label": "put the black doll on top of the drawer",
         "match_words": [
           "drawer"
@@ -33,14 +23,33 @@
         "sig": 0.16,
         "margin": 0.344,
         "caption": ""
+      },
+      {
+        "label": "move the yellow object to the lower left side of the table",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.124,
+        "margin": 0.062,
+        "caption": ""
       }
     ],
-    "label_ok_top3": 3
+    "label_ok_top3": 2
   },
   {
     "query": "close the drawer",
-    "s": 3.9,
+    "s": 8.4,
     "hits": [
+      {
+        "label": "close the drawer",
+        "match_words": [
+          "close",
+          "drawer"
+        ],
+        "label_ok": true,
+        "sig": 0.111,
+        "margin": 0.562,
+        "caption": ""
+      },
       {
         "label": "move the yellow object to the left side of the table",
         "match_words": [],
@@ -56,23 +65,13 @@
         "sig": 0.158,
         "margin": 0.359,
         "caption": ""
-      },
-      {
-        "label": "open the drawer",
-        "match_words": [
-          "drawer"
-        ],
-        "label_ok": true,
-        "sig": 0.162,
-        "margin": 0.281,
-        "caption": ""
       }
     ],
     "label_ok_top3": 1
   },
   {
     "query": "open the drawer",
-    "s": 2.6,
+    "s": 7.8,
     "hits": [
       {
         "label": "close the drawer",
@@ -107,16 +106,16 @@
   },
   {
     "query": "take something out of the drawer and put it on the table",
-    "s": 3.7,
+    "s": 6.2,
     "hits": [
       {
-        "label": "put the yellow banana in the drawer",
+        "label": "Close the open drawer",
         "match_words": [
           "drawer"
         ],
         "label_ok": true,
-        "sig": 0.158,
-        "margin": 1.188,
+        "sig": 0.171,
+        "margin": 1.547,
         "caption": ""
       },
       {
@@ -144,22 +143,14 @@
   },
   {
     "query": "pick up a banana",
-    "s": 3.7,
+    "s": 9.5,
     "hits": [
       {
-        "label": "opened the drawer",
+        "label": "open the drawer",
         "match_words": [],
         "label_ok": false,
         "sig": 0.124,
-        "margin": 1.344,
-        "caption": ""
-      },
-      {
-        "label": "move the silver pot to the right burner from the left burner",
-        "match_words": [],
-        "label_ok": false,
-        "sig": 0.097,
-        "margin": 1.172,
+        "margin": 1.469,
         "caption": ""
       },
       {
@@ -171,24 +162,22 @@
         "sig": 0.128,
         "margin": 1.062,
         "caption": ""
+      },
+      {
+        "label": "put the yellow brush on the top right edge of the cooker",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.05,
+        "margin": 0.984,
+        "caption": ""
       }
     ],
     "label_ok_top3": 1
   },
   {
     "query": "put the pot on the stove",
-    "s": 3.7,
+    "s": 10.2,
     "hits": [
-      {
-        "label": "move the silver pot on the left burner",
-        "match_words": [
-          "pot"
-        ],
-        "label_ok": true,
-        "sig": 0.111,
-        "margin": 1.344,
-        "caption": ""
-      },
       {
         "label": "move the silver pot lid to the left bottom burner",
         "match_words": [
@@ -200,19 +189,31 @@
         "caption": ""
       },
       {
-        "label": "covered the pan on the bottom right burner",
-        "match_words": [],
-        "label_ok": false,
-        "sig": 0.094,
-        "margin": 0.781,
+        "label": "move the silver pot to the bottom left side of the burner",
+        "match_words": [
+          "pot"
+        ],
+        "label_ok": true,
+        "sig": 0.126,
+        "margin": 0.875,
+        "caption": ""
+      },
+      {
+        "label": "moved the red white object into the silver pot on the right burner",
+        "match_words": [
+          "pot"
+        ],
+        "label_ok": true,
+        "sig": 0.111,
+        "margin": 0.688,
         "caption": ""
       }
     ],
-    "label_ok_top3": 2
+    "label_ok_top3": 3
   },
   {
     "query": "wipe the table with a cloth",
-    "s": 3.6,
+    "s": 9.6,
     "hits": [
       {
         "label": "open the drawer",
@@ -223,50 +224,52 @@
         "caption": ""
       },
       {
-        "label": "move the blue spoon to the top of the right burner",
+        "label": "picked up the blue spoon from the top left and moved it to the bottom right",
         "match_words": [],
         "label_ok": false,
-        "sig": 0.096,
-        "margin": 0.578,
+        "sig": 0.06,
+        "margin": 0.672,
         "caption": ""
       },
       {
-        "label": "Put the spoon to the right of the blue towel.",
-        "match_words": [],
-        "label_ok": false,
-        "sig": 0.093,
-        "margin": 0.031,
+        "label": "Move the blue cloth to the back left corner of the stove.",
+        "match_words": [
+          "cloth"
+        ],
+        "label_ok": true,
+        "sig": 0.092,
+        "margin": 0.547,
         "caption": ""
       }
     ],
-    "label_ok_top3": 0
+    "label_ok_top3": 1
   },
   {
     "query": "put a red object into the sink",
-    "s": 3.6,
+    "s": 12.6,
     "hits": [
-      {
-        "label": "put the grey toy in the drawer",
-        "match_words": [],
-        "label_ok": false,
-        "sig": 0.125,
-        "margin": 1.688,
-        "caption": ""
-      },
-      {
-        "label": "place the maize on top of the drawer",
-        "match_words": [],
-        "label_ok": false,
-        "sig": 0.128,
-        "margin": 1.0,
-        "caption": ""
-      },
       {
         "label": "move the orange towel on the lower part of stove",
         "match_words": [],
         "label_ok": false,
         "sig": 0.158,
         "margin": 0.781,
+        "caption": ""
+      },
+      {
+        "label": "move the pot to the front of the microwave",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.136,
+        "margin": 0.703,
+        "caption": ""
+      },
+      {
+        "label": "move the strawberry out from the silver pot and put it on the bottom right corner of the stove",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.147,
+        "margin": 0.656,
         "caption": ""
       }
     ],

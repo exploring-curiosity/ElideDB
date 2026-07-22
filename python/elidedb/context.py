@@ -105,10 +105,18 @@ _PREAMBLE = re.compile(
     r"(?:[\w-]+\s+){0,2}?(?:frames?|images?|pictures?|sequence|clip|video)\s*,\s*",
     re.I)
 
+# Prompt-echo: asking for "the action verb in plain English" made the VLM
+# write 'The action verb is "picking up" as the arm picks up...' — meta-
+# language that pollutes the lexical index. Strip the frame, keep the deed.
+_VERB_ECHO = re.compile(
+    r"^the action(?:\s+verb)?\s+is\s+['\"]?[\w-]+(?:\s+[\w-]+){0,2}?"
+    r"['\"]?[,.]?\s+(?:as|because|where|since|:)\s+", re.I)
+
 
 def tidy_caption(text: str, max_words: int = 32) -> str:
     t = " ".join(text.strip().split())
     t = _PREAMBLE.sub("", t)
+    t = _VERB_ECHO.sub("", t)
     parts = re.split(r"(?<=[.!?])\s+", t)
     # A generation cut off at max_tokens ends mid-clause. Keep only sentences
     # that actually terminate, unless that would leave nothing at all.
