@@ -1,0 +1,152 @@
+# FDNN-V2 plan: a fast model that understands video context
+
+Plan only. Nothing here is implemented yet. The constraint that governs every
+choice: **if it is not fast enough to sit in a database's write path and keep
+queries index-only, it is not proposed.**
+
+---
+
+## 1. What the research says, mapped to our measured failures
+
+| finding | source | maps to |
+|---|---|---|
+| Predictive world-model self-supervision on raw video learns MOTION and action structure without any labels — 77.3% on Something-Something v2, the verb-heavy benchmark where appearance models fail. Encoder + predictor, trained by predicting future latents. | [V-JEPA 2, Meta 2025](https://arxiv.org/abs/2506.09985) | Our measured dead end: "distilling to an appearance teacher can never add verbs — the target space lacks them" (close/open separate at 0.60 in teacher space). Prediction across time is the training signal that CAN add them, and it is free on our own corpus. **This is also the biological line**: the brain understands by predicting what happens next (predictive coding); recurrence + prediction is the FDNN hunch made concrete. |
+| Linear-time state-space (recurrent) backbones beat transformers on fine-grained motion (+5.9% SSv2) at 6× less memory; O(1) per step. | [VideoMamba, ECCV 2024](https://arxiv.org/abs/2403.06977) | Validates FDNN-V's architecture CLASS: a recurrent core carrying state per frame is the right shape for both action sensitivity and embed-on-write streaming. We keep the FDNN cell (its KAN-sum neurons are our rule 1), not swap it. |
+| CLIP-family verb-blindness is fixable with Verb-Focused Contrastive training: hard negatives made by swapping verbs in captions + verb-phrase alignment. | [Verbs in Action, 2023](https://arxiv.org/abs/2304.06708) | Our probe 1: cos("close the drawer","open the drawer") = 0.951. The 7B captions (being generated now, once, offline) supply exactly the caption corpus VFC needs. |
+| Forward-vs-reversed clip discrimination ("arrow of time") is a classic free self-supervision signal for temporal direction. | [Wei et al., CVPR 2018](https://donglaiw.github.io/paper/2018_cvpr_aot.pdf) | Open and close are literally time-reversals of each other. One auxiliary head, near-zero cost, directly forces them apart. |
+
+## 2. The model: FDNN-V2
+
+**Keep the skeleton** (it already meets the speed bar and the FDNN rules):
+tiny stem → FDNN recurrent cell (KAN-sum FINER/Gabor/poly neurons, ω-banded,
+gated) → heads. Causal, O(1)/frame, ≈2–3M params, measured 0.27 ms/frame.
+
+**Change the training signal** (this is where V1 failed — not architecture):
+
+```
+                          ┌── appearance head (1152-d)
+frames ─► stem ─► cell ─►─┤     distilled to SigLIP as today — keeps every
+          (unchanged)     │     existing index and the text tower working
+                          │
+                          ├── context head (256-d)  ← NEW, the verb space
+                          │     trained by:
+                          │     L1 PREDICTIVE (V-JEPA-style): from state h_t,
+                          │        predict the embedding of frame t+k.
+                          │        Dynamics must live in h to predict.
+                          │        Free labels; uses ALL 70k frames.
+                          │     L2 ARROW OF TIME: classify forward vs
+                          │        reversed clips. open ≠ close by
+                          │        construction.
+                          │     L3 VERB-FOCUSED CONTRASTIVE (VFC): sigmoid
+                          │        contrastive against 7B captions, hard
+                          │        negatives = verb/direction swaps
+                          │        ("closes"→"opens", "into"→"out of",
+                          │        clause order flips). Teaches the joint
+                          │        space queries actually live in.
+                          │
+                          └── text adapter: 2-layer MLP on SigLIP text
+                                embeddings → 256-d context space, trained
+                                jointly in L3. Query cost ~0.1 ms.
+```
+
+Two columns per frame in `frame_vectors` (appearance 1152 + context 256).
+Query = text through SigLIP tower once (~10 ms) + adapter (~0.1 ms) + two
+matmuls + caption-word match, RRF-fused. **No VLM anywhere in the query
+path.** The 7B exists in exactly one place: the offline captioner (running
+now; once per corpus, background).
+
+FDNN rules 2+3 (apoptosis → fine-tune → neurogenesis → fine-tune, PPO +
+reverse attention) run post-training as before — and the fine-tune data is
+now unlimited (self-supervised objectives), which is the regime where the
+cycle measurably worked (context tower: fidelity IMPROVED while deleting 73%
+of channels).
+
+## 3. The speed budget (hard gates, not aspirations)
+
+| operation | budget | current reference |
+|---|---|---|
+| embed, batched | ≤ 0.5 ms/frame | 0.27 (V1) |
+| embed, streaming | ≤ 1.5 ms/frame | 0.71 (V1) |
+| load+embed the 4 h dataset | ≤ 2 min | 79 s (V1 pipeline) |
+| query, cold or warm | ≤ 50 ms | index-only; no model but the text tower |
+| training a corpus's model | ≤ 1 h background | V1 trained in ~10 min |
+| 7B captioner | once per corpus, background | ~2.5 h / 4 h video |
+
+Anything that breaks a row gets cut, not excused.
+
+## 4. Small dataset + evaluation gates
+
+Dataset: **bridge4h** (already loaded; 70,436 frames of free self-supervision;
+2,097 human-labelled episodes held OUTSIDE the store for eval only). Secondary
+generality check: oxford (street domain, different everything) — same recipe,
+retrained weights, no code changes allowed.
+
+Corner-case matrix — each has a numeric probe, run every iteration:
+
+| corner case | probe | signal that should fix it | gate |
+|---|---|---|---|
+| verb direction (open vs close) | nearest-centroid acc in context space | L1+L2 | ≥ 0.80 (pixels today: 0.60; corpus info bound from robot-state: 0.85) |
+| time reversal sensitivity | AUC forward-vs-reversed embeddings | L2 | ≥ 0.90 |
+| subject-of-action vs bystander | "green moved" vs "green present" ranking | L3 hard negatives | measured, reported |
+| sequential compound ("X then close") | clause-order swap ranking | L3 order flips | measured, reported |
+| appearance regression | SigLIP-head fidelity | (must not move) | ≥ 0.90 |
+| query battery (8 complex queries) | label-verified top-3, index-only | all | ≥ 18/24 (today 13/24 WITH query-time VLMs; the gate is beating that WITHOUT them) |
+| no-answer queries | margin calibration on 5-episode "sink" class | — | flagged low-confidence, not hallucinated |
+| latency battery | every row of §3 | — | all pass |
+
+## 5. Retrieval architecture: what the fast-retrieval literature adds
+
+The 2024-2026 video-retrieval work converges on three ideas, two of which
+this system already has, and one worth adopting:
+
+| finding | source | status here |
+|---|---|---|
+| Hybrid two-stage: a two-tower (dual-encoder, indexable) proposes, a one-tower aligner reranks candidates only | [EDG, ICMR 2025](https://dl.acm.org/doi/10.1145/3731715.3733330); [CONE](https://arxiv.org/abs/2209.10918) coarse-to-fine | already our shape — except our reranker became a query-time VLM, which §6 bans; V2 replaces it with the verb-aware context head, moving that work to TRAIN time |
+| Temporal redundancy should be MERGED, not sampled away: progressive token merging cuts tokens 95%, GFLOPs 51%, and IMPROVES retrieval (+4.4% R-Sum) | [TempMe, ICLR 2025](https://arxiv.org/pdf/2409.01156) | adopt as novelty-weighted pooling (below) — uniform mean-pool is precisely what erased verbs |
+| Index EVENTS, not fixed windows: model each video as sparse discrete events; retrieval ranks events | [EDG](https://dl.acm.org/doi/10.1145/3731715.3733330); streaming fixed-budget memory banks ([2026 line](https://arxiv.org/abs/2606.25658v1), ~20x compression for hour-long streams) | **adopt — and it is nearly free**: see below |
+
+**Event-first indexing, from the gate signal.** The FDNN cell's update gate
+z_t measures how much of the scene model each frame is allowed to overwrite —
+it is, by construction, a change detector. Sustained high gate activity = an
+event boundary. So at ingest the encoder emits, at no extra model cost:
+
+    per-frame vectors  (as today — the fine tier)
+    event boundaries   (gate-activity peaks)
+    one embedding per EVENT = novelty-weighted pool of its frames
+                       (frames weighted by gate activity, so the moment the
+                        drawer closes outweighs the seconds it sat still —
+                        the TempMe lesson applied at pooling time)
+
+Queries rank a few thousand events instead of tens of thousands of arbitrary
+windows: a smaller index with boundaries that mean something, then refine to
+frames within the winning events (CONE's coarse-to-fine, all index-only).
+This replaces the fixed 4s/2s window plan as the primary retrieval unit;
+windows remain only as a fallback for streams where the gate signal is flat.
+
+Gate for this section: event segmentation F1 against episode boundaries
+(bridge4h has 2,097 ground-truth boundaries held out) — report it; and
+event-index queries must beat window-index queries on the battery at equal
+latency.
+
+## 6. Execution order (each phase ends with numbers)
+
+1. **P0 baselines** — freeze today's numbers (done, in BENCHMARKS.md).
+2. **P1 training data** — 7B captions (running); predictive pairs and
+   reversal pairs are free transforms of the frame cache; verb-swap hard
+   negatives from a small antonym/direction map applied to captions.
+3. **P2 train FDNN-V2** — combined loss, time-split eval, keep-best guard;
+   iterate against §4 gates exactly as V1 was iterated (every change
+   justified by a measured delta, failures reported).
+4. **P3 FDNN cycle** on the winner (rules 2+3, retrieval objective).
+5. **P4 load/embed/read demo** — rebuild bridge4h with V2 columns inside the
+   2-minute budget; run the battery index-only; ship only if ≥ 18/24 and
+   ≤ 50 ms/query.
+6. **P5 generality** — oxford, same recipe, report both numbers side by side.
+
+## 7. Explicitly out
+
+- Any model invocation at query time (2B, 7B, teacher — all of it).
+- Dataset-specific inputs (robot state is an eval bound only).
+- Frame skipping. Every frame is embedded, as established.
+- Growing the model past the §3 budget to chase a gate — if a gate cannot be
+  met inside the budget, that is reported as a boundary, not papered over.
