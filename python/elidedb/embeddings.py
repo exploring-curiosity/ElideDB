@@ -12,9 +12,33 @@ import time
 
 import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
 
 _MODEL_CACHE = {}
 DEFAULT_MODEL = "mlx-community/siglip-so400m-patch14-384"
+
+# Ingest cost is ALL model, not storage: measured on an M-series machine,
+# byte-range decode runs at 2.7 ms/frame while the 384px tower runs at
+# 90.3 ms/frame — 97% of ingest is the encoder. So the encoder is a choice,
+# not a constant.
+#
+#   quality  siglip-so400m-patch14-384   90.3 ms/frame   1152-d   (default)
+#   fast     siglip-so400m-patch14-224   27.7 ms/frame   1152-d   3.3x faster
+#
+# `fast` is the SAME model and the same output space, fed 224px instead of
+# 384px, so it is 256 patches per image instead of 729. Vectors from the two
+# are NOT interchangeable — an index must be built and queried with one of
+# them, which is why the model id is recorded in the table's metadata and the
+# query path reads it back.
+MODELS = {
+    "quality": "mlx-community/siglip-so400m-patch14-384",
+    "fast": "mlx-community/siglip-so400m-patch14-224",
+}
+
+
+def resolve_model(name):
+    """Accept a preset name ('fast'/'quality') or a raw HF model id."""
+    return MODELS.get(name, name) if name else DEFAULT_MODEL
 
 
 def _load_model(model_id):
@@ -26,7 +50,7 @@ def _load_model(model_id):
 
 def _embed_images(images, model_id):
     import mlx.core as mx
-    model, processor = _load_model(model_id)
+    model, processor = _load_model(resolve_model(model_id))
     iv = processor(images=images, return_tensors="np")
     out = np.array(model.get_image_features(mx.array(iv["pixel_values"])),
                    dtype=np.float32)
@@ -35,7 +59,7 @@ def _embed_images(images, model_id):
 
 def embed_text(text, model_id=DEFAULT_MODEL):
     import mlx.core as mx
-    model, processor = _load_model(model_id)
+    model, processor = _load_model(resolve_model(model_id))
     ti = processor(text=[text], padding="max_length", max_length=64,
                    truncation=True, return_tensors="np")
     v = np.array(model.get_text_features(mx.array(ti["input_ids"])),
@@ -46,20 +70,112 @@ def embed_text(text, model_id=DEFAULT_MODEL):
 def _vec_table(store, name="embeddings", version=None, column="vector"):
     t = store.table(name).scan(version=version)
     if len(t) == 0:
+        extra = ""
+        try:
+            if store.table("frame_vectors").state().files:
+                extra = (" Per-frame vectors already exist, so this costs a "
+                         "numpy mean, not a GPU pass.")
+        except Exception:
+            pass
         raise RuntimeError(
-            f"store '{store.name}' has no embeddings — run "
-            "store.embed_windows() first")
+            f"store '{store.name}' has no '{name}' table — run "
+            f"store.embed_windows() first.{extra}")
     vecs = np.stack([np.asarray(v, dtype=np.float32)
                      for v in t.column(column).to_pylist()])
     return t, vecs
 
 
+def pool_windows(store, window_s=2.0, stride_s=None, table="frame_vectors"):
+    """Build the `embeddings` table by POOLING existing per-frame vectors.
+
+    A window embedding is the mean of its frame embeddings. If `frame_vectors`
+    already exists there is nothing to compute with a model: decoding every
+    frame again and re-running SigLIP to reach the same answer is pure waste —
+    on the Bridge store that was 25 minutes of GPU to reproduce a number a
+    numpy mean gives in under a second.
+
+    This is the ordinary database move: two indexes over one scan, not two
+    scans.
+    """
+    fv = store.table(table).scan()
+    if len(fv) == 0:
+        raise RuntimeError(f"'{table}' is empty — run embed_frames() first")
+    win = int(window_s * 1e9)
+    stride = int((stride_s or window_s) * 1e9)
+    t_start = time.time()
+    rows = {"ts": [], "t1": [], "stream": [], "vector": []}
+    for s in sorted(set(fv.column("stream").to_pylist())):
+        sub = fv.filter(pc.equal(fv.column("stream"), s))
+        ts = sub.column("ts").to_numpy()
+        order = np.argsort(ts)
+        ts = ts[order]
+        vecs = np.asarray(sub.column("vector").to_pylist(),
+                          dtype=np.float32)[order]
+        t = int(ts[0])
+        while t <= int(ts[-1]):
+            lo, hi = np.searchsorted(ts, [t, t + win])
+            if hi > lo:
+                v = vecs[lo:hi].mean(axis=0)
+                v /= np.linalg.norm(v) + 1e-8
+                rows["ts"].append(t)
+                rows["t1"].append(min(t + win - 1, int(ts[-1])))
+                rows["stream"].append(s)
+                rows["vector"].append(v)
+            t += stride
+    dim = len(rows["vector"][0])
+    tbl = pa.table({
+        "ts": pa.array(rows["ts"], pa.int64()),
+        "t1": pa.array(rows["t1"], pa.int64()),
+        "stream": pa.array(rows["stream"]),
+        "vector": pa.array([v.tolist() for v in rows["vector"]],
+                           pa.list_(pa.float32(), dim)),
+    })
+    st = store.table("embeddings").state()
+    # `model` must stay the REAL model id: the query path reads it so the text
+    # tower matches the tower that produced these vectors. Writing prose here
+    # sent "pooled from frame_vectors" to the HF loader as a repo id.
+    src_model = (store.table(table).state().meta or {}).get("model",
+                                                            DEFAULT_MODEL)
+    meta = {"model": src_model, "built_by": "pooled from frame_vectors",
+            "dim": dim, "window_s": window_s, "source_table": table,
+            "seconds": round(time.time() - t_start, 2)}
+    if st.files:
+        import uuid as _uuid
+
+        from .log import FileEntry
+        from .store import write_parquet
+        fn = f"part-{_uuid.uuid4().hex[:12]}.parquet"
+        p = store.dir / "tables" / "embeddings" / fn
+        write_parquet(tbl, p)
+        tsv = tbl.column("ts").to_numpy()
+        version = store.table("embeddings").log.commit(
+            op="replace", kind="embeddings", schema=str(tbl.schema),
+            add=[FileEntry(fn, len(tbl), p.stat().st_size,
+                           int(tsv.min()), int(tsv.max()))],
+            remove=[f.path for f in st.files], meta=meta)
+    else:
+        version = store.table("embeddings").append(tbl, kind="embeddings",
+                                                   meta=meta)
+    return {"windows": len(tbl), "dim": dim, "version": version,
+            "seconds": meta["seconds"], "source": table}
+
+
 def embed_windows(store, frame_table="frames", window_s=2.0,
                   frames_per_window=2, model=None, batch=16, stride_s=None,
-                  incremental=True):
+                  incremental=True, reuse_frame_vectors=True):
     """Tumbling windows over every video stream → mean-pooled SigLIP vectors
     → one commit to the `embeddings` table. Frames come through the same
-    byte-range path queries use."""
+    byte-range path queries use.
+
+    If per-frame vectors already exist, they are pooled instead of re-running
+    the model (see `pool_windows`) — same result, no GPU.
+    """
+    if reuse_frame_vectors:
+        try:
+            if store.table("frame_vectors").state().files:
+                return pool_windows(store, window_s, stride_s)
+        except Exception:
+            pass
     from PIL import Image  # noqa: F401 (decode happens in FrameSet)
     model = model or DEFAULT_MODEL
     tab = store.table(frame_table)
@@ -83,7 +199,6 @@ def embed_windows(store, frame_table="frames", window_s=2.0,
         except Exception:
             pass
     jobs = []  # (stream, t0, t1)
-    import pyarrow.compute as pc
     for s in streams:
         rows = frames.filter(pc.equal(frames.column("stream"), s))
         ts = rows.column("ts").to_numpy()

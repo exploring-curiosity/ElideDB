@@ -36,24 +36,56 @@ from elidedb import context as C                             # noqa: E402
 
 
 def load_truth(store):
+    """Episodes that the context index can actually reach.
+
+    The store may hold episodes from video files that were never embedded
+    (frame vectors and captions are built per stream). Those can never be
+    returned by any query, so scoring against them would measure ingest
+    coverage, not retrieval quality. Restrict to episodes on streams the
+    context table covers, and require the episode to overlap at least one
+    indexed window.
+    """
     t = pq.read_table("eval/bridge_truth.parquet").to_pydict()
-    # keep only episodes whose time range is actually in this store
     ep = store.table("episodes").scan()
-    have = set(zip(ep.column("episode_index").to_pylist(),))
+    ep_stream = dict(zip(ep.column("episode_index").to_pylist(),
+                         ep.column("stream").to_pylist()))
+    ctx = store.table("context").scan()
+    covered = {}
+    for s, a, b in zip(ctx.column("stream").to_pylist(),
+                       ctx.column("ts").to_pylist(),
+                       ctx.column("t1").to_pylist()):
+        lo, hi = covered.get(s, (a, b))
+        covered[s] = (min(lo, a), max(hi, b))
     rows = []
     for i, a, b, task in zip(t["episode_index"], t["ts"], t["t1"], t["task"]):
-        if (i,) in have and task:
-            rows.append({"ep": int(i), "t0": int(a), "t1": int(b),
-                         "task": task})
+        i = int(i)
+        s = ep_stream.get(i)
+        if not task or s not in covered:
+            continue
+        lo, hi = covered[s]
+        if b >= lo and a <= hi:
+            rows.append({"ep": i, "t0": int(a), "t1": int(b), "task": task,
+                         "stream": s})
     return rows
 
 
 def segments_to_episodes(hits, eps):
-    """Rank-ordered, de-duplicated episode ids for a hit list."""
+    """Rank-ordered, de-duplicated episode ids for a hit list.
+
+    Matching requires the STREAM to agree, not just the time range. Each
+    packed video file gets its own slot on the synthetic timeline, and those
+    slots were briefly allowed to overlap (a 5042 s file in a 3000 s slot), so
+    time alone could map a segment from one file onto an episode from
+    another — scoring a hit as correct because two unrelated clips happened to
+    share a timestamp.
+    """
+    by_stream = {}
+    for e in eps:
+        by_stream.setdefault(e["stream"], []).append(e)
     out = []
     for h in hits:
         best, bestov = None, 0
-        for e in eps:
+        for e in by_stream.get(h["stream"], ()):
             ov = min(h["t1"], e["t1"]) - max(h["t0"], e["t0"])
             if ov > bestov:
                 best, bestov = e["ep"], ov
@@ -86,6 +118,8 @@ def main():
     ap.add_argument("--queries", type=int, default=60)
     ap.add_argument("--k", type=int, default=10)
     ap.add_argument("--rerank", action="store_true")
+    ap.add_argument("--sweep", action="store_true",
+                    help="also try ranker pairs and weight tilts")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -103,11 +137,24 @@ def main():
     queries = [tasks[i] for i in pick]
 
     configs = {
+        # each ranker alone, to see what it actually contributes
         "appearance": {"appearance": 1.0, "context": 0.0, "lexical": 0.0},
         "context":    {"appearance": 0.0, "context": 1.0, "lexical": 0.0},
         "lexical":    {"appearance": 0.0, "context": 0.0, "lexical": 1.0},
         "rrf_all":    {"appearance": 1.0, "context": 1.0, "lexical": 1.0},
     }
+    if args.sweep:
+        # Weights are the only free parameter in the fused ranker, so they get
+        # measured rather than guessed. Pairs first (does the third ranker pay
+        # for itself?), then tilts of the full fusion.
+        configs.update({
+            "app+ctx":     {"appearance": 1.0, "context": 1.0, "lexical": 0.0},
+            "app+lex":     {"appearance": 1.0, "context": 0.0, "lexical": 1.0},
+            "ctx+lex":     {"appearance": 0.0, "context": 1.0, "lexical": 1.0},
+            "lex_heavy":   {"appearance": 1.0, "context": 1.0, "lexical": 2.0},
+            "ctx_heavy":   {"appearance": 1.0, "context": 2.0, "lexical": 1.0},
+            "app_light":   {"appearance": 0.5, "context": 1.0, "lexical": 1.0},
+        })
     results = {n: {"m": [], "ms": []} for n in configs}
     if args.rerank:
         results["rrf_rerank"] = {"m": [], "ms": []}

@@ -35,6 +35,8 @@ def main():
                     help="caption every Nth window; the rest are estimated")
     ap.add_argument("--epochs", type=int, default=300)
     ap.add_argument("--skip-captions", action="store_true")
+    ap.add_argument("--prompt", default="manipulation",
+                    help="caption prompt preset: scene | manipulation")
     args = ap.parse_args()
 
     db = Store.open(args.store)
@@ -45,7 +47,8 @@ def main():
           flush=True)
 
     if not args.skip_captions:
-        r = C.caption_windows(db, windows, every=args.every, verbose=True)
+        r = C.caption_windows(db, windows, every=args.every, verbose=True,
+                              prompt=args.prompt)
         print("captions:", r, flush=True)
 
     _, _, m = C.train_context(db, window_s=args.window_s,

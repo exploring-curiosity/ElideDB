@@ -216,7 +216,109 @@ the one this sample cannot exercise.
 question and never sees a ranking, so it cannot favour a method, but a fully
 independent judge would need a second VLM.
 
-## 8. Using it
+## 8. Hybrid retrieval: three rankers fused by reciprocal rank
+
+`crossing red car` used to return any clip containing a person crossing. The
+cause was the fusion, not the rankers: scores were combined as a weighted sum
+of z-scores, and a weighted sum is governed by whichever signal happens to have
+the widest spread on that query rather than by the weight you set. The three
+signals are not commensurable —
+
+| ranker | what it knows | typical score range |
+|---|---|---|
+| appearance (SigLIP image-text) | which objects are in frame | 0.01 – 0.15 (modality gap) |
+| context (caption-LSA) | what is happening | most of [-1, 1] |
+| lexical (TF-IDF on captions) | exact terms — the ranker that knows "red" | mostly 0, thin tail near 1 |
+
+— so no weighting makes them add up sensibly.
+
+**RRF** (Cormack, Clarke & Buettcher, SIGIR 2009) throws the magnitudes away
+and keeps only the order:
+
+```
+score(d) = Σ_r  w_r / (K + rank_r(d))       K = 60
+```
+
+That is scale-free by construction, and it rewards **consensus**: a hit must
+convince more than one ranker. Verified in `tests/test_fusion.py` — a candidate
+ranked #1 by one ranker and last by another falls to fused rank 24, while one
+ranked #4 by both takes rank 1. That is precisely the reported failure.
+
+Two details that matter:
+
+- **Abstention ≠ last place.** A ranker with no evidence returns NaN and is
+  given the *median* rank. Without this the lexical ranker would veto every
+  window it has no caption for — which is most of them on a partially labelled
+  corpus — turning "no opinion" into a downvote.
+- **Every hit can explain itself.** `explain_top=N` returns each result's
+  per-ranker rank, so "why is this here?" has an answer. A fused score alone
+  never can.
+
+Reranking runs through the same path: `rerank=True` puts the VLM last, on the
+shortlist only.
+
+```python
+db.search_context("crossing red car", weights={"lexical": 2.0})
+db.search_context("...", weights={"appearance": 0})   # disable a ranker
+db.search_context("...", rerank=True, explain_top=5)
+```
+
+## 9. BridgeData2: where this does NOT work
+
+Bridge is the hard case, and the result is negative. Stating it plainly
+because a retrieval system that is only ever evaluated on the corpus it was
+tuned for is not evaluated at all.
+
+**Setup.** 1,292 episodes from `nvidia/BridgeData2_LeRobot_v3`, 913 distinct
+human-written task strings, 4,572 sliding windows (1,524 VLM-captioned, 3,048
+tower-estimated). The task strings are ground truth ONLY — they live in
+`eval/bridge_truth.parquet`, outside the store, enforced by
+`tests/test_no_label_leak.py`. A query is a task string; the target is the one
+episode it describes.
+
+**Result** (200 queries, `scripts/bench_bridge.py --queries 200 --sweep`):
+
+| method | R@1 | R@5 | R@10 | MRR |
+|---|---|---|---|---|
+| appearance | 0.010 | 0.020 | 0.050 | 0.017 |
+| context | 0.010 | 0.035 | 0.045 | 0.021 |
+| lexical | 0.010 | 0.030 | 0.050 | 0.016 |
+| rrf_all | 0.010 | 0.025 | 0.040 | 0.018 |
+| app+lex (best) | 0.005 | 0.030 | **0.065** | 0.018 |
+
+Random is R@10 = 10/1292 = 0.008, so the best config is ~8x random — real
+signal, and nowhere near useful. **Every configuration lands between 0.030 and
+0.065, i.e. within noise of each other**: fusion weights do not rescue this,
+and a 60-query run that appeared to show `app+lex` at 2x the field did not
+survive 200 queries. Cheap lesson, worth repeating: 60 queries at R@10 ~0.05
+is about six successes, which is not a measurement.
+
+**Why it fails.** Three compounding reasons, none of them the fusion:
+
+1. *The corpus is adversarially homogeneous.* Every clip is the same robot arm
+   over the same toy kitchen. Separating "put the corn on the drawer" from
+   "put the carrot in the drawer" is fine-grained object identification at
+   224-384 px, which zero-shot SigLIP does poorly here.
+2. *Vocabulary mismatch between the captioner and the annotator.* The VLM
+   reliably says "wooden box" where the human says "drawer". Retargeting the
+   caption prompt at manipulation ("which object does the arm move, and
+   where") fixed the sentence FORM — "The arm picks up the red cup and puts it
+   into the wooden box" — but not the nouns. Putting "drawer" in the prompt
+   would fix the metric by feeding eval vocabulary into the index, which is
+   cheating, so it was not done.
+3. *Singleton targets.* 866 of 921 tasks occur exactly once, so the task is
+   "find the one right clip among 1,292" — the hardest IR setting there is.
+
+**What would actually be needed:** in-domain video-text training pairs (which
+this benchmark deliberately withholds), or a much stronger captioner. Prompt
+and weight tuning are not the missing piece, and the measurements say so.
+
+The street corpus result in section 6 stands — captions materialised at ingest
+beat query-time VLM reranking at 1/4000th the latency. Bridge shows the
+boundary of that claim: it holds when the captioner and the query share a
+vocabulary, and collapses when they do not.
+
+## 10. Using it
 
 ```python
 from elidedb import Store

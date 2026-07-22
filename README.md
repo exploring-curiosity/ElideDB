@@ -55,10 +55,31 @@ window, stats = db.window(hits[0]["t0"], hits[0]["t1"])
 print(stats)                                          # bytes touched vs corpus
 ```
 
+## Contextual search
+
+Semantic search finds *what is in frame*. Contextual search finds *what is
+happening* — and it does so without a model in the query path, because the
+expensive part runs once at ingest:
+
+```python
+db.index_context()                       # VLM captions -> caption index -> tower
+db.search_context("a robot putting a pot in the sink")
+db.search_context("crossing red car", weights={"lexical": 2.0})
+db.search_context("...", rerank=True, explain_top=5)   # why each hit is here
+```
+
+Three rankers vote and are fused by **reciprocal rank** — appearance (SigLIP),
+context (the clip's caption), and lexical (exact terms). Fusing by rank rather
+than by score means a hit has to convince more than one ranker, which is why
+`crossing red car` no longer returns everything with a person crossing.
+Full design, ablations, and the parts that do not work yet:
+[docs/CONTEXT.md](docs/CONTEXT.md).
+
 ## Documentation
 
 | doc | what it covers |
 |---|---|
+| [docs/CONTEXT.md](docs/CONTEXT.md) | contextual retrieval: the caption index, RRF, the temporal tower, and its limits |
 | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | step-by-step: install → create → add your data → query → browse |
 | [docs/API.md](docs/API.md) | every class, method, and CLI verb |
 | [DESIGN.md](DESIGN.md) | architecture + which idea came from which system (Delta, Spark, C-Store, warehouses) |

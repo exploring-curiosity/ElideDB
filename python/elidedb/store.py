@@ -798,19 +798,31 @@ class Store:
 
     # ---- context retrieval -------------------------------------------------
     def index_context(self, window_s=2.0, stride_s=0.5, label_fraction=1.0,
-                      prune=True, epochs=300, verbose=True):
+                      prune=True, epochs=300, verbose=True, model=None,
+                      frame_stride=1, prompt="scene"):
         """Build the context index end to end.
 
         frames -> per-frame vectors -> VLM captions on `label_fraction` of
         windows -> caption-LSA space -> temporal tower -> cellular turnover
         -> materialised `context` table.
 
-        `label_fraction < 1` captions only part of the corpus and lets the
-        tower cover the rest; that is the knob for trading ingest cost against
-        context quality on a corpus too large to caption in full.
+        Cost is dominated by the image encoder, so the knobs that matter are:
+
+          model="fast"      3.3x faster encoder, same 1152-d space
+          frame_stride=N    embed every Nth frame (5 Hz video rarely needs all)
+          label_fraction<1  caption only part of the corpus; the tower covers
+                            the rest
+          prompt=           "scene" or "manipulation" — the caption IS the
+                            index, so it has to use the words a user would
+
+        Measured: decode 2.7 ms/frame, encode 90.3 ms/frame (quality) or
+        27.7 ms/frame (fast). Embedding a large corpus is a batch job measured
+        in hours; nothing here hides that.
         """
         from . import context as C
-        out = {"frame_vectors": C.embed_frames(self, verbose=verbose)}
+        out = {"frame_vectors": C.embed_frames(self, verbose=verbose,
+                                               model=model,
+                                               stride=frame_stride)}
         windows = C.plan_windows(self, window_s, stride_s)
         if label_fraction < 1.0:
             # Label a TIME PREFIX, not a random sample: the realistic shape of
@@ -819,7 +831,8 @@ class Store:
             # neighbours of every held-out window.
             n = max(int(len(windows) * label_fraction), 16)
             windows = sorted(windows, key=lambda w: w[1])[:n]
-        out["captions"] = C.caption_windows(self, windows, verbose=verbose)
+        out["captions"] = C.caption_windows(self, windows, verbose=verbose,
+                                            prompt=prompt)
         _, _, out["train"] = C.train_context(self, window_s, stride_s,
                                              epochs=epochs, verbose=verbose)
         if prune:

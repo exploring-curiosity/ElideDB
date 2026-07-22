@@ -56,7 +56,12 @@ CAM = "observation.images.image_0"
 # comfortably longer than any single file (2456 s observed), so timelines never
 # collide and each file keeps a visible gap from the next.
 EPOCH_NS = 1_704_067_200_000_000_000        # 2024-01-01T00:00:00Z
-FILE_STRIDE_NS = 3_000_000_000_000          # 3000 s per file slot
+# Each packed file gets a slot on the synthetic timeline. The slot MUST be
+# longer than the longest file or slots overlap and two unrelated clips share
+# timestamps — file 120 is 5042 s, which a 3000 s slot silently aliased into
+# file 119's range. Streams still disambiguate inside the database, but any
+# time-only reasoning (a window query, an evaluation join) would be wrong.
+FILE_STRIDE_NS = 20_000_000_000_000         # 20000 s per file slot
 
 
 def episode_meta():

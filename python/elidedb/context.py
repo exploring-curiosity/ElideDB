@@ -45,7 +45,8 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 
-from .embeddings import DEFAULT_MODEL, _embed_images, _load_model
+from .embeddings import (DEFAULT_MODEL, MODELS, _embed_images,
+                         _load_model, resolve_model)
 
 # The teacher is asked for RELATIONS and CHANGE, not for a list of objects.
 # An object list is exactly what SigLIP already encodes, so a caption that
@@ -58,6 +59,29 @@ CAPTION_PROMPT = (
     "positioned relative to each other, and how the scene moves or changes. "
     "Be concrete and literal. Do not say 'frame', 'image', or 'video'."
 )
+
+# The caption is the index. If it does not use the words a user would use, the
+# lexical ranker can never fire and the caption-LSA space is built around the
+# wrong distinctions. Measured on BridgeData2: the generic prompt above
+# produced "a robot arm interacts with a wooden box", while the human label
+# for the same clip was "put red object in the drawer" — different noun,
+# different granularity, no overlap for retrieval to work with.
+#
+# So the prompt is a per-domain parameter. This one asks for the ACTION and
+# the OBJECT MOVED, which is how manipulation data is described. It stays
+# deliberately generic: it never names objects that appear in the labels
+# (that would be leaking the eval set into the index), only the SHAPE of the
+# description — what moved, and where it ended up.
+MANIPULATION_PROMPT = (
+    "These frames are in time order from one short clip of a robot arm. "
+    "Reply with ONE short sentence naming the action: which object the arm "
+    "picks up or moves, and where it puts it. Name each object with its "
+    "everyday name and its colour, e.g. 'puts the red cup into the drawer' "
+    "or 'moves the yellow spoon onto the towel'. If the arm moves nothing, "
+    "say what it is reaching toward. Do not say 'frame', 'image', or 'video'."
+)
+
+PROMPTS = {"scene": CAPTION_PROMPT, "manipulation": MANIPULATION_PROMPT}
 
 # SigLIP's text tower truncates at 64 tokens, so a rambling caption is
 # silently cut mid-clause and the tail is lost anyway. Trim deliberately
@@ -108,7 +132,7 @@ def embed_frames(store, frame_table="frames", model=None, width=512,
     from PIL import Image
 
     from .video import FrameSet
-    model = model or DEFAULT_MODEL
+    model = resolve_model(model)
     frames = store.table(frame_table).scan()
     allst = sorted(set(frames.column("stream").to_pylist()))
     streams = [s for s in allst if s in streams] if streams else allst
@@ -226,7 +250,7 @@ def window_sequences(store, windows, table="frame_vectors", max_len=32):
 # ---------------------------------------------------------------------------
 def caption_windows(store, windows, frames_per_window=3, model_id=None,
                     max_tokens=64, width=448, verbose=True, limit=None,
-                    every=1):
+                    every=1, prompt="scene"):
     """VLM captions for `windows` → `context_captions` table.
 
     The VLM is shown several frames of the SAME window in order, so the
@@ -259,7 +283,8 @@ def caption_windows(store, windows, frames_per_window=3, model_id=None,
         windows = windows[::every]
     if limit:
         windows = windows[:limit]
-    prompt = apply_chat_template(processor, cfg, CAPTION_PROMPT,
+    text = PROMPTS.get(prompt, prompt)          # preset name or raw prompt
+    prompt = apply_chat_template(processor, cfg, text,
                                  num_images=frames_per_window)
 
     recs = {"ts": [], "t1": [], "stream": [], "caption": []}
@@ -317,7 +342,7 @@ def caption_windows(store, windows, frames_per_window=3, model_id=None,
     version = store.table("context_captions").append(
         tbl, kind="embeddings",
         meta={"teacher": model_id, "text_model": DEFAULT_MODEL, "dim": dim,
-              "frames_per_window": frames_per_window,
+              "frames_per_window": frames_per_window, "prompt": text[:200],
               "seconds": round(time.time() - t_start, 1)})
     return {"captions": len(tbl), "version": version,
             "seconds": round(time.time() - t_start, 1)}
@@ -796,6 +821,16 @@ def search(store, text, k=10, merge=True, t0=None, t1=None, streams=None,
     """
     from .embeddings import _parse_query, _score_windows, embed_text
     from .fusion import explain_fusion, rrf
+    # Fail with a sentence, not a KeyError from three frames down. An empty
+    # table has no schema, so the first column access explodes with
+    # 'Field "t1" does not exist' — true, useless, and it names the wrong
+    # problem.
+    if not store.table("context").state().files:
+        raise RuntimeError(
+            f"store '{store.name}' has no context index. Build it with "
+            "store.index_context() (frames -> per-frame vectors -> VLM "
+            "captions -> context table), or use store.search_text() for "
+            "appearance-only search.")
     pos, neg = _parse_query(text)
     ctx_tbl = store.table("context").scan()
     all_t0 = ctx_tbl.column("ts").to_numpy()

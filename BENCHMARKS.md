@@ -190,6 +190,31 @@ earns its place when fused. The corpus is 19 seconds of one drive: 153 training
 windows whose captions are near-duplicates (mean pairwise cosine 0.68). The
 distillation path is built and measured, not yet demonstrated.
 
+## Ingest throughput — where the time actually goes
+
+Measured on the Bridge store (M-series, `scripts/bench_context.py` numbers
+alongside):
+
+| stage | rate | note |
+|---|---|---|
+| byte-range decode | **2.7 ms/frame** | 0.23% of a 133 MB file for one 23-frame episode |
+| SigLIP `quality` (so400m-384) | 90.3 ms/frame | 1152-d |
+| SigLIP `fast` (so400m-224) | **27.7 ms/frame** | same model + space, 256 patches vs 729 — 3.3x |
+| window embeddings from frame vectors | **6.2 s for 4,574 windows** | pooled, no GPU (was 1,525 s re-embedding) |
+| VLM caption | ~650 ms/window | one per captioned window |
+| context tower inference | 22.8 us/window | after pruning |
+
+**97% of ingest time is the image encoder, not the storage engine.** The knobs
+that matter are therefore `model="fast"`, `frame_stride=N`, and
+`label_fraction<1`; all three are parameters of `Store.index_context()`.
+
+Honest scale estimate for the full 90.3 GB BridgeData2 source (457 files,
+5 cameras): one camera at `fast` + `frame_stride=2` is ~11 h of encoding plus
+~9 h of captioning. Embedding a corpus this size is a batch job measured in
+hours. Nothing in the design hides that; what the design does is make sure you
+only pay it once (`frame_vectors` is the single source, and both the semantic
+and context indexes are derived from it).
+
 ## Reproduce
 
 ```bash
