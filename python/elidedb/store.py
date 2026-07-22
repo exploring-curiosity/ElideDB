@@ -841,17 +841,22 @@ class Store:
         out["build"] = C.build_context(self, verbose=verbose)
         return out
 
-    def search_context(self, text: str, k=10, weights=None, rerank=False,
-                       **kw):
-        """Contextual search: relations and change, not just appearance.
+    def search_context(self, text: str, k=8, pool=48, deep=0, t0=None,
+                       t1=None, streams=None, rerank=False, **_legacy):
+        """THE search: any query, action or not, on any store.
 
-        Three rankers — appearance (SigLIP), context (caption-LSA), lexical
-        (TF-IDF over captions) — fused by reciprocal rank. `weights` tunes
-        their influence, e.g. {"lexical": 2.0} to favour exact term matches;
-        setting one to 0 disables it. `rerank=True` adds a final VLM pass over
-        the top hits. See elidedb.context.search."""
-        from .context import search
-        return search(self, text, k=k, weights=weights, rerank=rerank, **kw)
+        Union recall over every tier the store has (appearance embeddings,
+        caption words, caption-LSA vectors) proposes candidates; a VLM
+        reading each clip's start/end frames verifies WHAT IS HAPPENING;
+        verdicts are cached into the store so hot queries get cheap.
+        `deep=N` (or rerank=True) re-judges the top N with the larger VLM
+        over 4 ordered frames. Legacy RRF-only search remains at
+        elidedb.context.search for stores where a model-free path matters."""
+        from .verified import search_verified
+        if rerank and not deep:
+            deep = 6
+        return search_verified(self, text, k=k, pool=pool, deep=deep,
+                               t0=t0, t1=t1, streams=streams)
 
     def search_verified(self, text: str, k=8, pool=48, deep=0):
         """Any query, action or not: union recall proposes, a VLM shown

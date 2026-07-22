@@ -105,7 +105,8 @@ def _caption_candidates(store, text, n):
 
 
 def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
-                    pad_s=2.0, deep=0, verbose=False):
+                    pad_s=2.0, deep=0, t0=None, t1=None, streams=None,
+                    verbose=False):
     """Union recall -> segment building -> multi-frame VLM verification.
 
     Returns (hits, stats); each hit carries `margin` (the VLM's yes/no
@@ -125,17 +126,48 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     w_t1 = tbl.column("t1").to_numpy()
     w_s = tbl.column("stream").to_numpy(zero_copy_only=False)
 
-    # ---- RECALL: union over atoms + captions ------------------------------
+    # hybrid predicates pushed INTO recall, as everywhere else in this store
+    pred = np.ones(len(w_t0), bool)
+    if t0 is not None:
+        pred &= w_t1 >= t0
+    if t1 is not None:
+        pred &= w_t0 <= t1
+    if streams:
+        pred &= np.isin(w_s, list(streams))
+    idx_all = np.where(pred)[0]
+    if len(idx_all) == 0:
+        return [], {"method": "verified", "candidates": 0, "segments": 0,
+                    "ms": 0.0}
+
+    # ---- RECALL: union over atoms + captions + context vectors ------------
     atoms = _atoms(text)
     per = max(pool // len(atoms), 12)
     cand = {}
     for a in atoms:
         qv = embed_text(a)
-        for i in np.argsort(-(vecs @ qv))[:per]:
-            cand.setdefault((str(w_s[i]), int(w_t0[i]), int(w_t1[i])),
-                            0.0)
+        sub = idx_all[np.argsort(-(vecs[idx_all] @ qv))[:per]]
+        for i in sub:
+            cand.setdefault((str(w_s[i]), int(w_t0[i]), int(w_t1[i])), 0.0)
     for w in _caption_candidates(store, text, per):
+        if streams and w[0] not in streams:
+            continue
         cand.setdefault(w, 0.0)
+    # stores with the full context tier contribute their caption-LSA ranking
+    try:
+        from .context import _ctx_matrix, caption_space
+        if store.table("context").state().files:
+            ctx = store.table("context").scan()
+            cv = _ctx_matrix(store)
+            qc = caption_space(store).transform([text])[0]
+            cs = ctx.column("stream").to_pylist()
+            ca = ctx.column("ts").to_pylist()
+            cb = ctx.column("t1").to_pylist()
+            for i in np.argsort(-(cv @ qc))[:per]:
+                if streams and cs[i] not in streams:
+                    continue
+                cand.setdefault((cs[i], int(ca[i]), int(cb[i])), 0.0)
+    except Exception:
+        pass
 
     # ---- SEGMENTS: pad each window so the verifier sees the WHOLE event
     # (the close happens after the put; a bare window may hold only one) ----

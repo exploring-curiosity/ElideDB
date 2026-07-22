@@ -72,13 +72,20 @@ CAPTION_PROMPT = (
 # deliberately generic: it never names objects that appear in the labels
 # (that would be leaking the eval set into the index), only the SHAPE of the
 # description — what moved, and where it ended up.
+# The caption IS the index: whatever verbs the prompt teaches are the only
+# verbs lexical recall can ever match. The first version of this prompt said
+# "which object the arm picks up or moves, and where it puts it" — and the
+# resulting 2,348 captions contained picks x2371, puts x1673 and ZERO
+# instances of close/open/wipe/push, so "close the drawer" was unfindable by
+# construction. The prompt must be VERB-OPEN: describe the action in its own
+# words, and always report state changes.
 MANIPULATION_PROMPT = (
     "These frames are in time order from one short clip of a robot arm. "
-    "Reply with ONE short sentence naming the action: which object the arm "
-    "picks up or moves, and where it puts it. Name each object with its "
-    "everyday name and its colour, e.g. 'puts the red cup into the drawer' "
-    "or 'moves the yellow spoon onto the towel'. If the arm moves nothing, "
-    "say what it is reaching toward. Do not say 'frame', 'image', or 'video'."
+    "Reply with ONE short sentence: the action verb in plain English "
+    "(whatever it is - picking up, putting, opening, closing, pushing, "
+    "pouring, wiping, pressing...), the object acted on with its colour, "
+    "and where it ends up. If anything is opened, closed, or changes state, "
+    "say so. Do not say 'frame', 'image', or 'video'."
 )
 
 PROMPTS = {"scene": CAPTION_PROMPT, "manipulation": MANIPULATION_PROMPT}
@@ -958,6 +965,8 @@ def explain(store, t0, t1, stream=None):
     words. Lets a result be checked rather than trusted."""
     caps = store.table("context_captions").scan()
     out = []
+    if len(caps) == 0 or "stream" not in caps.column_names:
+        return out          # store has no captions (yet) — nothing to explain
     for s, a, b, c in zip(caps.column("stream").to_pylist(),
                           caps.column("ts").to_pylist(),
                           caps.column("t1").to_pylist(),

@@ -272,15 +272,14 @@
       <div class="panel">
         <h2>Query console</h2>
         <div class="seg qmodes" id="qmodes">
-          <button data-q="text" class="on">Semantic</button>
-          <button data-q="context">Contextual</button>
+          <button data-q="context" class="on">Contextual</button>
           <button data-q="predicate">Predicate</button>
           <button data-q="sql">SQL</button>
           <button data-q="window">Window</button>
         </div>
 
-        <!-- ── SEMANTIC (compositional) ── -->
-        <div id="q-text">
+        <!-- ── SEMANTIC (internal; superseded by Contextual) ── -->
+        <div id="q-text" style="display:none">
           <input type="text" id="text-input"
             placeholder='describe a moment… try  two people AND a laptop  NOT a phone'>
           <div class="hint2">
@@ -316,29 +315,23 @@
           </div>
         </div>
 
-        <!-- ── CONTEXTUAL (three rankers, fused by reciprocal rank) ── -->
-        <div id="q-context" style="display:none">
+        <!-- ── CONTEXTUAL: the search. recall proposes, a VLM verifies ── -->
+        <div id="q-context">
           <input type="text" id="ctx-input"
             placeholder='describe what is happening… try  a person putting a cup in the sink'>
           <div class="hint2">
-            Three rankers vote and are fused by <b>reciprocal rank</b>:
-            <b>appearance</b> (what objects are in frame) ·
-            <b>context</b> (what is happening, from the clip's caption) ·
-            <b>lexical</b> (exact words). Fusing by rank instead of by score is
-            why <i>crossing red car</i> no longer returns anything with a person
-            crossing — a hit has to convince more than one ranker.
+            Describe the <b>event</b>, not just the objects — e.g.
+            <i>put a green object in the drawer and close it</i>. Candidates
+            come from every index the store has; each finalist clip is judged
+            by a vision model reading its start and end frames ("did this
+            happen in between?"). Verdicts are cached, so repeated and nearby
+            queries get faster.
           </div>
           <div class="ctrlgrid">
-            <label>appearance <input type="range" id="w-app" min="0" max="3" step="0.5" value="1">
-              <span id="w-app-val" class="tnum">1</span></label>
-            <label>context <input type="range" id="w-ctx" min="0" max="3" step="0.5" value="1">
-              <span id="w-ctx-val" class="tnum">1</span></label>
-            <label>lexical <input type="range" id="w-lex" min="0" max="3" step="0.5" value="1">
-              <span id="w-lex-val" class="tnum">1</span></label>
             <label>Max results
-              <input type="number" id="ctx-k" value="12" min="1" max="48"></label>
-            <label title="A vision model looks at each finalist and judges whether the described situation is actually happening. Runs last, on the shortlist only.">
-              <input type="checkbox" id="ctx-rerank"> Verify with vision model</label>
+              <input type="number" id="ctx-k" value="8" min="1" max="24"></label>
+            <label title="Re-judge the top finalists with the larger vision model over four ordered frames. Slower on first run; cached afterwards.">
+              <input type="checkbox" id="ctx-rerank"> Deep verify (7B)</label>
           </div>
           <div class="ctrlgrid">
             <label>Stream <select id="ctx-stream"><option value="">any</option></select></label>
@@ -802,8 +795,7 @@ $("pred-op").addEventListener("change", () =>
 $("run").addEventListener("click", runQuery);
 $("text-input").addEventListener("keydown", e => { if (e.key === "Enter") runQuery(); });
 $("ctx-input").addEventListener("keydown", e => { if (e.key === "Enter") runQuery(); });
-[["w-app","w-app-val"],["w-ctx","w-ctx-val"],["w-lex","w-lex-val"]].forEach(([a,b]) =>
-  $(a).addEventListener("input", () => $(b).textContent = $(a).value));
+
 $("win-input").addEventListener("keydown", e => { if (e.key === "Enter") runQuery(); });
 
 async function runQuery() {
@@ -827,9 +819,7 @@ async function runQuery() {
     }
     if (m === "context") {
       body.type = "context"; body.text = $("ctx-input").value;
-      body.k = +$("ctx-k").value || 12;
-      body.weights = {appearance: +$("w-app").value, context: +$("w-ctx").value,
-                      lexical: +$("w-lex").value};
+      body.k = +$("ctx-k").value || 8;
       const cs = $("ctx-stream").value; if (cs) body.streams = [cs];
       if ($("ctx-rerank").checked) { body.rerank = true; body.rerank_top = 8; }
       const ca = $("ctx-t0").value, cb = $("ctx-t1").value;

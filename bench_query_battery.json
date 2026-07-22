@@ -1,0 +1,275 @@
+[
+  {
+    "query": "put a green object in the drawer and close it",
+    "s": 5.2,
+    "hits": [
+      {
+        "label": "move the green thing to in the drawer",
+        "match_words": [
+          "drawer",
+          "green"
+        ],
+        "label_ok": true,
+        "sig": 0.191,
+        "margin": 1.062,
+        "caption": ""
+      },
+      {
+        "label": "moved the green object and put it on the table",
+        "match_words": [
+          "green"
+        ],
+        "label_ok": true,
+        "sig": 0.133,
+        "margin": 0.578,
+        "caption": ""
+      },
+      {
+        "label": "put the black doll on top of the drawer",
+        "match_words": [
+          "drawer"
+        ],
+        "label_ok": true,
+        "sig": 0.16,
+        "margin": 0.344,
+        "caption": ""
+      }
+    ],
+    "label_ok_top3": 3
+  },
+  {
+    "query": "close the drawer",
+    "s": 3.9,
+    "hits": [
+      {
+        "label": "move the yellow object to the left side of the table",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.151,
+        "margin": 0.391,
+        "caption": ""
+      },
+      {
+        "label": "move the yellow object to the lower left side of the table",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.158,
+        "margin": 0.359,
+        "caption": ""
+      },
+      {
+        "label": "open the drawer",
+        "match_words": [
+          "drawer"
+        ],
+        "label_ok": true,
+        "sig": 0.162,
+        "margin": 0.281,
+        "caption": ""
+      }
+    ],
+    "label_ok_top3": 1
+  },
+  {
+    "query": "open the drawer",
+    "s": 2.6,
+    "hits": [
+      {
+        "label": "close the drawer",
+        "match_words": [
+          "drawer"
+        ],
+        "label_ok": true,
+        "sig": 0.11,
+        "margin": 1.844,
+        "caption": ""
+      },
+      {
+        "label": "move the yellow object to the left side of the table",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.153,
+        "margin": 1.641,
+        "caption": ""
+      },
+      {
+        "label": "removed the doll from the drawer and put it on the table",
+        "match_words": [
+          "drawer"
+        ],
+        "label_ok": true,
+        "sig": 0.136,
+        "margin": 1.422,
+        "caption": ""
+      }
+    ],
+    "label_ok_top3": 2
+  },
+  {
+    "query": "take something out of the drawer and put it on the table",
+    "s": 3.7,
+    "hits": [
+      {
+        "label": "put the yellow banana in the drawer",
+        "match_words": [
+          "drawer"
+        ],
+        "label_ok": true,
+        "sig": 0.158,
+        "margin": 1.188,
+        "caption": ""
+      },
+      {
+        "label": "take object out of drawer",
+        "match_words": [
+          "drawer"
+        ],
+        "label_ok": true,
+        "sig": 0.145,
+        "margin": 1.062,
+        "caption": ""
+      },
+      {
+        "label": "remove the green object from the drawer",
+        "match_words": [
+          "drawer"
+        ],
+        "label_ok": true,
+        "sig": 0.15,
+        "margin": 0.859,
+        "caption": ""
+      }
+    ],
+    "label_ok_top3": 3
+  },
+  {
+    "query": "pick up a banana",
+    "s": 3.7,
+    "hits": [
+      {
+        "label": "opened the drawer",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.124,
+        "margin": 1.344,
+        "caption": ""
+      },
+      {
+        "label": "move the silver pot to the right burner from the left burner",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.097,
+        "margin": 1.172,
+        "caption": ""
+      },
+      {
+        "label": "put the yellow banana in the drawer",
+        "match_words": [
+          "banana"
+        ],
+        "label_ok": true,
+        "sig": 0.128,
+        "margin": 1.062,
+        "caption": ""
+      }
+    ],
+    "label_ok_top3": 1
+  },
+  {
+    "query": "put the pot on the stove",
+    "s": 3.7,
+    "hits": [
+      {
+        "label": "move the silver pot on the left burner",
+        "match_words": [
+          "pot"
+        ],
+        "label_ok": true,
+        "sig": 0.111,
+        "margin": 1.344,
+        "caption": ""
+      },
+      {
+        "label": "move the silver pot lid to the left bottom burner",
+        "match_words": [
+          "pot"
+        ],
+        "label_ok": true,
+        "sig": 0.107,
+        "margin": 1.266,
+        "caption": ""
+      },
+      {
+        "label": "covered the pan on the bottom right burner",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.094,
+        "margin": 0.781,
+        "caption": ""
+      }
+    ],
+    "label_ok_top3": 2
+  },
+  {
+    "query": "wipe the table with a cloth",
+    "s": 3.6,
+    "hits": [
+      {
+        "label": "open the drawer",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.059,
+        "margin": 1.328,
+        "caption": ""
+      },
+      {
+        "label": "move the blue spoon to the top of the right burner",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.096,
+        "margin": 0.578,
+        "caption": ""
+      },
+      {
+        "label": "Put the spoon to the right of the blue towel.",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.093,
+        "margin": 0.031,
+        "caption": ""
+      }
+    ],
+    "label_ok_top3": 0
+  },
+  {
+    "query": "put a red object into the sink",
+    "s": 3.6,
+    "hits": [
+      {
+        "label": "put the grey toy in the drawer",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.125,
+        "margin": 1.688,
+        "caption": ""
+      },
+      {
+        "label": "place the maize on top of the drawer",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.128,
+        "margin": 1.0,
+        "caption": ""
+      },
+      {
+        "label": "move the orange towel on the lower part of stove",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.158,
+        "margin": 0.781,
+        "caption": ""
+      }
+    ],
+    "label_ok_top3": 0
+  }
+]
