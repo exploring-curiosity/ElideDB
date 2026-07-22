@@ -693,7 +693,17 @@ class Store:
         stats = QueryStats()
         start = time.perf_counter()
         out = {}
-        for name in (tables or self.tables()):
+        names = tables
+        if names is None:
+            # Default to the DATA tables. Index artifacts (embeddings,
+            # centroids, frame_vectors, context, ...) are timestamped too, so
+            # they would otherwise be dragged into every window read and drag
+            # thousands of 1152-d vectors with them. Ask for them by name and
+            # you still get them.
+            names = [n for n in self.tables()
+                     if self.table(n).state(self._ver(version, n)).kind
+                     not in ("embeddings", "centroids")]
+        for name in names:
             tab = self.table(name)
             v = self._ver(version, name)
             st = tab.state(v)
@@ -785,3 +795,48 @@ class Store:
     def search_clip(self, stream: str, t0: int, t1: int, k=10, nprobe=3, **kw):
         from .embeddings import search_clip
         return search_clip(self, stream, t0, t1, k=k, nprobe=nprobe, **kw)
+
+    # ---- context retrieval -------------------------------------------------
+    def index_context(self, window_s=2.0, stride_s=0.5, label_fraction=1.0,
+                      prune=True, epochs=300, verbose=True):
+        """Build the context index end to end.
+
+        frames -> per-frame vectors -> VLM captions on `label_fraction` of
+        windows -> caption-LSA space -> temporal tower -> cellular turnover
+        -> materialised `context` table.
+
+        `label_fraction < 1` captions only part of the corpus and lets the
+        tower cover the rest; that is the knob for trading ingest cost against
+        context quality on a corpus too large to caption in full.
+        """
+        from . import context as C
+        out = {"frame_vectors": C.embed_frames(self, verbose=verbose)}
+        windows = C.plan_windows(self, window_s, stride_s)
+        if label_fraction < 1.0:
+            # Label a TIME PREFIX, not a random sample: the realistic shape of
+            # this problem is "we captioned what we had, then more footage
+            # arrived", and a random sample would quietly hand the tower
+            # neighbours of every held-out window.
+            n = max(int(len(windows) * label_fraction), 16)
+            windows = sorted(windows, key=lambda w: w[1])[:n]
+        out["captions"] = C.caption_windows(self, windows, verbose=verbose)
+        _, _, out["train"] = C.train_context(self, window_s, stride_s,
+                                             epochs=epochs, verbose=verbose)
+        if prune:
+            _, rec = C.prune_context(self, verbose=verbose)
+            out["prune"] = rec.get("selected")
+        out["build"] = C.build_context(self, verbose=verbose)
+        return out
+
+    def search_context(self, text: str, k=10, alpha=0.6, **kw):
+        """Contextual search: relations and change, not just appearance.
+
+        alpha=0 is pure appearance, alpha=1 pure context. See
+        elidedb.context.search."""
+        from .context import search
+        return search(self, text, k=k, alpha=alpha, **kw)
+
+    def explain(self, t0: int, t1: int, stream=None):
+        """The teacher's own description of what happens in a window."""
+        from .context import explain
+        return explain(self, t0, t1, stream=stream)

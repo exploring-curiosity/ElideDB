@@ -43,14 +43,14 @@ def embed_text(text, model_id=DEFAULT_MODEL):
     return v / np.linalg.norm(v)
 
 
-def _vec_table(store, name="embeddings", version=None):
+def _vec_table(store, name="embeddings", version=None, column="vector"):
     t = store.table(name).scan(version=version)
     if len(t) == 0:
         raise RuntimeError(
             f"store '{store.name}' has no embeddings — run "
             "store.embed_windows() first")
     vecs = np.stack([np.asarray(v, dtype=np.float32)
-                     for v in t.column("vector").to_pylist()])
+                     for v in t.column(column).to_pylist()])
     return t, vecs
 
 
@@ -224,8 +224,15 @@ def _score_windows(vecs, idx, pos_vecs, neg_vecs, neg_weight):
 
 def _rank(store, q, k, nprobe, merge=True, t0=None, t1=None, streams=None,
           method="auto", pos_vecs=None, neg_vecs=None, neg_weight=0.5,
-          min_score=None, percentile=None):
-    t, vecs = _vec_table(store)
+          min_score=None, percentile=None, table="embeddings", ctx=None,
+          column="vector"):
+    t, vecs = _vec_table(store, table, column=column)
+    if table != "embeddings":
+        # The ANN artifacts (HNSW graph, IVF-PQ codes, HDBSCAN centroids) are
+        # built over `embeddings` and index THOSE row ids. Reusing them here
+        # would return neighbours of the wrong table — silently, with
+        # plausible-looking scores. Any other table scans exactly.
+        method = "exact"
     all_t0 = t.column("ts").to_numpy()
     all_t1 = t.column("t1").to_numpy()
     all_s = t.column("stream").to_numpy(zero_copy_only=False)
@@ -293,6 +300,19 @@ def _rank(store, q, k, nprobe, merge=True, t0=None, t1=None, streams=None,
     # Final score is ALWAYS the compositional/exact function over the
     # candidate set (the coarse tier only shortlists; it never answers).
     scores = _score_windows(vecs, idx, pos_vecs, neg_vecs, neg_weight)
+
+    # ---- optional fusion with the context index ----------------------------
+    # Appearance cosines and context cosines live on different scales (SigLIP
+    # image-text similarity is squashed by the modality gap into ~0.01-0.15,
+    # while context vectors are mean-free and spread over most of [-1,1]).
+    # A raw weighted sum would therefore be governed entirely by the context
+    # term regardless of alpha. Standardising each over the CANDIDATE SET
+    # first makes alpha mean what it says.
+    if ctx is not None and len(idx):
+        def _z(a):
+            return (a - a.mean()) / (a.std() + 1e-8)
+        a = float(ctx["alpha"])
+        scores = (1.0 - a) * _z(scores) + a * _z(ctx["vecs"][idx] @ ctx["q"])
     streams_sel = all_s[idx]
     w_t0 = all_t0[idx]
     w_t1 = all_t1[idx]

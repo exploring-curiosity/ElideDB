@@ -1,0 +1,48 @@
+{
+  "summary": {
+    "appearance": {
+      "judge_mean_top5": 0.27604166666666663,
+      "overlap_top5": 1.1666666666666667,
+      "median_ms": 12.93
+    },
+    "context_exact": {
+      "judge_mean_top5": 0.34687500000000004,
+      "overlap_top5": 2.0,
+      "median_ms": 0.59
+    },
+    "context_student": {
+      "judge_mean_top5": 0.25885416666666666,
+      "overlap_top5": 1.5,
+      "median_ms": 0.38
+    },
+    "fused_exact": {
+      "judge_mean_top5": 0.32291666666666663,
+      "overlap_top5": 1.8333333333333333,
+      "median_ms": 12.46
+    },
+    "fused_student": {
+      "judge_mean_top5": 0.2833333333333334,
+      "overlap_top5": 1.5,
+      "median_ms": 11.97
+    },
+    "vlm_rerank": {
+      "judge_mean_top5": 0.30572916666666666,
+      "overlap_top5": 1.5,
+      "median_ms": 2508.53
+    },
+    "_tower": {
+      "inference_ms_for_all_held_windows": 9.4,
+      "channels": 17,
+      "params": 30504
+    }
+  },
+  "held_out_windows": 66,
+  "queries": [
+    "a pedestrian crossing the road in front of the car",
+    "a cyclist riding along the street",
+    "the car is stopped at an intersection",
+    "people walking together on the pavement",
+    "a bus or large vehicle passing by",
+    "the car is driving past a row of parked cars"
+  ]
+}

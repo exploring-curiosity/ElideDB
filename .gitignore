@@ -8,6 +8,11 @@ store/
 store_oxford/
 stores/
 
+# ---- separate research project, not part of the database product ----------
+# FDNN_BrainModel is the neuron/pruning research this repo's context tower
+# borrows from (see docs/CONTEXT.md). It carries its own 426 MB virtualenv.
+FDNN_BrainModel/
+
 # ---- build artifacts -------------------------------------------------------
 build/
 *.o

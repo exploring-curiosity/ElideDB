@@ -55,9 +55,19 @@ def build_hnsw(store, M: int = 16, ef_construction: int = 200) -> dict:
 
 
 def load_hnsw(store):
-    import hnswlib
+    # Look for the artifact BEFORE importing. hnswlib is an optional
+    # accelerator; when it is absent the planner must fall back to the exact
+    # scan, not raise ModuleNotFoundError out of the middle of a query and
+    # take down search entirely.
+    cands = sorted(_run_dir(store).glob("hnsw.v*.bin"), reverse=True)
+    if not cands:
+        return None
+    try:
+        import hnswlib
+    except ImportError:
+        return None
     v = store.table("embeddings").state().version
-    for cand in sorted(_run_dir(store).glob("hnsw.v*.bin"), reverse=True):
+    for cand in cands:
         if int(cand.stem.split(".v")[-1]) != v:
             continue  # stale: embeddings changed since this was built
         meta = json.loads(cand.with_suffix(".json").read_text())

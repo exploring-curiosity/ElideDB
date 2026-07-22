@@ -138,6 +138,58 @@ no byte-range story at all — packing + SFI is what turns it into a database.
   viewpoint split); prune-then-rank matters at corpus scale, not at n=120,
   and the numbers above show exactly where the crossover lives.
 
+## Context retrieval
+
+Oxford RobotCar sample, 66 **held-out** windows (last 30% of the timeline, never
+trained on), six relational queries, judged by an independent VLM yes/no
+logprob margin. Full method and caveats in [docs/CONTEXT.md](docs/CONTEXT.md).
+
+| method | ms/query | judge margin | judge-top5 overlap |
+|---|---|---|---|
+| appearance (plain semantic search) | 12.9 | +0.276 | 1.2/5 |
+| **context, captions materialised at ingest** | **0.6** | **+0.347** | **2.0/5** |
+| context, tower-estimated | 0.4 | +0.259 | 1.5/5 |
+| fused (0.6 context + 0.4 appearance), materialised | 12.5 | +0.323 | 1.8/5 |
+| fused, tower-estimated | 12.0 | +0.283 | 1.5/5 |
+| VLM rerank at query time | 2508.5 | +0.306 | 1.5/5 |
+
+Materialised context is **4,000x faster than query-time VLM reranking and
+scores higher**. It also beats plain semantic search on latency, because the
+lexical path runs no neural text encoder at query time — almost all of
+appearance's 12.9 ms is SigLIP's text tower.
+
+Ingest cost: VLM captioning 0.75 s/window; per-frame SigLIP 46 ms/frame;
+tower inference 84 us/window.
+
+### Choosing the context space (ablation, same judge)
+
+| context space | judge |
+|---|---|
+| appearance only | +0.276 |
+| caption **embedding**, SigLIP text tower — *oracle* | +0.218 |
+| caption **text**, raw TF-IDF | +0.331 |
+| caption **text**, LSA-48 | +0.339 |
+
+The embedding route loses even with perfect captions: SigLIP's text tower is
+trained to sit near images, not near other text.
+
+### Cellular turnover on the context tower (PPO + reverse attention)
+
+| | channels | params | us/window | val loss |
+|---|---|---|---|---|
+| before | 48 | 82,770 | 66.5 | 0.3242 |
+| after | **17** | **30,504** | **42.4** | **0.2939** |
+
+63% fewer parameters, 36% faster, validation loss 9% **better** — pruning an
+over-provisioned tower on a small corpus removes memorisation, not signal.
+
+### Known limitation
+
+Tower-estimated context (+0.259) is below plain appearance (+0.276) and only
+earns its place when fused. The corpus is 19 seconds of one drive: 153 training
+windows whose captions are near-duplicates (mean pairwise cosine 0.68). The
+distillation path is built and measured, not yet demonstrated.
+
 ## Reproduce
 
 ```bash
