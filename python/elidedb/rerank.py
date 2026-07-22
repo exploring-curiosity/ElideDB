@@ -146,3 +146,74 @@ def rerank_hits(store, hits, query, top_n: int = 12, alpha: float = 0.7,
         "reranked": len(keep), "question": question, "model": model_id,
         "vlm_min": round(float(min(margins)), 3),
         "vlm_max": round(float(max(margins)), 3)}
+
+
+# ===========================================================================
+# Multi-frame (clip-level) verification — actions live BETWEEN frames
+# ===========================================================================
+def as_clip_question(query: str) -> str:
+    """The clip-level question. Unlike the single-frame form, this one hands
+    the VLM the frames in time order and asks about the EVENT — which is the
+    only place 'put X in the drawer AND CLOSE IT' can be checked, because no
+    single frame contains a verb."""
+    q = re.sub(r"\s+AND\s+", " and ", query.strip(), flags=re.I)
+    q = re.sub(r"\s+NOT\s+", " but not ", q, flags=re.I)
+    return (f"These frames are in time order from one short clip. "
+            f"Does the clip show this happening: {q}? "
+            "Answer only yes or no.")
+
+
+def score_clip_sequences(clips, question, model_id: str = DEFAULT_VLM):
+    """logP(yes)-logP(no) margin per CLIP, each clip = frames in time order.
+
+    Same calibrated-margin trick as score_images (generation is yes-biased),
+    but the evidence is a sequence, so the verb is finally visible to the
+    scorer. `clips` = list of lists of PIL images (2-6 frames each).
+    """
+    import tempfile
+    from pathlib import Path
+
+    import mlx.core as mx
+    from mlx_vlm import generate
+    from mlx_vlm.prompt_utils import apply_chat_template
+    model, processor, cfg, yes_ids, no_ids = _load(model_id)
+    tmpdir = Path(tempfile.mkdtemp(prefix="elidedb_clipv_"))
+    out = []
+    for ci, frames in enumerate(clips):
+        prompt = apply_chat_template(processor, cfg, question,
+                                     num_images=len(frames))
+        paths = []
+        for j, im in enumerate(frames):
+            fp = tmpdir / f"c{ci}_{j}.jpg"
+            im.save(fp, "JPEG", quality=85)
+            paths.append(str(fp))
+        r = generate(model, processor, prompt, image=paths,
+                     max_tokens=1, verbose=False)
+        if r.logprobs is None:
+            out.append(0.0)
+            continue
+        a = mx.array(r.logprobs).reshape(-1)
+        y = max(float(a[i]) for i in yes_ids)
+        n = max(float(a[i]) for i in no_ids)
+        out.append(y - n)
+    return out
+
+
+def as_change_question(query: str) -> str:
+    """Before/after formulation: the FIRST and LAST frame of a clip.
+
+    Measured on ground-truth clips (put-green-on-drawer, 5 true / 8 false):
+    the 4-frame 'time order' question at 2B scored AUC 0.40 — literal true
+    clips ranked BELOW false ones. The same 2B judging only the first and
+    last frame scored AUC 0.75 at 0.5 s/clip. An action is a state change,
+    and a before/after pair is the smallest complete evidence of one — and
+    small models reason far better over 2 images than 4.
+    (7B, 4-frame: AUC 0.82 at ~10x the cost — the `deep` tier.)
+    """
+    q = re.sub(r"\s+AND\s+", " and ", query.strip(), flags=re.I)
+    return (f"The first image is the start of a short clip and the second "
+            f"is the end. Did this happen in between: {q}? "
+            "Answer only yes or no.")
+
+
+DEEP_VLM = "mlx-community/Qwen2-VL-7B-Instruct-4bit"

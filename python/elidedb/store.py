@@ -853,6 +853,14 @@ class Store:
         from .context import search
         return search(self, text, k=k, weights=weights, rerank=rerank, **kw)
 
+    def search_verified(self, text: str, k=8, pool=48, deep=0):
+        """Any query, action or not: union recall proposes, a VLM shown
+        frames IN TIME ORDER disposes, verdicts are cached into the store.
+        The only path that can enforce 'the green object is the one being
+        moved' or '...and close it'. See elidedb.verified."""
+        from .verified import search_verified
+        return search_verified(self, text, k=k, pool=pool, deep=deep)
+
     def search_sharp(self, text: str, k=10, shortlist=48):
         """Text search at teacher quality, student price: the student ranks
         every window (~1 ms), the teacher re-scores only the shortlist, and
