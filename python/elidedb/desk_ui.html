@@ -857,8 +857,11 @@ async function runQuery() {
         ? `${r.hits.length} of ${S.segments} segment${S.segments === 1 ? "" : "s"} · ` : "";
       const floor = S.after_floor != null ? `floor→${S.after_floor} windows · ` : "";
       const rr = S.rerank ? `<span class="pill ok">vision-verified ${S.rerank.reranked}</span> ` : "";
-      stat.innerHTML = `${terms} ${rr}&nbsp; ${seg}${floor}tier <b>${esc(S.method)}</b> · `
-        + `scanned ${S.scanned}/${S.total} · ${r.ms} ms · click a hit to play`;
+      const scanned = S.scanned != null ? `scanned ${S.scanned}/${S.total} · ` :
+        (S.candidates != null ? `${S.candidates} candidates · ` : "");
+      const fresh = S.verified_fresh ? `${S.verified_fresh} newly verified · ` : "";
+      stat.innerHTML = `${terms} ${rr}&nbsp; ${seg}${floor}${scanned}${fresh}`
+        + `tier <b>${esc(S.method)}</b> · ${r.ms} ms · click a hit to play`;
       const why = (S.why || []);
       out.innerHTML = `<div class="hitgrid">` + r.hits.map((h, hi) => {
         const dur = (h.t1 - h.t0) / 1e9;
@@ -870,7 +873,7 @@ async function runQuery() {
         const cap = h.caption ? `<br><span class="dim">${esc(h.caption.slice(0,110))}</span>` : "";
         return `
         <div class="hit" data-s="${esc(h.stream)}" data-t0="${h.t0}" data-t1="${h.t1}">
-          <img loading="lazy" src="/api/thumb?store=${CUR.key}&stream=${encodeURIComponent(h.stream)}&t=${mid}&w=420" alt="">
+          <img src="/api/thumb?store=${CUR.key}&stream=${encodeURIComponent(h.stream)}&t=${mid}&w=420" alt="">
           <div class="play"><span>▶</span></div>
           <div class="m"><b>${h.vlm != null ? "vision " + (h.vlm>0?"+":"") + h.vlm.toFixed(2) : h.score.toFixed(3)}</b> · ${esc(h.stream)} ·
             <b class="tnum">${dur.toFixed(1)} s</b>${h.windows > 1 ? ` (${h.windows} windows merged)` : ""}<br>
@@ -891,7 +894,7 @@ async function runQuery() {
             <span class="qstat"> ${t.count} frames · ${t.streams.length} streams · click to play</span>
             <div class="hitgrid" style="margin-top:8px">` + t.streams.map(sname => `
               <div class="hit" data-s="${esc(sname)}" data-t0="${wt0}" data-t1="${wt1}">
-                <img loading="lazy" src="/api/thumb?store=${CUR.key}&stream=${encodeURIComponent(sname)}&t=${wt0}&w=420">
+                <img src="/api/thumb?store=${CUR.key}&stream=${encodeURIComponent(sname)}&t=${wt0}&w=420">
                 <div class="play"><span>▶</span></div>
                 <div class="m"><b>${esc(sname)}</b></div></div>`).join("") + `</div></div>`;
         } else if (t.count) {
