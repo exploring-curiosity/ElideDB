@@ -1,0 +1,16 @@
+{
+  "frames": 70436,
+  "hours": 3.91,
+  "total_s": 79.1,
+  "budget_s": 300.0,
+  "verdict": "PASS",
+  "stages": {
+    "setup": 0.0,
+    "embed_done": 47.2,
+    "transcode_done": 65.9,
+    "index_done": 66.5,
+    "tables_done": 66.5,
+    "frame_vectors": 68.9,
+    "windows": 79.1
+  }
+}

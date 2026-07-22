@@ -60,14 +60,34 @@ def _embed_images(images, model_id):
 def embed_text(text, model_id=DEFAULT_MODEL):
     import mlx.core as mx
     model, processor = _load_model(resolve_model(model_id))
-    ti = processor(text=[text], padding="max_length", max_length=64,
+    # Each checkpoint has its own text context (so400m-384: 64 tokens,
+    # so400m-224: 16). Ask the model rather than assuming.
+    try:
+        max_len = int(model.config.text_config.max_position_embeddings)
+    except AttributeError:
+        max_len = 64
+    ti = processor(text=[text], padding="max_length", max_length=max_len,
                    truncation=True, return_tensors="np")
     v = np.array(model.get_text_features(mx.array(ti["input_ids"])),
                  dtype=np.float32)[0]
     return v / np.linalg.norm(v)
 
 
+_MAT_CACHE: dict = {}
+
+
 def _vec_table(store, name="embeddings", version=None, column="vector"):
+    """Vector table + matrix, zero-copy and cached per log version.
+
+    The old path went Arrow -> Python lists -> np.stack: ~1 s per query on a
+    7k x 1152 table, paid on EVERY search. FixedSizeList vectors are already
+    a flat float32 buffer; reshape it. With the version key, a query costs a
+    log read, not a table scan — and any append invalidates naturally.
+    """
+    ver = store.table(name).state().version if version is None else version
+    key = (str(store.dir), name, column, ver)
+    if key in _MAT_CACHE:
+        return _MAT_CACHE[key]
     t = store.table(name).scan(version=version)
     if len(t) == 0:
         extra = ""
@@ -80,8 +100,17 @@ def _vec_table(store, name="embeddings", version=None, column="vector"):
         raise RuntimeError(
             f"store '{store.name}' has no '{name}' table — run "
             f"store.embed_windows() first.{extra}")
-    vecs = np.stack([np.asarray(v, dtype=np.float32)
-                     for v in t.column(column).to_pylist()])
+    col = t.column(column)
+    if isinstance(col, pa.ChunkedArray):
+        col = col.combine_chunks()
+    try:                                   # FixedSizeList: flat buffer reshape
+        vecs = col.values.to_numpy(zero_copy_only=False)             .astype(np.float32, copy=False).reshape(len(t), -1)
+    except Exception:                      # any other layout: the slow road
+        vecs = np.stack([np.asarray(v, dtype=np.float32)
+                         for v in col.to_pylist()])
+    if len(_MAT_CACHE) > 8:
+        _MAT_CACHE.clear()
+    _MAT_CACHE[key] = (t, vecs)
     return t, vecs
 
 
@@ -131,11 +160,15 @@ def pool_windows(store, window_s=2.0, stride_s=None, table="frame_vectors"):
                            pa.list_(pa.float32(), dim)),
     })
     st = store.table("embeddings").state()
-    # `model` must stay the REAL model id: the query path reads it so the text
-    # tower matches the tower that produced these vectors. Writing prose here
-    # sent "pooled from frame_vectors" to the HF loader as a repo id.
-    src_model = (store.table(table).state().meta or {}).get("model",
-                                                            DEFAULT_MODEL)
+    # `model` must be the id of the model that defines the SPACE — the query
+    # path loads it as the text tower. Student-produced vectors live in the
+    # TEACHER's space, so when the source was written by an engine (model
+    # "fdnnv"), the space id is its `teacher` field. Writing the engine name
+    # here sent "fdnnv" to the HF loader as a repo id.
+    src = store.table(table).state().meta or {}
+    src_model = src.get("model", DEFAULT_MODEL)
+    if src_model in (None, "fdnnv"):
+        src_model = src.get("teacher", DEFAULT_MODEL)
     meta = {"model": src_model, "built_by": "pooled from frame_vectors",
             "dim": dim, "window_s": window_s, "source_table": table,
             "seconds": round(time.time() - t_start, 2)}

@@ -853,6 +853,14 @@ class Store:
         from .context import search
         return search(self, text, k=k, weights=weights, rerank=rerank, **kw)
 
+    def search_sharp(self, text: str, k=10, shortlist=48):
+        """Text search at teacher quality, student price: the student ranks
+        every window (~1 ms), the teacher re-scores only the shortlist, and
+        every teacher vector is cached into the store — quality accumulates
+        where users query (database cracking). See elidedb.cracked."""
+        from .cracked import search_sharp
+        return search_sharp(self, text, k=k, shortlist=shortlist)
+
     def explain(self, t0: int, t1: int, stream=None):
         """The teacher's own description of what happens in a window."""
         from .context import explain

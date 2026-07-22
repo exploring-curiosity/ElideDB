@@ -265,6 +265,40 @@ up with ~200 live 5 fps streams. Student vectors serve image-image and clip
 similarity; text search stays on teacher windows until the text gap closes
 (levers listed in the doc).
 
+## bridge4h: 4 hours loaded and fully embedded in 79 seconds
+
+Hard budget: 5 minutes for ~4 h of video, every frame embedded. Result:
+**79.1 s — 178x real time** (`scripts/bridge4h.py`, PASS on iteration 1).
+
+| stage | wall | note |
+|---|---|---|
+| embed EVERY frame (70,436, FDNN-V) | 47.1 s | source piped straight through the encoder at 2,185 fps decode — sequential embedding needs no random access, so it never waits for transcode |
+| transcode (read path) | +18.8 s | 4 files in parallel, overlapped with embedding |
+| index + episodes + robot + windows | +13.2 s | one atomic append per table |
+| **total** | **79.1 s** | 890 frames/s end to end |
+
+### Sharp text search: student shortlist, teacher verdict, cracked cache
+
+Warm query **26 ms** (after the zero-copy vector-table fix, which sped every
+search path ~30x). Teacher vectors computed for a query are cached into the
+store — 15% of the corpus was teacher-embedded after 100 queries, so quality
+accumulates exactly where users look (database cracking).
+
+Quality, graded on human task labels held outside the store:
+
+| query type | student | teacher (ceiling) | verdict |
+|---|---|---|---|
+| category ("opening a drawer", 748 rel) | **0.80 @10** | 0.90 | usable; sharp converges to ceiling |
+| category ("pot on stove", 426 rel) | **0.60 @10** | 0.50 | student ≥ teacher |
+| rare category (towel, spoon) | 0.0–0.2 | 0.1–0.2 | both weak |
+| singleton instruction (100 queries) | 0.000 R@10 | **0.030 R@10** | fails at EVERY tier — even teacher-everywhere shortlist recall@48 is 0.17 |
+
+The last row is the honest boundary: instruction-level retrieval among 2,097
+near-identical clips defeats SigLIP-class embedding search entirely; that is
+the caption/context path's job (background-priced), not the embedding index's.
+Sharp search cannot beat its shortlist — fix directions are a wider adaptive
+shortlist and shortlisting from the RRF union once captions exist.
+
 ## Reproduce
 
 ```bash
