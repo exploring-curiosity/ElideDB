@@ -45,3 +45,8 @@ CLAUDE.md
 docs/memory/
 docs/logs/
 myenv
+# ---- evaluation ground truth: derived from a dataset, not part of the DB ---
+# eval/ holds label files (e.g. Bridge task strings) used ONLY by benchmark
+# scripts. They are deliberately outside the store so the query path cannot
+# reach them; they are also not the product, so they are not shipped.
+eval/

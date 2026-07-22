@@ -1,10 +1,38 @@
 #!/bin/zsh
-# ElideDB Desk launcher: starts the local server (if not already running)
-# and opens the browser UI. The repo root is baked at build time.
+# ElideDB Desk launcher.
+#
+# It used to be "if something is listening on 8787, use it". That is wrong:
+# Python caches modules at import, so a server started from an older checkout
+# serves stale code forever and editing the source changes nothing. The
+# symptom is bug reports about behaviour that is no longer in the tree.
+# So: ask the running server which build it is, and restart it if that does
+# not match the files on disk.
 REPO="/Users/sudharshanramesh/Studies/MyProjects/StreetDex"
-cd "$REPO"
-if ! nc -z 127.0.0.1 8787 2>/dev/null; then
-  nohup /Users/sudharshanramesh/.pyenv/shims/python3 desk/desk.py --port 8787 >/tmp/elidedb_desk.log 2>&1 &
-  sleep 1
+cd "$REPO" || exit 1
+
+# Prefer the project venv — it is the interpreter the code is tested against.
+if [[ -x "$REPO/myenv/bin/python" ]]; then
+  PY="$REPO/myenv/bin/python"
+else
+  PY="$(command -v python3 || echo /usr/bin/python3)"
 fi
+
+WANT=$("$PY" -c "import sys; sys.path.insert(0,'$REPO/python'); from elidedb.desk import build_id; print(build_id())" 2>/dev/null)
+HAVE=$(curl -s --max-time 2 http://127.0.0.1:8787/api/version 2>/dev/null | sed -n 's/.*"build"[^"]*"\([^"]*\)".*/\1/p')
+
+if [[ -n "$HAVE" && "$HAVE" != "$WANT" ]]; then
+  echo "desk: running build $HAVE != source $WANT — restarting" >&2
+  lsof -ti :8787 | xargs kill -9 2>/dev/null
+  sleep 1
+  HAVE=""
+fi
+
+if [[ -z "$HAVE" ]]; then
+  nohup "$PY" "$REPO/desk/desk.py" --port 8787 >/tmp/elidedb_desk.log 2>&1 &
+  for i in {1..40}; do
+    sleep 0.25
+    curl -s --max-time 1 http://127.0.0.1:8787/api/version >/dev/null 2>&1 && break
+  done
+fi
+
 open "http://localhost:8787"

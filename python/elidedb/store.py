@@ -828,13 +828,17 @@ class Store:
         out["build"] = C.build_context(self, verbose=verbose)
         return out
 
-    def search_context(self, text: str, k=10, alpha=0.6, **kw):
+    def search_context(self, text: str, k=10, weights=None, rerank=False,
+                       **kw):
         """Contextual search: relations and change, not just appearance.
 
-        alpha=0 is pure appearance, alpha=1 pure context. See
-        elidedb.context.search."""
+        Three rankers — appearance (SigLIP), context (caption-LSA), lexical
+        (TF-IDF over captions) — fused by reciprocal rank. `weights` tunes
+        their influence, e.g. {"lexical": 2.0} to favour exact term matches;
+        setting one to 0 disables it. `rerank=True` adds a final VLM pass over
+        the top hits. See elidedb.context.search."""
         from .context import search
-        return search(self, text, k=k, alpha=alpha, **kw)
+        return search(self, text, k=k, weights=weights, rerank=rerank, **kw)
 
     def explain(self, t0: int, t1: int, stream=None):
         """The teacher's own description of what happens in a window."""

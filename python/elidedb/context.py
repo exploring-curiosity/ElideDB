@@ -96,7 +96,8 @@ def tidy_caption(text: str, max_words: int = 32) -> str:
 # 1. Per-frame vectors — the sequence a temporal model needs
 # ---------------------------------------------------------------------------
 def embed_frames(store, frame_table="frames", model=None, width=512,
-                 batch=32, incremental=True, verbose=True):
+                 batch=32, incremental=True, verbose=True, stride=1,
+                 streams=None):
     """One SigLIP vector per frame → `frame_vectors`.
 
     Deliberately NOT pooled. Pooling is the student's job, and pooling here
@@ -109,7 +110,8 @@ def embed_frames(store, frame_table="frames", model=None, width=512,
     from .video import FrameSet
     model = model or DEFAULT_MODEL
     frames = store.table(frame_table).scan()
-    streams = sorted(set(frames.column("stream").to_pylist()))
+    allst = sorted(set(frames.column("stream").to_pylist()))
+    streams = [s for s in allst if s in streams] if streams else allst
 
     done = {}
     if incremental:
@@ -129,7 +131,12 @@ def embed_frames(store, frame_table="frames", model=None, width=512,
             sel = sel.filter(pc.greater(sel.column("ts"), done[s]))
         if len(sel) == 0:
             continue
-        decoded = FrameSet(store, frame_table, sel).decode(width=width)
+        # `stride` subsamples the frame index before decoding. A 5 Hz robot
+        # camera does not need every frame embedded for a 4 s window to be
+        # well described, and the cost here is linear in frames decoded, so
+        # this is the dial between ingest time and temporal resolution.
+        decoded = FrameSet(store, frame_table, sel).decode(width=width,
+                                                           stride=stride)
         if verbose:
             print(f"  {s}: {len(decoded)} frames decoded", flush=True)
         for i in range(0, len(decoded), batch):
@@ -218,7 +225,8 @@ def window_sequences(store, windows, table="frame_vectors", max_len=32):
 # 3. The teacher — a VLM that actually reads the pixels, run ONCE per window
 # ---------------------------------------------------------------------------
 def caption_windows(store, windows, frames_per_window=3, model_id=None,
-                    max_tokens=64, width=448, verbose=True, limit=None):
+                    max_tokens=64, width=448, verbose=True, limit=None,
+                    every=1):
     """VLM captions for `windows` → `context_captions` table.
 
     The VLM is shown several frames of the SAME window in order, so the
@@ -242,6 +250,13 @@ def caption_windows(store, windows, frames_per_window=3, model_id=None,
     frames = store.table("frames").scan()
     tmpdir = Path(tempfile.mkdtemp(prefix="elidedb_ctx_"))
 
+    # `every` samples the window list uniformly instead of taking a prefix.
+    # On a corpus too large to caption in full this matters: a prefix would
+    # confine the caption vocabulary to whatever happens early in the
+    # timeline, so query terms for anything later would be out of vocabulary
+    # and the lexical ranker would abstain on the entire tail.
+    if every > 1:
+        windows = windows[::every]
     if limit:
         windows = windows[:limit]
     prompt = apply_chat_template(processor, cfg, CAPTION_PROMPT,
@@ -721,46 +736,180 @@ def _ctx_matrix(store):
     t = store.table("context")
     key = (str(store.dir), t.state().version)
     if key not in _CTX_CACHE:
-        _CTX_CACHE.clear()          # one version at a time; it is a cache
         _CTX_CACHE[key] = np.stack([
             np.asarray(v, dtype=np.float32)
             for v in t.scan().column("vector").to_pylist()])
     return _CTX_CACHE[key]
 
 
-def search(store, text, k=10, alpha=0.6, merge=True, t0=None, t1=None,
-           streams=None, min_score=None, percentile=None, neg_weight=0.5):
-    """Contextual search over the `context` table.
+def _lexical(store):
+    """(vectorizer, matrix, has_caption) aligned to the `context` table rows.
 
-    `alpha` mixes two indexes held as columns of the same row, so this stays
-    one scan and no join:
-        alpha = 0.0  pure appearance — what plain semantic search does
-        alpha = 1.0  pure context — the caption space, relations and change
-        alpha = 0.6  default. Appearance anchors WHAT is in frame; context
-                     decides whether it is doing the queried thing.
-
-    Compositional grammar (AND / NOT / -term) works as in `search_text`;
-    the appearance side scores every term, the context side scores the query
-    as prose, which is where a relation survives.
+    Windows the VLM never captioned have no text, so they are marked as
+    abstentions rather than as empty documents — an empty document would score
+    0 on every query and be ranked last by the lexical ranker, which is a veto
+    dressed up as evidence.
     """
-    from .embeddings import _parse_query, _rank, embed_text
+    t = store.table("context")
+    key = (str(store.dir), t.state().version, "lex")
+    if key in _CTX_CACHE:
+        return _CTX_CACHE[key]
+    ctx = t.scan()
+    rows = list(zip(ctx.column("stream").to_pylist(),
+                    ctx.column("ts").to_pylist()))
+    caps = store.table("context_captions").scan()
+    known = dict(zip(zip(caps.column("stream").to_pylist(),
+                         caps.column("ts").to_pylist()),
+                     caps.column("caption").to_pylist()))
+    texts = [known.get(r, "") for r in rows]
+    has = np.array([bool(x) for x in texts])
+    space = caption_space(store)
+    X = space.vec.transform(texts)
+    nrm = np.sqrt(np.asarray(X.multiply(X).sum(1))).ravel() + 1e-8
+    _CTX_CACHE[key] = (space, X, nrm, has)
+    return _CTX_CACHE[key]
+
+
+DEFAULT_WEIGHTS = {"appearance": 1.0, "context": 1.0, "lexical": 1.0}
+
+
+def search(store, text, k=10, merge=True, t0=None, t1=None, streams=None,
+           weights=None, rrf_k=60.0, neg_weight=0.5, min_score=None,
+           percentile=None, rerank=False, rerank_top=12, rerank_alpha=0.7,
+           explain_top=0):
+    """Hybrid contextual search: three rankers fused by reciprocal rank.
+
+        appearance  SigLIP image-text cosine over the window's frames.
+                    Knows what OBJECTS are present. Order-blind.
+        context     caption-LSA cosine. Knows what is HAPPENING, because the
+                    caption was written by a VLM that watched three frames.
+        lexical     TF-IDF over the caption text. Exact term evidence — the
+                    ranker that actually knows what "red" means.
+
+    Fusing by RRF rather than by a weighted score sum is the fix for
+    "crossing red car" returning any clip of someone crossing: RRF rewards
+    agreement across rankers, so a candidate that satisfies one strong signal
+    alone can no longer win. See elidedb.fusion.
+
+    `rerank=True` adds a final VLM pass over the top `rerank_top` — the
+    expensive operator, last, on an already-pruned set.
+    """
+    from .embeddings import _parse_query, _score_windows, embed_text
+    from .fusion import explain_fusion, rrf
     pos, neg = _parse_query(text)
+    ctx_tbl = store.table("context").scan()
+    all_t0 = ctx_tbl.column("ts").to_numpy()
+    all_t1 = ctx_tbl.column("t1").to_numpy()
+    all_s = ctx_tbl.column("stream").to_numpy(zero_copy_only=False)
+
+    # hybrid retrieval: time and stream predicates are pushed INTO candidate
+    # selection, not applied to a global top-k afterwards
+    pred = np.ones(len(all_t0), bool)
+    if t0 is not None:
+        pred &= all_t1 >= t0
+    if t1 is not None:
+        pred &= all_t0 <= t1
+    if streams:
+        pred &= np.isin(all_s, list(streams))
+    idx = np.where(pred)[0]
+    if len(idx) == 0:
+        return [], {"index": "context", "total": len(all_t0), "scanned": 0,
+                    "segments": 0}
+
+    APP = _appearance_matrix(store)
+    CTX = _ctx_matrix(store)
+    space, X, nrm, has_cap = _lexical(store)
+
     pos_app = np.stack([embed_text(p) for p in pos])
     neg_app = np.stack([embed_text(n) for n in neg]) if neg else None
-    q_app = pos_app.mean(axis=0)
-    q_app /= np.linalg.norm(q_app) + 1e-8
+    app = _score_windows(APP, idx, pos_app, neg_app, neg_weight)
 
-    q_ctx = caption_space(store).transform([" ".join(pos)])[0]
-    ctx = {"vecs": _ctx_matrix(store), "q": q_ctx, "alpha": alpha}
+    q_join = " ".join(pos)
+    ctx_sc = CTX[idx] @ space.transform([q_join])[0]
 
-    hits, stats = _rank(store, q_app, k, nprobe=0, merge=merge, t0=t0, t1=t1,
-                        streams=streams, pos_vecs=pos_app, neg_vecs=neg_app,
-                        neg_weight=neg_weight, min_score=min_score,
-                        percentile=percentile, table="context",
-                        column="appearance", ctx=ctx)
-    stats["alpha"] = alpha
-    stats["index"] = "context"
+    qv = space.vec.transform([q_join])
+    lex = np.asarray((X[idx] @ qv.T).todense()).ravel() / nrm[idx]
+    lex = np.where(has_cap[idx], lex, np.nan)      # abstain, do not veto
+
+    rankings = {"appearance": app, "context": ctx_sc, "lexical": lex}
+    w = {**DEFAULT_WEIGHTS, **(weights or {})}
+    scores = rrf(rankings, w, rrf_k)
+
+    stats = {"index": "context", "total": len(all_t0), "scanned": len(idx),
+             "method": "rrf", "rrf_k": rrf_k, "weights": w,
+             "predicate_candidates": int(pred.sum()),
+             "captioned_candidates": int(has_cap[idx].sum()),
+             "positive_terms": pos, "negative_terms": neg}
+    if explain_top:
+        stats["why"] = explain_fusion(rankings, w, rrf_k, top=explain_top)
+
+    keep = np.ones(len(idx), bool)
+    if percentile is not None:
+        keep &= scores >= np.percentile(scores, percentile)
+    if min_score is not None:
+        keep &= scores >= min_score
+    idx, scores = idx[keep], scores[keep]
+    stats["after_floor"] = int(len(idx))
+
+    hits = _segments(idx, scores, all_s, all_t0, all_t1, k, merge, stats)
+    if rerank and hits:
+        from .rerank import rerank_hits
+        hits, info = rerank_hits(store, hits, text, top_n=rerank_top,
+                                 alpha=rerank_alpha)
+        stats["rerank"] = info
     return hits, stats
+
+
+def _segments(idx, scores, all_s, all_t0, all_t1, k, merge, stats):
+    """Merge qualifying windows into maximal runs per stream.
+
+    Fixed windows are an INDEXING granularity, not an answer granularity: a
+    20 s event should come back as one 20 s hit, and a query matching only 2 s
+    of it should come back as that 2 s.
+    """
+    streams_sel, w_t0, w_t1 = all_s[idx], all_t0[idx], all_t1[idx]
+    if len(idx) == 0:
+        stats["segments"] = 0
+        return []
+    if not merge:
+        order = np.argsort(scores)[::-1][:k]
+        return [{"stream": str(streams_sel[i]), "t0": int(w_t0[i]),
+                 "t1": int(w_t1[i]), "score": float(scores[i]),
+                 "windows": 1} for i in order]
+    med, top = float(np.median(scores)), float(scores.max())
+    thr = med + 0.55 * (top - med)
+    stats["threshold"] = round(thr, 6)
+    qual = np.where(scores >= thr)[0]
+    order = np.lexsort((w_t0[qual], streams_sel[qual]))
+    qual = qual[order]
+    gap = int(np.median(w_t1[qual] - w_t0[qual])) + 1 if len(qual) else 0
+    segs = []
+    for i in qual:
+        s_, a, b, sc = (str(streams_sel[i]), int(w_t0[i]), int(w_t1[i]),
+                        float(scores[i]))
+        last = segs[-1] if segs else None
+        if last and last["stream"] == s_ and a - last["t1"] <= gap:
+            last["t1"] = max(last["t1"], b)
+            last["score"] = max(last["score"], sc)
+            last["mean"] = (last["mean"] * last["windows"] + sc) / (last["windows"] + 1)
+            last["windows"] += 1
+        else:
+            segs.append({"stream": s_, "t0": a, "t1": b, "score": sc,
+                         "mean": sc, "windows": 1})
+    segs.sort(key=lambda g: -g["score"])
+    stats["qualifying_windows"] = len(qual)
+    stats["segments"] = len(segs)
+    return segs[:k]
+
+
+def _appearance_matrix(store):
+    t = store.table("context")
+    key = (str(store.dir), t.state().version, "app")
+    if key not in _CTX_CACHE:
+        _CTX_CACHE[key] = np.stack([
+            np.asarray(v, dtype=np.float32)
+            for v in t.scan().column("appearance").to_pylist()])
+    return _CTX_CACHE[key]
 
 
 def explain(store, t0, t1, stream=None):

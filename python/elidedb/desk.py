@@ -230,11 +230,26 @@ def api_clip(key: str, stream: str, t0: int, t1: int, width: int = 640):
     db = STORES[key]
     win, _ = db.window(t0, t1, tables=["frames"])
     fs = win.get("frames")
+    # Every failure below names itself. A <video> element cannot render an
+    # error body, so the player fetches the clip and shows these strings —
+    # "could not build a clip" with no reason is not a diagnosis.
     if fs is None or len(fs) == 0:
-        return None
-    decoded = fs.decode(stream=stream or None, width=width)
+        return {"error": "no frames indexed in this window",
+                "detail": f"{stream or 'all streams'} "
+                          f"{(t1 - t0) / 1e9:.2f}s window"}
+    have = fs.streams()
+    if stream and stream not in have:
+        return {"error": f"stream '{stream}' has no frames here",
+                "detail": f"streams present in this window: "
+                          f"{', '.join(have) or 'none'}"}
+    try:
+        decoded = fs.decode(stream=stream or None, width=width)
+    except Exception as e:
+        return {"error": f"decode failed: {type(e).__name__}", "detail": str(e)}
     if len(decoded) < 2:
-        return None
+        return {"error": "not enough decodable frames for a clip",
+                "detail": f"{len(decoded)} frame(s) decoded from "
+                          f"{len(fs)} indexed"}
     rot = db.meta.get("display", {}).get("rotate", 0)
     span_s = max((decoded[-1][0] - decoded[0][0]) / 1e9, 0.1)
     fps = max(round((len(decoded) - 1) / span_s, 2), 1)
@@ -273,8 +288,29 @@ def api_clip(key: str, stream: str, t0: int, t1: int, width: int = 640):
     if wav_path:
         wav_path.unlink(missing_ok=True)
     if proc.returncode != 0 or not out_path.exists():
-        raise RuntimeError(f"ffmpeg mux failed: {err or 'no output produced'}")
+        return {"error": "ffmpeg could not mux the clip",
+                "detail": err or "no output produced"}
     return out_path.read_bytes()
+
+
+def build_id() -> str:
+    """Identity of the code this server is actually running.
+
+    The launcher reuses whatever already listens on the port, so a server
+    started from an older checkout keeps serving stale code forever — Python
+    caches modules at import, so editing files changes nothing until restart.
+    That is invisible from the browser and produces bug reports about
+    behaviour that no longer exists in the source. The launcher now compares
+    this against the on-disk files and restarts on a mismatch.
+    """
+    import hashlib
+    h = hashlib.sha1()
+    for f in sorted(Path(__file__).parent.glob("*.py")) + \
+            [Path(__file__).parent / "desk_ui.html"]:
+        if f.exists():
+            st = f.stat()
+            h.update(f"{f.name}:{st.st_size}:{int(st.st_mtime)}".encode())
+    return h.hexdigest()[:12]
 
 
 def api_schema(key: str, table: str | None = None):
@@ -412,6 +448,25 @@ def api_query(key: str, body: dict):
             rerank_top=int(body.get("rerank_top", 10)), **kw)
         return {"hits": hits, "stats": stats,
                 "ms": round((time.perf_counter() - t_start) * 1e3, 1)}
+    if kind == "context":
+        hits, stats = db.search_context(
+            body["text"], k=int(body.get("k", 12)),
+            weights=body.get("weights"),
+            t0=body.get("t0"), t1=body.get("t1"),
+            streams=body.get("streams") or None,
+            rerank=bool(body.get("rerank")),
+            rerank_top=int(body.get("rerank_top", 8)),
+            explain_top=int(body.get("k", 12)))
+        # attach the teacher's own words so a result can be checked, not
+        # merely trusted — and mark which vectors were estimated rather than
+        # materialised, because that is the difference between "the VLM said
+        # so" and "the tower guessed".
+        for h in hits:
+            ex = db.explain(h["t0"], h["t1"], h["stream"])
+            if ex:
+                h["caption"] = ex[0]["caption"]
+        return {"hits": hits, "stats": stats,
+                "ms": round((time.perf_counter() - t_start) * 1e3, 1)}
     if kind == "predicate":
         from elidedb.store import QueryStats
         qs = QueryStats()
@@ -531,10 +586,14 @@ class Handler(BaseHTTPRequestHandler):
                 if jpg is None:
                     return self._json({"error": "no frame"}, 404)
                 return self._send(200, jpg, "image/jpeg", cache=True)
+            if u.path == "/api/version":
+                return self._json({"build": build_id()})
             if u.path == "/api/clip":
                 mp4 = api_clip(q["store"], q.get("stream", ""),
                                int(q["t0"]), int(q["t1"]),
                                int(q.get("w", "640")))
+                if isinstance(mp4, dict):        # structured failure
+                    return self._json(mp4, 422)
                 if mp4 is None:
                     return self._json({"error": "no frames in window"}, 404)
                 return self._send_media(mp4, "video/mp4")
