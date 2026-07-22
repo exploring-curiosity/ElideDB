@@ -150,3 +150,27 @@ latency.
 - Frame skipping. Every frame is embedded, as established.
 - Growing the model past the §3 budget to chase a gate — if a gate cannot be
   met inside the budget, that is reported as a boundary, not papered over.
+
+
+---
+
+## P2 execution log (honest, running)
+
+| iter | change | probes (close/open · AoT · app_fid · ms/f) | verdict |
+|---|---|---|---|
+| baseline | V1 warm start, untrained heads | **0.70-0.72** · 0.49 · 0.995 · 0.17 | novelty-pooled state already beats the 0.60 pixel bound |
+| A1 | L1 predict future frame, L2 AoT from final state | 0.70 · 0.47 · 0.992 | AoT at chance while 95% of loss: the gated cell is a leaky INTEGRATOR — an EMA of a smooth sequence is order-invariant; pred loss 0.008 = trivially solved from the present |
+| A2 | motion pathway (signed Δg), L1 predicts change of V1 embeddings | 0.57 · 0.51 · 0.935 | worse: student-embedding differences are student NOISE (true change ~0.2 vs student error ~0.45); mean velocity cancels on reciprocal robot motion |
+| A3 | own-latent change prediction (stop-grad), temporal-conv AoT | 0.42 · 0.42 · 0.964 | loss learns (1.97→1.54) but probes DEGRADE — optimizing prediction reshapes the ctx space away from retrieval structure |
+
+**Boundary, stated:** stage-A self-supervision has not met any gate in three
+iterations. The consolidated suspect: the WARM START. V1's stem was trained so
+its features barely move between near-identical frames (that is what made
+appearance distillation easy) — a motion pathway fed by a motion-blind stem
+has nothing to read. Testable next: probe ||Δg|| against pixel motion; if
+confirmed, stage A requires stem training from a motion-preserving init,
+which is a longer run than an iteration loop supports.
+
+Next lever (unchanged from plan): stage B verb-focused contrastive, which
+reads the state+glimpse directly and does not depend on Δg. Requires the 7B
+captions (regenerating now, GPU-exclusive).
