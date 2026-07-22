@@ -163,8 +163,19 @@ latency.
 | A2 | motion pathway (signed Δg), L1 predicts change of V1 embeddings | 0.57 · 0.51 · 0.935 | worse: student-embedding differences are student NOISE (true change ~0.2 vs student error ~0.45); mean velocity cancels on reciprocal robot motion |
 | A3 | own-latent change prediction (stop-grad), temporal-conv AoT | 0.42 · 0.42 · 0.964 | loss learns (1.97→1.54) but probes DEGRADE — optimizing prediction reshapes the ctx space away from retrieval structure |
 
-**Boundary, stated:** stage-A self-supervision has not met any gate in three
-iterations. The consolidated suspect: the WARM START. V1's stem was trained so
+| A4 | NORMALISED velocity (direction unit-norm, magnitude as bounded gain) | 0.47 · **0.64** · 0.964 | first real AoT signal — but trunk training still spends separability |
+| A5 | trunk FROZEN, heads only | **0.70** · 0.55 · **0.995** | separability preserved exactly; AoT falls back — direction learning REQUIRED trunk movement |
+
+**Stage-A conclusion after five iterations:** on this corpus the
+self-supervised objectives buy arrow-of-time only by spending retrieval
+structure; frozen-trunk keeps structure and loses AoT. Neither meets a gate.
+The trunk already carries the separability signal (0.70 untrained vs 0.60
+pixels); what remains is PROJECTING it into a queryable space, which is
+stage B's job (caption contrastive trains head_ctx + text adapter directly,
+on the frozen trunk A5 proved safe).
+
+**Earlier boundary note (superseded by the above):** stage-A self-supervision
+has not met any gate in three iterations. The consolidated suspect: the WARM START. V1's stem was trained so
 its features barely move between near-identical frames (that is what made
 appearance distillation easy) — a motion pathway fed by a motion-blind stem
 has nothing to read. Testable next: probe ||Δg|| against pixel motion; if

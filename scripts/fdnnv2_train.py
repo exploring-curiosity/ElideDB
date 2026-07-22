@@ -149,8 +149,15 @@ def probes(model, px, vec, sid, ts, val, groups, rng):
 
 
 def stage_a(model, px, vec, sid, ts, val, epochs=8, T=24, B=8, lr=4e-4,
-            seed=0):
+            seed=0, freeze_trunk=False):
     rng = np.random.default_rng(seed)
+    if freeze_trunk:
+        # A3/A4 measured it twice: training the trunk with these objectives
+        # DEGRADES the episode separability the warm start already carries
+        # (0.70 untrained -> 0.42-0.47 trained), because the objectives
+        # reorganise the state the ctx head projects. The trunk already
+        # knows; only the new heads need to learn.
+        model.base.freeze()
     tr = np.where(~val)[0]
     starts = []
     for s in np.unique(sid):
@@ -215,11 +222,18 @@ def stage_a(model, px, vec, sid, ts, val, epochs=8, T=24, B=8, lr=4e-4,
 
 
 def stage_b(model, adapter, px, sid, ts, streams, val, epochs=6, lr=3e-4,
-            seed=0):
-    """Verb-focused contrastive against 7B captions with swap negatives."""
+            seed=0, freeze_trunk=True):
+    """Verb-focused contrastive against 7B captions with swap negatives.
+
+    Trunk frozen by default: A5 measured that the warm-start trunk already
+    carries the separability (0.70 untrained) and that trunk training spends
+    it. L3 trains the two things the probes actually measure — the context
+    projection and the text adapter — with supervision aimed at retrieval."""
     from elidedb import Store
     from elidedb.context import embed_texts
     rng = np.random.default_rng(seed)
+    if freeze_trunk:
+        model.base.freeze()
     db = Store.open("lake/bridge4h")
     caps = db.table("context_captions").scan()
     smap = {s: i for i, s in enumerate(streams)}
@@ -309,6 +323,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--stage", default="a", choices=["a", "b", "ab"])
     ap.add_argument("--a-epochs", type=int, default=8)
+    ap.add_argument("--freeze-trunk", action="store_true")
     ap.add_argument("--b-epochs", type=int, default=6)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -339,7 +354,7 @@ def main():
     if args.stage in ("a", "ab"):
         t0 = time.time()
         stage_a(model, px, vec, sid, ts, val, epochs=args.a_epochs,
-                seed=args.seed)
+                seed=args.seed, freeze_trunk=args.freeze_trunk)
         report["stage_a"] = probes(model, px, vec, sid, ts, val, groups, rng)
         report["stage_a"]["train_s"] = round(time.time() - t0, 1)
         print("[stage A ]", report["stage_a"], flush=True)
@@ -347,7 +362,8 @@ def main():
     if args.stage in ("b", "ab"):
         t0 = time.time()
         model, adapter = stage_b(model, adapter, px, sid, ts, streams, val,
-                                 epochs=args.b_epochs, seed=args.seed)
+                                 epochs=args.b_epochs, seed=args.seed,
+                                 freeze_trunk=args.freeze_trunk)
         report["stage_b"] = probes(model, px, vec, sid, ts, val, groups, rng)
         report["stage_b"]["train_s"] = round(time.time() - t0, 1)
         print("[stage B ]", report["stage_b"], flush=True)

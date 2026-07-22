@@ -148,10 +148,16 @@ class FDNNv2(nn.Module):
         gates = mx.stack(gates, axis=1)              # (B,T)
         app = b.head_g(g) + b.head_h(hs)
         app = app * mx.rsqrt(mx.sum(app * app, axis=-1, keepdims=True) + 1e-8)
-        # signed velocity of the glimpse; first frame gets zero motion
+        # signed velocity of the glimpse; first frame gets zero motion.
+        # NORMALISED: measured, ||dg|| is real motion (corr 0.63 with pixel
+        # motion, 5x on moving frames) but only ~2% of the feature norm — fed
+        # raw, it drowned next to signals 50x larger and every motion head
+        # starved. Direction is unit-normalised; magnitude re-enters as a
+        # bounded gain, so both the WHAT and the HOW-MUCH of motion survive.
         dg = mx.concatenate([mx.zeros_like(g[:, :1]),
                              g[:, 1:] - g[:, :-1]], axis=1)
-        mfeat = nn.silu(self.motion(dg))             # (B,T,M)
+        mag = mx.sqrt(mx.sum(dg * dg, axis=-1, keepdims=True) + 1e-8)
+        mfeat = nn.silu(self.motion(dg / mag)) * mx.tanh(mag)
         cat = mx.concatenate([g, hs, mfeat], axis=-1)
         ctx = self.head_ctx(cat)
         ctx = ctx * mx.rsqrt(mx.sum(ctx * ctx, axis=-1, keepdims=True) + 1e-8)
