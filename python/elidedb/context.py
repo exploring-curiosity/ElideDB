@@ -121,7 +121,7 @@ def tidy_caption(text: str, max_words: int = 32) -> str:
 # ---------------------------------------------------------------------------
 def embed_frames(store, frame_table="frames", model=None, width=512,
                  batch=32, incremental=True, verbose=True, stride=1,
-                 streams=None):
+                 streams=None, engine="siglip"):
     """One SigLIP vector per frame → `frame_vectors`.
 
     Deliberately NOT pooled. Pooling is the student's job, and pooling here
@@ -132,6 +132,12 @@ def embed_frames(store, frame_table="frames", model=None, width=512,
     from PIL import Image
 
     from .video import FrameSet
+    # engine="fdnnv": the distilled streaming encoder — every frame, no
+    # stride, state carried per stream. Same output space as the teacher, so
+    # everything downstream (pooling, search, context) is unchanged.
+    if engine == "fdnnv":
+        return _embed_frames_fdnnv(store, frame_table, incremental, verbose,
+                                   streams)
     model = resolve_model(model)
     frames = store.table(frame_table).scan()
     allst = sorted(set(frames.column("stream").to_pylist()))
@@ -961,3 +967,56 @@ def explain(store, t0, t1, stream=None):
         if b >= t0 and a <= t1:
             out.append({"stream": s, "t0": a, "t1": b, "caption": c})
     return out
+
+
+def _embed_frames_fdnnv(store, frame_table, incremental, verbose, streams):
+    """Every frame through the FDNN-V streaming encoder -> frame_vectors."""
+    import pyarrow as pa
+
+    from .fdnnvideo import embed_stream, load_encoder
+    model, meta = load_encoder(store.dir / "models" / "fdnnv")
+    frames = store.table(frame_table).scan()
+    allst = sorted(set(frames.column("stream").to_pylist()))
+    use = [s for s in allst if s in streams] if streams else allst
+    done = {}
+    if incremental:
+        try:
+            prev = store.table("frame_vectors").scan()
+            for s_, t_ in zip(prev.column("stream").to_pylist(),
+                              prev.column("ts").to_pylist()):
+                done[s_] = max(done.get(s_, -1), t_)
+        except Exception:
+            pass
+    t_start = time.time()
+    rows_ts, rows_stream, rows_vec = [], [], []
+    for s in use:
+        sel = frames.filter(pc.equal(frames.column("stream"), s))
+        if s in done:
+            sel = sel.filter(pc.greater(sel.column("ts"), done[s]))
+        if len(sel) == 0:
+            continue
+        sel = sel.take(pc.sort_indices(sel.column("ts")))
+        ts, vecs, dec_s, emb_s = embed_stream(store, model, sel)
+        if verbose:
+            print(f"  {s}: {len(ts):,} frames (decode {dec_s:.1f}s, "
+                  f"embed {emb_s:.1f}s)", flush=True)
+        rows_ts.extend(int(t) for t in ts)
+        rows_stream.extend([s] * len(ts))
+        rows_vec.extend(vecs)
+    if not rows_ts:
+        return {"frames": 0, "note": "nothing new (incremental)"}
+    dim = len(rows_vec[0])
+    tbl = pa.table({
+        "ts": pa.array(rows_ts, pa.int64()),
+        "stream": pa.array(rows_stream),
+        "vector": pa.array([v.tolist() for v in rows_vec],
+                           pa.list_(pa.float32(), dim)),
+    })
+    version = store.table("frame_vectors").append(
+        tbl, kind="embeddings",
+        meta={"model": "fdnnv", "teacher": meta.get("teacher"),
+              "dim": dim, "every_frame": True,
+              "source_table": frame_table})
+    return {"frames": len(tbl), "dim": dim, "version": version,
+            "engine": "fdnnv",
+            "seconds": round(time.time() - t_start, 1)}

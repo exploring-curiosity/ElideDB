@@ -246,6 +246,25 @@ sampling sparsely made things *slower* per frame, so the knob did not work.
 `frame_vectors` is the single source both the semantic and the context index
 derive from, so this is paid once, not per index.
 
+## FDNN-V: the write-path encoder (embed every frame)
+
+Distilled from SigLIP into a 1.95M-parameter recurrent video encoder
+(design + full iteration log: [docs/FDNNV.md](docs/FDNNV.md)).
+
+| | SigLIP-384 | SigLIP-224 | **FDNN-V** |
+|---|---|---|---|
+| params | 428M | 428M | **1.95M** |
+| ms/frame (batched) | 90.3 | 27.7 | **0.270** |
+| Bridge store, every frame (58,011) | ~87 min | ~27 min | **135.7 s** |
+| 477 h corpus, every frame | 112 h | 38.5 h | **5.6 h** (decode-bound) |
+| held-out fidelity vs teacher | 1.0 | 0.921 (self-ceiling) | 0.902 |
+| text top-10 agreement | 10/10 | 4.3/10 (self-ceiling) | 0.5/10 — not delivered |
+
+The write path is decode-bound now (2.06 of 2.34 ms/frame); embedding keeps
+up with ~200 live 5 fps streams. Student vectors serve image-image and clip
+similarity; text search stays on teacher windows until the text gap closes
+(levers listed in the doc).
+
 ## Reproduce
 
 ```bash

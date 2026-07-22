@@ -1,0 +1,16 @@
+{
+  "frames": 58011,
+  "wall_s": 135.7,
+  "frames_per_s": 427.4,
+  "decode_ms_per_frame": 2.064,
+  "embed_ms_per_frame": 0.2697,
+  "file000_fidelity_mean": 0.8974,
+  "file000_fidelity_p10": 0.8258,
+  "text_topk_overlap": [
+    1,
+    1,
+    0,
+    0
+  ],
+  "full_corpus_hours_every_frame": 5.58
+}
