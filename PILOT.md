@@ -42,7 +42,7 @@ embedding parallel to transcode, one atomic commit per table).
 | capability | 4 h store | 100 h store (1.8M frames) |
 |---|---|---|
 | ingest + full embed | 79 s (178× real time) | ~21 min embed track; every frame |
-| query latency (warm, index-only) | 25–55 ms | 65–84 ms (flat-scan wall; pruning is the known next step) |
+| query latency (warm, index-only) | 25–55 ms | 42–61 ms (vectors are memory-mapped; RAM stays ~flat with corpus size) |
 | direction queries (open vs close) | rank-1 correct, 0/20 opposite | 9/20 verb-strict, 2/20 opposite |
 | query battery (8 mixed queries, top-3) | 16/24 | 13/24 |
 | motion index build | 2.5 s | 20 s (50,414 recordings) |
