@@ -661,6 +661,11 @@ def _warm():
             _vec_table(db, "motion_vectors")   # builds the mmap sidecar
         except Exception:
             pass
+        try:
+            from elidedb.subjects import subject_prefixes
+            subject_prefixes(db)               # mines on first run, cached
+        except Exception:
+            pass
 
 
 def main():

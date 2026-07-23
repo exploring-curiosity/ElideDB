@@ -261,9 +261,27 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     from .context import embed_texts
     from .rerank import directional_swap
     sq = directional_swap(text)
-    qvs = embed_texts(atoms + ([sq] if sq else []))
+    # SUBJECT ANCHORING, self-observed: SigLIP only lands near the right
+    # images when the corpus's dominant subject is NAMED in the query
+    # (measured: "folding the cloth" ranks the true clip #537 bare, #17
+    # with "a robot" named — and nine content-blind templates all failed).
+    # The subject comes from the store LOOKING AT ITS OWN FRAMES
+    # (subjects.py) — never from metadata, keywords, or anything the
+    # uploader said. The anchored query is its OWN RRF channel, not a
+    # score edit: score-level fusion was measured to trade one query
+    # class for another (max: fold 0->12 but close 10->1), while rank
+    # consensus lets each channel carry the queries it is good at.
+    try:
+        from .subjects import subject_prefixes
+        prefixes = subject_prefixes(store, build=False)[:1]
+    except Exception:
+        prefixes = []
+    texts_all = list(atoms) + [f"{p_} {text}" for p_ in prefixes]
+    qvs = embed_texts(texts_all + ([sq] if sq else []))
     q_full = qvs[0]
     qv_swap = qvs[-1] if sq else None
+    qv_anchor = qvs[len(atoms)] if prefixes else None
+    qvs = qvs[:len(atoms)]
     # appearance score = MEAN over clause cosines (soft-AND), not the
     # full-sentence cosine alone. Measured: for "pick up a green toy and
     # put it in the drawer" the full-sentence cosine ranked burner/spoon
@@ -275,14 +293,33 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # only do that when a predicate actually filtered rows — and ONCE, not
     # per atom (the per-atom form copied 0.83 GB x atoms at pilot scale)
     sub = vecs if len(idx_all) == len(vecs) else vecs[idx_all]
-    A = np.stack([sub @ qv for qv in qvs[:len(atoms)]])
+    A = np.stack([sub @ qv for qv in qvs])
     app_all = A.mean(axis=0)
     app_of = {int(i): float(sc) for i, sc in zip(idx_all, app_all)}
+    touched = set()
     for row in A:
-        sub = idx_all[np.argsort(-row)[:per]]
-        for i in sub:
+        top = idx_all[np.argsort(-row)[:per]]
+        touched.update(int(i) for i in top)
+        for i in top:
             cand.setdefault((str(w_s[i]), int(w_t0[i]), int(w_t1[i])),
                             app_of.get(int(i), 0.0))
+    # anchored channel: proposes its own candidates and scores every
+    # window-derived candidate (abstains on caption/motion spans). Both
+    # restrictions were measured: promote-only loses the fold recall
+    # entirely (0/48 in pool), scoring-all keeps it (2/48 -> verified
+    # top-5 3/5 fold) at a 2-3 point cold-battery cost inside that
+    # metric's own noise band — and the verify tier recovers those at
+    # re-ask, while nothing recovers a clip that never enters the pool.
+    anc_of = {}
+    if qv_anchor is not None:
+        anc_all = sub @ qv_anchor
+        touched.update(int(i) for i in
+                       idx_all[np.argsort(-anc_all)[:per]])
+        for i in touched:
+            j = int(np.searchsorted(idx_all, i))
+            key_ = (str(w_s[i]), int(w_t0[i]), int(w_t1[i]))
+            anc_of[key_] = float(anc_all[j])
+            cand.setdefault(key_, app_of.get(int(i), 0.0))
     # lexical scores are KEPT, not just used for recall: a caption that
     # says the verb is the strongest index evidence this store has for an
     # action query, and dropping its score buried caption hits at the
@@ -397,7 +434,7 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # plus (when the store has a V2 event index) best member ctx cosine.
     # NaN = the ctx ranker ABSTAINS on that segment; RRF gives it the
     # median rank rather than the bottom (see fusion.py on why).
-    seg_score, seg_ctx, seg_lex, seg_mot = {}, {}, {}, {}
+    seg_score, seg_ctx, seg_lex, seg_mot, seg_anc = {}, {}, {}, {}, {}
     for (s_, a, b), sc in cand.items():
         for seg in segs:
             if seg[0] == s_ and seg[1] <= a and b <= seg[2]:
@@ -408,11 +445,15 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                 if (s_, a, b) in lex_of:
                     seg_lex[seg] = max(seg_lex.get(seg, 0.0),
                                        lex_of[(s_, a, b)])
+                if (s_, a, b) in anc_of:
+                    seg_anc[seg] = max(seg_anc.get(seg, -2.0),
+                                       anc_of[(s_, a, b)])
                 break
     for seg in segs:
         seg_score.setdefault(seg, 0.0)
         seg_ctx.setdefault(seg, float("nan"))
         seg_lex.setdefault(seg, float("nan"))
+        seg_anc.setdefault(seg, float("nan"))
         # motion attaches by RECORDING overlap: motion rows are recording
         # spans (the scale where the state change is fully straddled) and
         # every segment is clamped inside exactly one recording
@@ -476,7 +517,8 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
         fused = rrf({"app": np.array([seg_score[g] for g in fresh]),
                      "ctx": np.array([seg_ctx[g] for g in fresh]),
                      "lex": np.array([seg_lex[g] for g in fresh]),
-                     "mot": np.array([seg_mot[g] for g in fresh])},
+                     "mot": np.array([seg_mot[g] for g in fresh]),
+                     "anc": np.array([seg_anc[g] for g in fresh])},
                     weights={"mot": 2.5 if qv_swap is not None else 0.0})
         # displayed score = the fused score that actually ordered the hit;
         # showing raw appearance while ordering by fusion read as broken

@@ -1,7 +1,7 @@
 [
   {
     "query": "put a green object in the drawer and close it",
-    "s": 3.0,
+    "s": 2.2,
     "hits": [
       {
         "label": "Pick up the object beside the cabinet",
@@ -162,18 +162,18 @@
         "caption": ""
       },
       {
-        "label": "Move the silver pot on the top of yellow towel in the upper right corner",
-        "match_words": [],
-        "label_ok": false,
-        "sig": 0.052,
-        "margin": null,
-        "caption": ""
-      },
-      {
         "label": "closed the drawer",
         "match_words": [],
         "label_ok": false,
         "sig": 0.111,
+        "margin": null,
+        "caption": ""
+      },
+      {
+        "label": "fork to the right side of the stove",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.071,
         "margin": null,
         "caption": ""
       }
@@ -185,37 +185,31 @@
     "s": 0.0,
     "hits": [
       {
-        "label": "take the red object in the silver pot and put it on the  upper right burner",
-        "match_words": [
-          "pot"
-        ],
-        "label_ok": true,
-        "sig": 0.117,
+        "label": "move a brush from bottom left burner to the upper left burner",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.107,
         "margin": null,
         "caption": ""
       },
       {
-        "label": "take the bite-size mango from the pot and put it between the two left burners",
-        "match_words": [
-          "pot"
-        ],
-        "label_ok": true,
-        "sig": 0.115,
+        "label": "move the objet to the right side of burner",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.111,
         "margin": null,
         "caption": ""
       },
       {
-        "label": "move the blue fork to the top right of the stove",
-        "match_words": [
-          "stove"
-        ],
-        "label_ok": true,
-        "sig": 0.11,
+        "label": "move the orange object to the top of the left burner",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.101,
         "margin": null,
         "caption": ""
       }
     ],
-    "label_ok_top3": 3
+    "label_ok_top3": 0
   },
   {
     "query": "wipe the table with a cloth",
@@ -255,18 +249,18 @@
     "s": 0.0,
     "hits": [
       {
-        "label": "Pick up the butter and put it in the pot on top of the stove.",
-        "match_words": [],
-        "label_ok": false,
-        "sig": 0.13,
-        "margin": null,
-        "caption": ""
-      },
-      {
         "label": "fork to the right side of the stove",
         "match_words": [],
         "label_ok": false,
         "sig": 0.139,
+        "margin": null,
+        "caption": ""
+      },
+      {
+        "label": "Pick up the butter and put it in the pot on top of the stove.",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.13,
         "margin": null,
         "caption": ""
       },
