@@ -249,3 +249,23 @@ correct with zero opposites (deep: ranks 1-2 both true opens, +1.8/+1.4);
 remaining "closing" top hits are put-in-drawer episodes, which in this
 corpus typically END with a close — undecidable at episode-label
 granularity. Cold index-only battery 13→14/24; warm async latency 31 ms.
+
+## External-method pilots (2026-07-22, evening)
+
+Four candidate approaches evaluated against this corpus's measured failure
+(verb direction), on the same 8-close/8-open ground-truth clips:
+
+| method | claim | measured here | verdict |
+|---|---|---|---|
+| NumPro (2411.10332) | frame numbers give VLMs temporal order via OCR | absolute AUC 0.34/0.31 (baseline 0.36); DEGRADES swap-contrast 0.86→0.73 (2B), 0.91→0.86 (7B) | rejected — its gains are for multi-frame localization, not 2-frame direction; overlays add clutter |
+| ViLL-E-style (2604.12148) | VLM as embedding model, one forward, no generation | prompted next-token-distribution proxy: close-query AUC 0.58-0.61, open 0.44-0.55 — chance | the paradigm is right but the value is in their 3-stage contrastive TRAINING, which a prompting proxy does not inherit; weights not local |
+| VideoITG (2507.13353) | instruction-conditioned frame selection | untested — our segments are now episode-clamped (~8 s), endpoints ≈ event boundaries; matters only for long segments | shelved until segments get long |
+| TimeLens2 (MCG-NJU) | MLLM emits evidence intervals per query | not run | generative MLLM over pixels AT QUERY TIME — violates the index-only law; its slot (offline annotator) is already held by the 7B judge |
+
+Context: the "Focus" cheap-ingest/heavy-confirm architecture and the
+Marengo-style contrastive index these methods orbit are ALREADY this
+system's shape (FDNN-V 0.27 ms/frame ingest; index-only 25-54 ms queries;
+2B/7B verify on candidates, async + cracked). The measured gap is the verb
+quality of the joint space, and the only supervision that survived
+measurement remains discriminative margins — swap-contrast verification
+(0.86/0.91) live now, verdict-triple adapter retraining next (task #26).
