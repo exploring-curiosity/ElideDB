@@ -78,6 +78,13 @@ def main():
         return tot
 
     grid = [0.0, 0.3, 0.7, 1.0, 1.6, 2.5, 4.0, 6.0]
+    # mot may never be zeroed: it only fires on directional queries, where
+    # it is the ONLY direction-aware channel — the unconstrained fit set
+    # it to 0 to win two aggregate points and put OPPOSITE-direction clips
+    # back at rank 1 (user-caught live). Direction correctness is a
+    # property, not a point trade.
+    GRIDS = {c: grid for c in CH}
+    GRIDS["mot"] = [1.0, 1.6, 2.5, 4.0, 6.0]
     w = {c: 1.0 for c in CH}
     w["mot"] = 2.5
     best = score(w)
@@ -86,7 +93,7 @@ def main():
     for _ in range(5):
         improved = False
         for ch in CH:
-            for g in grid:
+            for g in GRIDS[ch]:
                 w2 = dict(w); w2[ch] = g
                 s = score(w2)
                 if s > best:
