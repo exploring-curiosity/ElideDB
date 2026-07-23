@@ -185,3 +185,33 @@ which is a longer run than an iteration loop supports.
 Next lever (unchanged from plan): stage B verb-focused contrastive, which
 reads the state+glimpse directly and does not depend on Δg. Requires the 7B
 captions (regenerating now, GPU-exclusive).
+
+## Stage B execution log (2026-07-22)
+
+| iter | change | offline text→ctx (close/open) | verdict |
+|---|---|---|---|
+| B1 | 1-pos + 1-swap-neg contrastive, 6 ep | AUC ~0.56, mean-cos gaps 0.002 | VISUAL COLLAPSE: every clip vector at pairwise cos 0.9993, centroids at 1.0000; adapter split verbs across two poles with zero grounding. Degenerate loss — a constant clip vector satisfies every positive |
+| B2 | full in-batch sigmoid (SigLIP loss) + reset heads, 6 ep | put-in 0.83, close 0.65, open inverted | collapse escaping (clip-cos 0.94→0.67); everything pulled toward put-in — captions run 16:1 pick/place vs close |
+| B3 | verb-balanced sampling (inverse-√df over generic swap vocab), 40 ep | put-in 0.88; centroid close/open **0.833 — first gate pass**; close/open text AUC still ~chance | visual ctx space now separates drawer polarity; the TEXT side does not |
+
+**Root cause, measured to the source:** the 7B captions' "close" mentions are
+ANTI-correlated with closing — 12.9% of captions inside open episodes mention
+"close" vs 7.9% inside close episodes; 735/2348 captions are template
+duplicates. Stage B's verb supervision was mislabeled at generation time.
+Change-caption pilots confirm generation is the broken tier: 2B free-form
+before/after 1/24 correct verbs, 7B 8/24 (close 2/12) — while yes/no
+DISCRIMINATION margins work (2B AUC 0.75, 7B 0.82).
+
+**Consequence (architecture, not tuning):** verb grounding must come from
+discriminative verdicts. vlm_verdicts now stores query TEXT with each margin,
+so ordinary queries accumulate (text, segment, ±margin) training triples —
+database cracking extended to the model. Retraining the adapter on verdicts
+is the next lever; captions remain useful for nouns/lexical recall only.
+
+**Shipped to the query path meanwhile:** context_events index (1,295 events
+from 70,436 frames in 19.5 s, event = gate-peak segment, novelty-pooled
+256-d ctx), ctx as a third RRF channel beside appearance + caption-lexical,
+TF-IDF fitted-model caching (50 ms → ~2 ms), one batched tower pass for all
+query atoms (compound queries 106 → 43 ms). Warm index-only latency:
+25/43/54 ms for 1/3/4-atom queries. Cold index-only battery 13/24 — equal to
+the full sync VLM cascade's previous score, at query-time model cost ZERO.

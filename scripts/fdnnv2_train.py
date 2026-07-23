@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -32,7 +33,7 @@ import mlx.optimizers as optim                               # noqa: E402
 
 from elidedb.fdnnvideo import load_encoder                   # noqa: E402
 from elidedb.fdnnv2 import (CTX_DIM, FDNNv2, TextAdapter,    # noqa: E402
-                            pool_event, save_v2, swap_verbs)
+                            VERB_SWAPS, pool_event, save_v2, swap_verbs)
 
 CACHE = Path("data/cache/b4h")
 OUT = Path("lake/bridge4h/models/fdnnv2")
@@ -251,6 +252,23 @@ def stage_b(model, adapter, px, sid, ts, streams, val, epochs=6, lr=3e-4,
     negs = [swap_verbs(t, rng) for t in texts]
     print(f"  B: {len(wins)} caption windows, "
           f"{sum(n is not None for n in negs)} hard negatives", flush=True)
+    # VERB-BALANCED SAMPLING. Measured: this corpus's captions run 16:1
+    # pick/place vs close, so uniform sampling teaches the adapter to map
+    # every query toward the majority verb mode (put-in AUC 0.83 while close
+    # and open sank below chance). Each caption is weighted by the inverse
+    # sqrt document-frequency of its rarest verb from the GENERIC swap
+    # vocabulary — frequencies come from the corpus, words from plain
+    # English; nothing dataset-specific enters.
+    vocab = {w for pair in VERB_SWAPS for term in pair for w in term.split()}
+    docs = [set(re.findall(r"[a-z]+", t.lower())) for t in texts]
+    df = {}
+    for d in docs:
+        for w in d & vocab:
+            df[w] = df.get(w, 0) + 1
+    med = float(np.median(list(df.values()))) if df else 1.0
+    wt = np.array([1.0 / np.sqrt(min((df[w] for w in d & vocab),
+                                     default=med)) for d in docs])
+    wt = wt / wt.sum()
     tpos = embed_texts(texts)
     tneg_idx = [i for i, n in enumerate(negs) if n]
     tneg = embed_texts([negs[i] for i in tneg_idx]) if tneg_idx else None
@@ -261,19 +279,35 @@ def stage_b(model, adapter, px, sid, ts, streams, val, epochs=6, lr=3e-4,
     B = 8
 
     def loss_fn(m, a, xs, tp, tn, has_n):
-        l = mx.zeros(())
-        zp = a(tp)
-        zn = a(tn)
-        for j, x in enumerate(xs):
+        # IN-BATCH sigmoid contrastive (the actual SigLIP loss). The first
+        # run used 1 positive + 1 swap negative per clip and the model found
+        # the degenerate optimum: EVERY clip vector collapsed to one constant
+        # direction (measured: pairwise cos 0.9993 across episodes, centroids
+        # at 1.0000) while the adapter split caption verbs across two poles —
+        # loss 0.77 with zero grounding. Off-diagonal terms make a constant
+        # clip vector unsatisfiable: it would score every caption equally.
+        cvs = []
+        for x in xs:
             out = m.run(x[None])
             w = out["gates"][0] + 1e-3
             w = w / mx.sum(w)
             cv = mx.sum(out["ctx"][0] * w[:, None], axis=0)
-            cv = cv * mx.rsqrt(mx.sum(cv * cv) + 1e-8)
-            l = l + nn.softplus(-10.0 * mx.sum(cv * zp[j]) + 5.0)
-            if has_n[j] >= 0:
-                l = l + nn.softplus(10.0 * mx.sum(cv * zn[has_n[j]]) - 2.0)
-        return l / len(xs)
+            cvs.append(cv * mx.rsqrt(mx.sum(cv * cv) + 1e-8))
+        CV = mx.stack(cvs)                       # (B, ctx)
+        ZP = a(tp)                               # (B, ctx)
+        logits = 10.0 * CV @ ZP.T - 2.0
+        eye = mx.eye(len(xs))
+        pair = nn.softplus(-(2 * eye - 1) * logits)
+        nb = max(len(xs) - 1, 1)
+        l = (mx.sum(pair * eye) / len(xs)
+             + mx.sum(pair * (1 - eye)) / (len(xs) * nb))
+        # verb-swap hard negatives on top: same clip, inverted caption
+        zn = a(tn)
+        hn = [nn.softplus(10.0 * mx.sum(CV[j] * zn[h]) - 2.0)
+              for j, h in enumerate(has_n) if h >= 0]
+        if hn:
+            l = l + mx.sum(mx.stack(hn)) / len(hn)
+        return l
 
     params = {"m": model, "a": adapter}
 
@@ -294,12 +328,10 @@ def stage_b(model, adapter, px, sid, ts, streams, val, epochs=6, lr=3e-4,
     lg = nn.value_and_grad(joint, jl)
 
     steps = max(len(wins) // B, 40)
-    order = np.arange(len(wins))
     for ep in range(epochs):
-        rng.shuffle(order)
         tl = 0.0
         for st in range(steps):
-            idx = order[(st * B) % len(wins):(st * B) % len(wins) + B]
+            idx = rng.choice(len(wins), B, replace=False, p=wt)
             xs = [mx.array(px[wins[i]].astype(np.float32) / 127.5 - 1.0)
                   for i in idx]
             tp = mx.array(tpos[idx])
@@ -315,7 +347,22 @@ def stage_b(model, adapter, px, sid, ts, streams, val, epochs=6, lr=3e-4,
             model.base.cell.mask = mx.array(frozen)
             mx.eval(joint.parameters(), opt.state)
             tl += float(loss.item())
-        print(f"  B ep{ep} loss {tl / steps:.4f}", flush=True)
+        # collapse monitor: mean pairwise cos of clip vectors in a probe
+        # batch. ~1.0 means the constant-vector shortcut is winning again.
+        pi = rng.choice(len(wins), min(B, len(wins)), replace=False)
+        cvs = []
+        for i in pi:
+            out = model.run(mx.array(
+                px[wins[i]].astype(np.float32) / 127.5 - 1.0)[None])
+            w = out["gates"][0] + 1e-3
+            w = w / mx.sum(w)
+            cv = mx.sum(out["ctx"][0] * w[:, None], axis=0)
+            cvs.append(cv * mx.rsqrt(mx.sum(cv * cv) + 1e-8))
+        C = mx.stack(cvs)
+        n = len(pi)
+        spread = float((mx.sum(C @ C.T) - n) / (n * (n - 1)))
+        print(f"  B ep{ep} loss {tl / steps:.4f} clip-cos {spread:.3f}",
+              flush=True)
     return model, adapter
 
 
@@ -325,6 +372,9 @@ def main():
     ap.add_argument("--a-epochs", type=int, default=8)
     ap.add_argument("--freeze-trunk", action="store_true")
     ap.add_argument("--b-epochs", type=int, default=6)
+    ap.add_argument("--reset-heads", action="store_true",
+                    help="reinit ctx head, motion, adapter before stage B "
+                         "(escape a collapsed checkpoint)")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
     rng = np.random.default_rng(args.seed)
@@ -341,6 +391,16 @@ def main():
         from elidedb.fdnnv2 import load_v2
         model, adapter, _ = load_v2(OUT)
         print("loaded existing V2 for stage B", flush=True)
+        if args.reset_heads:
+            import mlx.nn as mnn
+            G = model.base.cfg["glimpse"]
+            C = model.base.channels
+            model.motion = mnn.Linear(G, model.motion_dim)
+            model.head_ctx = mnn.Linear(G + C + model.motion_dim,
+                                        model.cfg["ctx_dim"])
+            adapter = TextAdapter()
+            mx.eval(model.parameters(), adapter.parameters())
+            print("reset ctx-path heads + adapter", flush=True)
     else:
         base, _ = load_encoder("lake/bridge/models/fdnnv")
         model = FDNNv2(base)

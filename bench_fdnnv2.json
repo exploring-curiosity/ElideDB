@@ -1,10 +1,10 @@
 {
-  "stage_a": {
-    "close_vs_open": 0.7,
-    "close_vs_putin": 0.717,
-    "aot_auc": 0.547,
+  "stage_b": {
+    "close_vs_open": 0.833,
+    "close_vs_putin": 0.667,
+    "aot_auc": 0.539,
     "app_fid": 0.9948,
-    "ms_frame": 0.179,
-    "train_s": 257.7
+    "ms_frame": 0.173,
+    "train_s": 375.0
   }
 }

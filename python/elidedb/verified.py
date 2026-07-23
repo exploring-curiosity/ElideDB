@@ -40,6 +40,7 @@ import hashlib
 import re
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 import pyarrow as pa
@@ -88,26 +89,76 @@ def _atoms(text: str):
     return [t] + [a for a in atoms if a.lower() != t.lower()]
 
 
+_CAP_CACHE = {}
+
+
 def _caption_candidates(store, text, n):
     """Lexical recall over VLM captions, when the store has them. Verbs live
-    in words, so this is the ranker most likely to surface action matches."""
+    in words, so this is the ranker most likely to surface action matches.
+
+    The fitted TF-IDF + document matrix are cached per table VERSION —
+    refitting on every query was 50 ms of an 81 ms query (measured), i.e.
+    the entire latency gate spent recomputing something that only changes
+    when captions are appended. A query now pays one sparse transform."""
     try:
-        caps = store.table("context_captions").scan()
+        ver = store.table("context_captions").state().version
     except Exception:
         return []
-    if len(caps) == 0:
-        return []
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    texts = caps.column("caption").to_pylist()
-    vec = TfidfVectorizer(stop_words="english", ngram_range=(1, 2))
-    X = vec.fit_transform(texts)
+    key = (str(store.dir), ver)
+    if key not in _CAP_CACHE:
+        caps = store.table("context_captions").scan()
+        if len(caps) == 0:
+            return []
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        texts = caps.column("caption").to_pylist()
+        vec = TfidfVectorizer(stop_words="english", ngram_range=(1, 2))
+        X = vec.fit_transform(texts)
+        wins = list(zip(caps.column("stream").to_pylist(),
+                        (int(v) for v in caps.column("ts").to_pylist()),
+                        (int(v) for v in caps.column("t1").to_pylist())))
+        if len(_CAP_CACHE) > 8:
+            _CAP_CACHE.clear()
+        _CAP_CACHE[key] = (vec, X, wins)
+    vec, X, wins = _CAP_CACHE[key]
     q = vec.transform([text])
     sc = np.asarray((X @ q.T).todense()).ravel()
     order = np.argsort(-sc)[:n]
-    return [(caps.column("stream")[int(i)].as_py(),
-             int(caps.column("ts")[int(i)].as_py()),
-             int(caps.column("t1")[int(i)].as_py()))
-            for i in order if sc[i] > 0]
+    return [(wins[int(i)], float(sc[i])) for i in order if sc[i] > 0]
+
+
+_ADAPTER_CACHE = {}
+
+
+def _ctx_event_scores(store, qv):
+    """(stream, t0, t1, ctx-cosine) for every event in the V2 index.
+
+    The adapter is the query-time half of stage B's contrastive pair: `qv`
+    is the SigLIP text embedding the appearance ranker ALREADY computed
+    (verified identical to the tower stage B trained with, cos 1.0); the
+    adapter maps it to the 256-d ctx space. Loaded once per store, then a
+    query costs one 2-layer forward + one matmul — no second tower pass.
+    """
+    from .embeddings import _vec_table
+    tbl, vecs = _vec_table(store, "context_events")
+    key = str(store.dir)
+    if key not in _ADAPTER_CACHE:
+        import mlx.core as mx
+        from .fdnnv2 import TextAdapter
+        from mlx.utils import tree_unflatten
+        z = np.load(Path(store.dir) / "models" / "fdnnv2" / "adapter.npz")
+        adapter = TextAdapter()
+        adapter.update(tree_unflatten([(k_, mx.array(z[k_]))
+                                       for k_ in z.files]))
+        mx.eval(adapter.parameters())
+        _ADAPTER_CACHE[key] = adapter
+    import mlx.core as mx
+    qc = np.array(_ADAPTER_CACHE[key](mx.array(qv)[None]))[0]
+    sc = vecs @ qc
+    ss = tbl.column("stream").to_pylist()
+    sa = tbl.column("ts").to_pylist()
+    sb = tbl.column("t1").to_pylist()
+    return [((s, int(a), int(b)), float(c))
+            for s, a, b, c in zip(ss, sa, sb, sc)]
 
 
 def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
@@ -121,7 +172,7 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     """
     from PIL import Image
 
-    from .embeddings import _vec_table, embed_text
+    from .embeddings import _vec_table
     from .rerank import (DEEP_VLM, as_change_question, as_clip_question,
                          score_clip_sequences)
     from .video import FrameSet
@@ -149,19 +200,29 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     atoms = _atoms(text)
     per = max(pool // len(atoms), 12)
     cand = {}
-    q_full = embed_text(text)
+    # ONE tower pass for the query and all its atoms: per-atom embed_text
+    # calls cost ~21 ms EACH, which put every compound query over the
+    # latency gate (measured 84-106 ms); a batch of 3 costs the same as 1.
+    from .context import embed_texts
+    qvs = embed_texts(atoms)
+    q_full = qvs[0]
     app_all = vecs[idx_all] @ q_full          # index signal, reused below
     app_of = {int(i): float(sc) for i, sc in zip(idx_all, app_all)}
-    for a in atoms:
-        qv = q_full if a == atoms[0] else embed_text(a)
+    for a, qv in zip(atoms, qvs):
         sub = idx_all[np.argsort(-(vecs[idx_all] @ qv))[:per]]
         for i in sub:
             cand.setdefault((str(w_s[i]), int(w_t0[i]), int(w_t1[i])),
                             app_of.get(int(i), 0.0))
-    for w in _caption_candidates(store, text, per):
+    # lexical scores are KEPT, not just used for recall: a caption that
+    # says the verb is the strongest index evidence this store has for an
+    # action query, and dropping its score buried caption hits at the
+    # bottom of the unverified ordering (measured on the verb battery).
+    lex_of = {}
+    for w, sc in _caption_candidates(store, text, per):
         if streams and w[0] not in streams:
             continue
         cand.setdefault(w, 0.0)
+        lex_of[w] = max(lex_of.get(w, 0.0), sc)
     # stores with the full context tier contribute their caption-LSA ranking
     try:
         from .context import _ctx_matrix, caption_space
@@ -176,6 +237,26 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                 if streams and cs[i] not in streams:
                     continue
                 cand.setdefault((cs[i], int(ca[i]), int(cb[i])), 0.0)
+    except Exception:
+        pass
+    # stores with a V2 context-event index contribute VERB-AWARE ranking:
+    # adapter(text) and novelty-pooled event vectors share the 256-d space
+    # stage B trained, where "close" and "open" are different directions —
+    # the one thing appearance cosines cannot express. Index-only: one
+    # matmul plus a 2-layer adapter (~0.1 ms), no VLM.
+    ctx_of = {}
+    try:
+        ev_scores = _ctx_event_scores(store, q_full)
+        for (s_, a, b), sc in ev_scores:
+            if streams and s_ not in streams:
+                continue
+            if t0 is not None and b < t0:
+                continue
+            if t1 is not None and a > t1:
+                continue
+            ctx_of[(s_, a, b)] = sc
+        for w, sc in sorted(ctx_of.items(), key=lambda kv: -kv[1])[:per]:
+            cand.setdefault(w, 0.0)
     except Exception:
         pass
 
@@ -198,15 +279,26 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
         segs.append((s, cur[0], cur[1]))
     segs = segs[:pool]
 
-    # ---- segment index score: best member window's appearance cosine -----
-    seg_score = {}
+    # ---- segment index score: best member window's appearance cosine,
+    # plus (when the store has a V2 event index) best member ctx cosine.
+    # NaN = the ctx ranker ABSTAINS on that segment; RRF gives it the
+    # median rank rather than the bottom (see fusion.py on why).
+    seg_score, seg_ctx, seg_lex = {}, {}, {}
     for (s_, a, b), sc in cand.items():
         for seg in segs:
             if seg[0] == s_ and seg[1] <= a and b <= seg[2]:
                 seg_score[seg] = max(seg_score.get(seg, -1.0), sc)
+                if (s_, a, b) in ctx_of:
+                    seg_ctx[seg] = max(seg_ctx.get(seg, -2.0),
+                                       ctx_of[(s_, a, b)])
+                if (s_, a, b) in lex_of:
+                    seg_lex[seg] = max(seg_lex.get(seg, 0.0),
+                                       lex_of[(s_, a, b)])
                 break
     for seg in segs:
         seg_score.setdefault(seg, 0.0)
+        seg_ctx.setdefault(seg, float("nan"))
+        seg_lex.setdefault(seg, float("nan"))
 
     qh = _qhash(text)
     vmap = _verdict_map(store)
@@ -243,7 +335,15 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     pos = [seg for seg, m in cached_m.items() if m >= 0]
     neg = [seg for seg, m in cached_m.items() if m < 0]
     pos.sort(key=lambda g: -cached_m[g])
-    fresh.sort(key=lambda g: -seg_score[g])
+    # unverified order: appearance, ctx, and caption-lexical fused by RRF —
+    # scale-free, and a segment several rankers like beats one a single
+    # ranker likes. NaN = that ranker abstains (median rank, no veto).
+    if fresh:
+        from .fusion import rrf
+        fused = rrf({"app": np.array([seg_score[g] for g in fresh]),
+                     "ctx": np.array([seg_ctx[g] for g in fresh]),
+                     "lex": np.array([seg_lex[g] for g in fresh])})
+        fresh = [g for _, g in sorted(zip(-fused, fresh))]
     neg.sort(key=lambda g: -cached_m[g])
 
     def _hit(seg, verified):
@@ -321,16 +421,22 @@ def _verify_segments(store, segs, text, qh, frames_per_clip=2):
     margins = {}
     for seg, m in zip(need, score_clip_sequences(clips, question)):
         margins[seg] = float(m)
+    # `query` is stored as TEXT, not only qhash: verdicts are the one verb
+    # supervision source that survived measurement (yes/no margins, AUC
+    # 0.75-0.82, where free-form captions failed at 1-8/24), and as
+    # (text, segment, ±margin) triples they can retrain the ctx adapter.
+    # A hash can rank cached answers; only the text can teach.
     vt = pa.table({
         "ts": pa.array([g[1] for g in need], pa.int64()),
         "t1": pa.array([g[2] for g in need], pa.int64()),
         "stream": pa.array([g[0] for g in need]),
         "qhash": pa.array([qh] * len(need), pa.int64()),
         "margin": pa.array([margins[g] for g in need], pa.float32()),
+        "query": pa.array([text] * len(need)),
     })
     try:
         store.table("vlm_verdicts").append(
-            vt, kind="timeseries",
+            vt, kind="timeseries", evolve=True,
             meta={"written_by": "verified search", "query": text[:120]})
     except Exception:
         pass                                   # concurrent commit: retryable

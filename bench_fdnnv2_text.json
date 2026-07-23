@@ -1,0 +1,74 @@
+{
+  "close the drawer": {
+    "auc_vs_open": 0.7,
+    "auc_vs_putin": 0.333,
+    "mean_cos": {
+      "close": -0.1747,
+      "open": -0.2247,
+      "putin": -0.1295
+    }
+  },
+  "closing the drawer": {
+    "auc_vs_open": 0.653,
+    "auc_vs_putin": 0.35,
+    "mean_cos": {
+      "close": -0.185,
+      "open": -0.2157,
+      "putin": -0.1495
+    }
+  },
+  "the robot closes the drawer": {
+    "auc_vs_open": 0.553,
+    "auc_vs_putin": 0.393,
+    "mean_cos": {
+      "close": -0.2459,
+      "open": -0.2564,
+      "putin": -0.2206
+    }
+  },
+  "open the drawer": {
+    "auc_vs_close": 0.316,
+    "auc_vs_putin": 0.231,
+    "mean_cos": {
+      "close": 0.2731,
+      "open": 0.2157,
+      "putin": 0.3057
+    }
+  },
+  "opening the drawer": {
+    "auc_vs_close": 0.351,
+    "auc_vs_putin": 0.256,
+    "mean_cos": {
+      "close": 0.0197,
+      "open": -0.0063,
+      "putin": 0.0522
+    }
+  },
+  "the robot opens the drawer": {
+    "auc_vs_close": 0.537,
+    "auc_vs_putin": 0.618,
+    "mean_cos": {
+      "close": 0.1067,
+      "open": 0.1278,
+      "putin": 0.1073
+    }
+  },
+  "put something in the drawer": {
+    "auc_vs_close": 0.677,
+    "auc_vs_open": 0.883,
+    "mean_cos": {
+      "close": -0.1356,
+      "open": -0.2107,
+      "putin": -0.0854
+    }
+  },
+  "place an object in the drawer": {
+    "auc_vs_close": 0.676,
+    "auc_vs_open": 0.882,
+    "mean_cos": {
+      "close": -0.239,
+      "open": -0.3185,
+      "putin": -0.1862
+    }
+  }
+}

@@ -50,6 +50,21 @@ def content_words(text):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--mode", default="sync", choices=["sync", "async"],
+                    help="sync = full VLM cascade (quality ceiling); "
+                         "async = the product's index-only query path")
+    ap.add_argument("--cold", action="store_true",
+                    help="mask cached verdicts + disable background "
+                         "verification: grades the INDEX alone, as a fresh "
+                         "store would answer")
+    args = ap.parse_args()
+    if args.cold:
+        import elidedb.verified as V
+        V._verdict_map = lambda store: {}
+        V._verify_segments = lambda *a, **k: {}
+
     db = Store.open("lake/bridge4h")
     t = pq.read_table("eval/bridge4h_truth.parquet").to_pydict()
     epm = db.table("episodes").scan()
@@ -88,7 +103,9 @@ def main():
     report = []
     for q in QUERIES:
         t0 = time.time()
-        hits, st = db.search_context(q, k=3, deep=6, verify="sync")
+        hits, st = db.search_context(q, k=3,
+                                     deep=6 if args.mode == "sync" else 0,
+                                     verify=args.mode)
         el = time.time() - t0
         qw = content_words(q)
         qv = embed_text(q, model_id="fast")
@@ -108,7 +125,8 @@ def main():
         print(f"\nQ: {q}   ({el:.0f}s, {n_ok}/3 label-verified)")
         for r in rows:
             mark = "OK " if r["label_ok"] else "MISS"
-            print(f"  [{mark}] m={r['margin']:+.2f} sig={r['sig']} "
+            m = f"{r['margin']:+.2f}" if r["margin"] is not None else "  — "
+            print(f"  [{mark}] m={m} sig={r['sig']} "
                   f"{r['label'][:58]}")
             if r["match_words"]:
                 print(f"         matched: {r['match_words']}")
