@@ -502,7 +502,13 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                 _BG_INFLIGHT.add(key)
                 launched = True
         if launched:
-            todo = fresh[:pool]
+            # cap the burst: verifying every fresh segment after one query
+            # meant ~70 s of GPU (72 segments x 2 contrast passes at 100 h
+            # scale), starving every FOREGROUND query meanwhile — the user
+            # saw 5 s searches. 16 covers everything a k=8 page shows;
+            # the rest verifies when the user asks again (cracking: effort
+            # follows attention).
+            todo = fresh[:min(pool, 16)]
 
             def worker():
                 # CASCADE IN THE BACKGROUND: 2B screens every fresh segment

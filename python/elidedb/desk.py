@@ -109,44 +109,67 @@ def api_storage(key: str, table: str):
             "schema": st.schema, "history": tab.history(), "files": files}
 
 
+MAP_MAX_POINTS = 6000
+
+
 def api_map(key: str):
-    """2D layout of the embeddings table. UMAP, cached beside the log
-    (a derived view, clearly named; never used for retrieval)."""
+    """2D layout of the embeddings table. UMAP over a bounded SAMPLE,
+    cached beside the log (a derived view; never used for retrieval).
+
+    The unsampled version killed the app at pilot scale, three ways at
+    once (measured on the 100 h store): to_pylist() over 180k x 1152
+    vectors is ~25 GB of Python floats (4 -> 28 GB RSS), UMAP over 180k
+    points runs for minutes, and a 180k-point JSON payload crushes the
+    WebView. A map is an OVERVIEW: an even time-stride sample of a few
+    thousand windows shows the same structure, reads from the mmap
+    sidecar, and stays bounded no matter how large the corpus grows."""
     ck = ("map", key)
     if ck in _CACHE:
         return _CACHE[ck]
     db = STORES[key]
-    t = db.table("embeddings").scan()
-    if len(t) == 0:
+    from elidedb.embeddings import _vec_table
+    try:
+        t, vecs = _vec_table(db, "embeddings")
+    except Exception:
         return {"points": []}
-    vecs = np.stack([np.asarray(v, np.float32)
-                     for v in t.column("vector").to_pylist()])
+    n = len(t)
+    if n == 0:
+        return {"points": []}
+    stride = max(1, n // MAP_MAX_POINTS)
+    idx = np.arange(0, n, stride)
+    sample = np.asarray(vecs[idx], np.float32)
+
     cache_file = db.dir / "tables" / "embeddings" / "_desk_umap.json"
     st = db.table("embeddings").state()
     xy = None
     if cache_file.exists():
         c = json.loads(cache_file.read_text())
-        if c.get("version") == st.version and len(c["xy"]) == len(t):
+        if c.get("version") == st.version and len(c["xy"]) == len(idx):
             xy = np.array(c["xy"], np.float32)
     if xy is None:
         try:
             import umap
             from sklearn.decomposition import PCA
-            red = PCA(n_components=min(50, len(vecs), vecs.shape[1]),
-                      random_state=0).fit_transform(vecs)
-            xy = umap.UMAP(n_components=2, random_state=0).fit_transform(red)
+            red = PCA(n_components=min(50, len(sample), sample.shape[1]),
+                      random_state=0).fit_transform(sample)
+            xy = umap.UMAP(n_components=2, random_state=0,
+                           low_memory=True).fit_transform(red)
         except Exception:
             from sklearn.decomposition import PCA
-            xy = PCA(n_components=2, random_state=0).fit_transform(vecs)
+            xy = PCA(n_components=2, random_state=0).fit_transform(sample)
         cache_file.write_text(json.dumps(
             {"version": st.version, "xy": np.round(xy, 3).tolist()}))
     labels = (t.column("cluster").to_pylist()
-              if "cluster" in t.column_names else [0] * len(t))
+              if "cluster" in t.column_names else None)
+    ss = t.column("stream").to_pylist()
+    ta = t.column("ts").to_pylist()
+    tb = t.column("t1").to_pylist()
     out = {"points": [
-        {"x": float(xy[i][0]), "y": float(xy[i][1]), "c": int(labels[i]),
-         "s": t.column("stream")[i].as_py(),
-         "t0": t.column("ts")[i].as_py(), "t1": t.column("t1")[i].as_py()}
-        for i in range(len(t))]}
+        {"x": float(xy[j][0]), "y": float(xy[j][1]),
+         "c": int(labels[i]) if labels else 0,
+         "s": ss[i], "t0": ta[i], "t1": tb[i]}
+        for j, i in enumerate(idx)],
+        "sampled_of": n, "stride": int(stride)}
     _CACHE[ck] = out
     return out
 
@@ -629,8 +652,13 @@ def _warm():
         try:
             from elidedb.embeddings import _vec_table
             _vec_table(db, "embeddings")
-            from elidedb.verified import _verdict_map
+            from elidedb.verified import _recording_spans, _verdict_map
             _verdict_map(db)
+            _recording_spans(db)
+        except Exception:
+            pass
+        try:
+            _vec_table(db, "motion_vectors")   # builds the mmap sidecar
         except Exception:
             pass
 
