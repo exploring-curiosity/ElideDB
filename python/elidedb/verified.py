@@ -468,13 +468,21 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     qh = _qhash(dtag)
     dqh = _qhash("deep:" + dtag)
     vmap = _verdict_map(store)
-    # deep (7B, AUC 0.91) margins win over screen (2B, 0.86) when both exist
-    cached_m = {}
+    # the two tiers are kept SEPARATE because they carry different
+    # authority: only the deep (7B) judge may pin a segment to the top or
+    # bottom. A 2B screen margin is evidence — one more ranking channel —
+    # never a lock: "verified positives first" let stale 2B yeses (minted
+    # against an older candidate pool) hold the top of 'folding cloth'
+    # forever while the true folds sat unverified below (user-reported,
+    # reproduced).
+    deep_m, scr_m = {}, {}
     for seg in segs:
         if (seg[0], seg[1], dqh) in vmap:
-            cached_m[seg] = vmap[(seg[0], seg[1], dqh)]
-        elif (seg[0], seg[1], qh) in vmap:
-            cached_m[seg] = vmap[(seg[0], seg[1], qh)]
+            deep_m[seg] = vmap[(seg[0], seg[1], dqh)]
+        if (seg[0], seg[1], qh) in vmap:
+            scr_m[seg] = vmap[(seg[0], seg[1], qh)]
+    cached_m = dict(scr_m)
+    cached_m.update(deep_m)                    # sync path display: best tier
     fresh = [seg for seg in segs if seg not in cached_m]
 
     if verify == "sync":
@@ -503,12 +511,13 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     #   2. unverified candidates, by index score (they are what the
     #      background worker is judging right now)
     #   3. verified negatives last — the VLM looked and said no
-    pos = [seg for seg, m in cached_m.items() if m >= 0]
-    neg = [seg for seg, m in cached_m.items() if m < 0]
-    pos.sort(key=lambda g: -cached_m[g])
-    # unverified order: appearance, ctx, and caption-lexical fused by RRF —
-    # scale-free, and a segment several rankers like beats one a single
-    # ranker likes. NaN = that ranker abstains (median rank, no veto).
+    pos = [seg for seg, m in deep_m.items() if m >= 0]
+    neg = [seg for seg, m in deep_m.items() if m < 0]
+    pos.sort(key=lambda g: -deep_m[g])
+    # everything the 7B has not judged — 2B-screened or unverified alike —
+    # is ordered by RRF over all index channels PLUS the 2B margin as a
+    # channel ("scr", abstaining where absent). Scale-free, no vetoes.
+    fresh = [g for g in segs if g not in deep_m]
     if fresh:
         from .fusion import rrf
         # For directional queries, motion is the ONLY channel measuring the
@@ -518,19 +527,23 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                      "ctx": np.array([seg_ctx[g] for g in fresh]),
                      "lex": np.array([seg_lex[g] for g in fresh]),
                      "mot": np.array([seg_mot[g] for g in fresh]),
-                     "anc": np.array([seg_anc[g] for g in fresh])},
+                     "anc": np.array([seg_anc[g] for g in fresh]),
+                     "scr": np.array([scr_m.get(g, float("nan"))
+                                      for g in fresh])},
                     weights={"mot": 2.5 if qv_swap is not None else 0.0})
         # displayed score = the fused score that actually ordered the hit;
         # showing raw appearance while ordering by fusion read as broken
         fused_of = dict(zip(fresh, fused))
         seg_score.update(fused_of)
         fresh = [g for _, g in sorted(zip(-fused, fresh))]
-    neg.sort(key=lambda g: -cached_m[g])
+    neg.sort(key=lambda g: -deep_m[g])
 
     def _hit(seg, verified):
+        m = (deep_m[seg] if verified
+             else scr_m.get(seg))              # 2B margin shown as evidence
         return {"stream": seg[0], "t0": seg[1], "t1": seg[2],
-                "margin": round(cached_m[seg], 3) if verified else None,
-                "score": cached_m.get(seg, seg_score[seg]),
+                "margin": round(m, 3) if m is not None else None,
+                "score": deep_m.get(seg, seg_score[seg]),
                 "verified": verified, "cached": verified}
     hits = ([_hit(g, True) for g in pos]
             + [_hit(g, False) for g in fresh]
@@ -553,18 +566,24 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
             todo = fresh[:min(pool, 16)]
 
             def worker():
-                # CASCADE IN THE BACKGROUND: 2B screens every fresh segment
-                # (0.5 s each), then the 7B contrast re-judges the top of
-                # what the 2B liked. Cached quality converges to the
-                # 0.91-AUC tier while queries stay index-only — the user
-                # never pays for either model.
+                # CASCADE IN THE BACKGROUND: 2B screens what it has not
+                # yet seen; the 7B then judges the FUSED-order top UNION
+                # the 2B's favorites. Judging only what the 2B liked let a
+                # 2B mistake keep the true clip away from the judge — the
+                # fused top is where the index's best candidates live, so
+                # they always get their day in court.
                 try:
-                    m2 = _verify_segments(store, todo, text, qh,
-                                          frames_per_clip)
-                    top = [{"stream": s_, "t0": a, "t1": b,
-                            "margin": mm, "score": mm}
-                           for (s_, a, b), mm in
-                           sorted(m2.items(), key=lambda kv: -kv[1])[:6]]
+                    need = [g for g in todo if g not in scr_m][:16]
+                    m2 = dict(scr_m)
+                    m2.update(_verify_segments(store, need, text, qh,
+                                               frames_per_clip))
+                    court = list(fresh[:4])
+                    court += [g for g, _ in sorted(m2.items(),
+                                                   key=lambda kv: -kv[1])
+                              if g not in court][:4]
+                    top = [{"stream": g[0], "t0": g[1], "t1": g[2],
+                            "margin": m2.get(g, 0.0),
+                            "score": m2.get(g, 0.0)} for g in court]
                     if top:
                         _deep_rerank(store, top, text, len(top),
                                      _verdict_map(store))

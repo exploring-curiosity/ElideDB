@@ -56,6 +56,28 @@ VERB_SWAPS = [
     ("toward", "away from"), ("front", "back"),
 ]
 
+# The un- REVERSAL family: verbs whose opposite is their morphological
+# negation. Needed because a query like "folding cloth" without a swap
+# gets an ABSOLUTE verifier question, and both VLM tiers answer absolute
+# questions with concept PRESENCE, not action direction (measured twice:
+# open clips outscored close clips 0.36; tiger-in-drawer outscored
+# fold-cloth +1.6 vs +0.17 because the drawer clip contains cloth).
+# The swap-contrast cancels that bias by construction. Generic English,
+# generated inflections, zero dataset words.
+_UN_BASES = ["fold", "wrap", "roll", "stack", "cover", "screw", "plug",
+             "zip", "tie", "load", "lock", "pack", "buckle", "hook",
+             "fasten", "tangle"]
+
+
+def _inflect(v):
+    ing = (v[:-1] + "ing") if v.endswith("e") else (v + "ing")
+    ed = (v + "d") if v.endswith("e") else (v + "ed")
+    return [v, v + "s", ing, ed]
+
+
+VERB_SWAPS += [(a, b) for base in _UN_BASES
+               for a, b in zip(_inflect(base), _inflect("un" + base))]
+
 
 def swap_verbs(text: str, rng) -> str | None:
     """One randomly chosen applicable swap -> a hard negative. None if no
