@@ -459,6 +459,15 @@ def embed_stream(store, model, rows, width=192, chunk=512, batch_cb=None):
         if not dec:
             continue
         frames = np.stack([d[1] for d in dec])
+        # the stem takes EXACTLY (in_h, in_w); sources with a different
+        # aspect ratio decode to other shapes (lab video came back square
+        # and crashed the reshape). Stretch — the encoder was distilled on
+        # stretched frames, so aspect distortion is in-distribution.
+        ih, iw = model.cfg["in_hw"] if "in_hw" in model.cfg else (144, 192)
+        if frames.shape[1] != ih or frames.shape[2] != iw:
+            xr = np.linspace(0, frames.shape[2] - 1, iw).round().astype(int)
+            yr = np.linspace(0, frames.shape[1] - 1, ih).round().astype(int)
+            frames = frames[:, yr][:, :, xr]
         t0 = _time.perf_counter()
         x = mx.array(frames.astype(np.float32) / 127.5 - 1.0)[None]
         e, h = model(x, h0=h)
