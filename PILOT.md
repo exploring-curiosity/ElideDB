@@ -39,14 +39,20 @@ embedding parallel to transcode, one atomic commit per table).
 
 ## Measured capabilities (as of 2026-07-23, BridgeData2 corpus)
 
-| capability | number | how measured |
+| capability | 4 h store | 100 h store (1.8M frames) |
 |---|---|---|
-| ingest + full embed | 3.9 h in 79 s (178× real time) | wall clock, every frame embedded |
-| query latency (warm) | 25–55 ms | index-only, no model calls |
-| direction queries ("open" vs "close") | rank-1 correct, 0/20 opposite-direction | held-out episode labels, cold index |
-| query battery (8 mixed queries) | 16/24 top-3 relevant | episode-label grading, cold index |
-| background verification | 2B screen (AUC 0.86) → 7B judge (AUC 0.91) | ground-truth clip discrimination |
-| verified re-query | results sharpen ~30 s after first ask | cached verdict margins |
+| ingest + full embed | 79 s (178× real time) | ~21 min embed track; every frame |
+| query latency (warm, index-only) | 25–55 ms | 65–84 ms (flat-scan wall; pruning is the known next step) |
+| direction queries (open vs close) | rank-1 correct, 0/20 opposite | 9/20 verb-strict, 2/20 opposite |
+| query battery (8 mixed queries, top-3) | 16/24 | 13/24 |
+| motion index build | 2.5 s | 20 s (50,414 recordings) |
+| background verification | 2B screen (AUC 0.86) → 7B judge (AUC 0.91), cached | same |
+
+The 100 h numbers are COLD and index-only with two of four ranking
+channels absent (no captions, no ctx events on that store yet) and no
+accumulated verdicts — they are the floor, not the ceiling. Episode-label
+grading also undercounts: "pull out the drawer" ranked #1 for "opening
+the drawer" scores as a miss because the label lacks the word "open".
 
 ## Known limitations — read before judging results
 

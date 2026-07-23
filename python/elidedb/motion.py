@@ -48,20 +48,32 @@ def index_motion(store, events_table="context_events", edge_s=1.5,
     fv, fvecs = _vec_table(store, frames_table)
     fs = np.asarray(fv.column("stream").to_pylist())
     ft = np.asarray([int(v) for v in fv.column("ts").to_pylist()])
-    order = np.argsort(ft, kind="stable")
-    fs, ft, fvecs = fs[order], ft[order], fvecs[order]
     edge = int(edge_s * 1e9)
+
+    # per-stream sorted timelines + searchsorted per event. The full-array
+    # boolean-mask version was O(events x frames): at 100 h that is 50k
+    # events over 1.8M frames = 16.5 MINUTES for what is 25 s of means.
+    by_stream = {}
+    for s in np.unique(fs):
+        m = np.where(fs == s)[0]
+        o = np.argsort(ft[m], kind="stable")
+        by_stream[s] = (ft[m][o], fvecs[m[o]])
 
     rows_s, rows_a, rows_b, rows_v = [], [], [], []
     for s, a, b in zip(ev.column("stream").to_pylist(),
                        (int(v) for v in ev.column("ts").to_pylist()),
                        (int(v) for v in ev.column("t1").to_pylist())):
-        m = (fs == s) & (ft >= a) & (ft <= b)
-        if m.sum() < 6:
+        if s not in by_stream:
             continue
-        tt, vv = ft[m], fvecs[m]
-        v0 = vv[tt <= tt[0] + edge].mean(0)
-        v1 = vv[tt >= tt[-1] - edge].mean(0)
+        tt, vv = by_stream[s]
+        lo, hi = np.searchsorted(tt, [a, b + 1])
+        if hi - lo < 6:
+            continue
+        t0, t1 = int(tt[lo]), int(tt[hi - 1])
+        e0 = np.searchsorted(tt, t0 + edge, side="right")
+        e1 = np.searchsorted(tt, t1 - edge, side="left")
+        v0 = vv[lo:max(e0, lo + 1)].mean(0)
+        v1 = vv[min(e1, hi - 1):hi].mean(0)
         d = v1 - v0
         n = float(np.linalg.norm(d))
         if n < 1e-6:
@@ -118,3 +130,94 @@ def motion_scores(store, qv, qv_swap):
                     (int(v) for v in tbl.column("ts").to_pylist()),
                     (int(v) for v in tbl.column("t1").to_pylist()),
                     sc.tolist()))
+
+
+_MOT_IDX = {}
+
+
+def motion_lookup(store, qv, qv_swap):
+    """lookup(stream, t0, t1) -> score of the recording CONTAINING the span,
+    or nan. The per-stream sorted span index is cached per table version;
+    a query pays one matmul + searchsorted per segment. The Python-dict
+    scan this replaces cost ~70 ms per directional query at 50k recordings
+    (measured at the 100 h scale test)."""
+    from .embeddings import _vec_table
+    ver = store.table("motion_vectors").state().version
+    key = (str(store.dir), ver)
+    if key not in _MOT_IDX:
+        tbl, _ = _vec_table(store, "motion_vectors")
+        ss = np.asarray(tbl.column("stream").to_pylist())
+        sa = np.asarray([int(v) for v in tbl.column("ts").to_pylist()])
+        sb = np.asarray([int(v) for v in tbl.column("t1").to_pylist()])
+        idx = {}
+        for s in np.unique(ss):
+            m = np.where(ss == s)[0]
+            o = np.argsort(sa[m], kind="stable")
+            idx[s] = (sa[m][o], sb[m][o], m[o])
+        if len(_MOT_IDX) > 8:
+            _MOT_IDX.clear()
+        _MOT_IDX[key] = idx
+    idx = _MOT_IDX[key]
+    _, vecs = _vec_table(store, "motion_vectors")
+    qd = np.asarray(qv, np.float32) - np.asarray(qv_swap, np.float32)
+    n = float(np.linalg.norm(qd))
+    if n < 1e-6:
+        return lambda s, a, b: float("nan")
+    sc = vecs @ (qd / n)
+
+    def lookup(s, a, b):
+        if s not in idx:
+            return float("nan")
+        t0s, t1s, rows = idx[s]
+        j = int(np.searchsorted(t0s, a, side="right")) - 1
+        if j >= 0 and b <= int(t1s[j]) + 1:
+            return float(sc[rows[j]])
+        return float("nan")
+    return lookup
+
+
+def motion_candidates(store, qv, qv_swap, streams, t0s, top=24):
+    """DIRECTION-FIRST RECALL, content-gated. Given a broad appearance-
+    plausible window set (their streams + start times), return the top
+    recordings ranked by motion score as (stream, rec_t0, rec_t1, score).
+
+    Why the gate: unrestricted motion recall was measured useless — the
+    tiny direction cosines (~0.07) drown corpus-wide in random tabletop
+    deltas. Why recall at all: at the 100 h scale, appearance ordering
+    alone never surfaces true close/open recordings into the candidate
+    pool (put-in clips carry a stronger 'drawer' signal), so ranking-only
+    motion had nothing correct to rank. Appearance answers WHAT is
+    plausible; motion picks WHICH of those changed the right way."""
+    from .embeddings import _vec_table
+    ver = store.table("motion_vectors").state().version
+    key = (str(store.dir), ver)
+    if key not in _MOT_IDX:
+        motion_lookup(store, qv, qv_swap)      # builds the cache
+    idx = _MOT_IDX[key]
+    _, vecs = _vec_table(store, "motion_vectors")
+    qd = np.asarray(qv, np.float32) - np.asarray(qv_swap, np.float32)
+    n = float(np.linalg.norm(qd))
+    if n < 1e-6:
+        return []
+    sc = vecs @ (qd / n)
+
+    streams = np.asarray(streams)
+    t0s = np.asarray(t0s)
+    hit_rows = set()
+    for s in np.unique(streams):
+        if s not in idx:
+            continue
+        r0, r1, rows = idx[s]
+        w = t0s[streams == s]
+        j = np.searchsorted(r0, w, side="right") - 1
+        ok = j >= 0
+        hit_rows.update(int(r) for r in np.unique(rows[j[ok]]))
+    if not hit_rows:
+        return []
+    hits = sorted(hit_rows, key=lambda r: -sc[r])[:top]
+    tbl, _ = _vec_table(store, "motion_vectors")
+    ss = tbl.column("stream")
+    sa = tbl.column("ts")
+    sb = tbl.column("t1")
+    return [(ss[r].as_py(), int(sa[r].as_py()), int(sb[r].as_py()),
+             float(sc[r])) for r in hits]

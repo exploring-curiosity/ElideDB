@@ -244,8 +244,15 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                     "ms": 0.0}
 
     # ---- RECALL: union over atoms + captions + context vectors ------------
+    # The recall budget SCALES with corpus size: 48 candidates out of 7k
+    # windows is a 0.7% sample and sees everything worth seeing; 48 out of
+    # 180k is 0.03% and starves (measured at the 100 h scale test: verb
+    # rank-1s buried under 25x more distractors, verb-strict 10/20 -> 4/20).
+    # The VLM budget (`pool`) stays fixed — only the index-side pool grows,
+    # and index candidates cost microseconds each.
     atoms = _atoms(text)
-    per = max(pool // len(atoms), 12)
+    eff_pool = max(pool, min(len(idx_all) // 1500, 256))
+    per = max(eff_pool // len(atoms), 12)
     cand = {}
     # ONE tower pass for the query, its atoms, AND the directional swap:
     # per-text embed_text calls cost ~21 ms EACH, which put every compound
@@ -325,12 +332,27 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # tabletop deltas, so this channel answers DIRECTION, not content: it
     # never proposes candidates, it only scores what the content channels
     # (appearance/lexical/ctx) surfaced. Index-only, no model call.
-    mot_of = {}
+    mot_lookup = None
     if qv_swap is not None:
         try:
-            from .motion import motion_scores
-            mot_of = {(s_, a, b): sc for s_, a, b, sc
-                      in motion_scores(store, q_full, qv_swap)}
+            from .motion import motion_candidates, motion_lookup
+            mot_lookup = motion_lookup(store, q_full, qv_swap)
+            # direction-first recall: appearance gates a broad plausible
+            # set, motion picks which of those recordings changed the
+            # right way (see motion_candidates for the two measurements
+            # that force this split)
+            wide = idx_all[np.argsort(-app_all)[:min(4000, len(idx_all))]]
+            for s_, a, b, sc in motion_candidates(
+                    store, q_full, qv_swap,
+                    [str(w_s[i]) for i in wide],
+                    [int(w_t0[i]) for i in wide], top=per):
+                if streams and s_ not in streams:
+                    continue
+                if t0 is not None and b < t0:
+                    continue
+                if t1 is not None and a > t1:
+                    continue
+                cand.setdefault((s_, a, b), 0.0)
         except Exception:
             pass
 
@@ -365,7 +387,7 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                 segs.append((s, cur[0], cur[1]))
                 cur = [a, b]
         segs.append((s, cur[0], cur[1]))
-    segs = segs[:pool]
+    segs = segs[:eff_pool]
 
     # ---- segment index score: best member window's appearance cosine,
     # plus (when the store has a V2 event index) best member ctx cosine.
@@ -390,11 +412,8 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
         # motion attaches by RECORDING overlap: motion rows are recording
         # spans (the scale where the state change is fully straddled) and
         # every segment is clamped inside exactly one recording
-        seg_mot[seg] = float("nan")
-        for (ms_, ma, mb), sc in mot_of.items():
-            if ms_ == seg[0] and ma <= seg[1] and seg[2] <= mb + 1:
-                seg_mot[seg] = sc
-                break
+        seg_mot[seg] = (mot_lookup(*seg) if mot_lookup is not None
+                        else float("nan"))
 
     # directional queries hash differently: their margins are swap-CONTRASTS
     # (query minus inverted query), a different quantity than the absolute

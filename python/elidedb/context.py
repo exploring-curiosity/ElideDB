@@ -991,7 +991,22 @@ def _embed_frames_fdnnv(store, frame_table, incremental, verbose, streams):
     import pyarrow as pa
 
     from .fdnnvideo import embed_stream, load_encoder
-    model, meta = load_encoder(store.dir / "models" / "fdnnv")
+    mdir = store.dir / "models" / "fdnnv"
+    if not (mdir / "encoder.json").exists():
+        # a NEW store has no encoder yet — adopt one from a sibling store
+        # and COPY it in, so the store stays self-contained and the exact
+        # weights that wrote its vectors are pinned with its data
+        import shutil
+        donors = sorted(store.dir.parent.glob("*/models/fdnnv/encoder.json"),
+                        key=lambda p: p.stat().st_mtime, reverse=True)
+        if not donors:
+            raise RuntimeError(
+                "no FDNN-V encoder found in this store or any sibling — "
+                "train one first (scripts/fdnnv_train.py)")
+        shutil.copytree(donors[0].parent, mdir)
+        if verbose:
+            print(f"  adopted encoder from {donors[0].parent}", flush=True)
+    model, meta = load_encoder(mdir)
     frames = store.table(frame_table).scan()
     allst = sorted(set(frames.column("stream").to_pylist()))
     use = [s for s in allst if s in streams] if streams else allst

@@ -1,0 +1,42 @@
+{
+  "pool_windows_s": 0.6,
+  "windows": 180177,
+  "motion": {
+    "events": 50414,
+    "skipped": true
+  },
+  "warm_ms_min_per_query": [
+    84,
+    83,
+    65,
+    66,
+    67
+  ],
+  "verb_strict_full": {
+    "total_correct": 9,
+    "total_opposite": 2,
+    "queries": {
+      "closing the drawer": {
+        "correct": 2,
+        "opposite": 0,
+        "r1": "put the red thing on the drawer"
+      },
+      "opening the drawer": {
+        "correct": 1,
+        "opposite": 0,
+        "r1": "pull out the drawer"
+      },
+      "close the drawer": {
+        "correct": 3,
+        "opposite": 1,
+        "r1": "put the sushi into the drawer"
+      },
+      "open the drawer": {
+        "correct": 3,
+        "opposite": 1,
+        "r1": "move the toy monkey in front of the drawer"
+      }
+    }
+  },
+  "battery_cold_full": "13/24"
+}

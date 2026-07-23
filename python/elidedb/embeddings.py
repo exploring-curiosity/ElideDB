@@ -160,12 +160,18 @@ def pool_windows(store, window_s=2.0, stride_s=None, table="frame_vectors"):
                 rows["vector"].append(v)
             t += stride
     dim = len(rows["vector"][0])
+    # FixedSizeListArray straight from the flat float32 buffer. The
+    # tolist() road materialises n*dim PYTHON floats — at 1.8M frames /
+    # 180k windows that was tens of GB and the process died by jetsam
+    # (exit 137) on the very last stage of a 100 h load.
+    flat = np.ascontiguousarray(
+        np.stack(rows["vector"]).astype(np.float32)).reshape(-1)
+    vec_arr = pa.FixedSizeListArray.from_arrays(pa.array(flat), dim)
     tbl = pa.table({
         "ts": pa.array(rows["ts"], pa.int64()),
         "t1": pa.array(rows["t1"], pa.int64()),
         "stream": pa.array(rows["stream"]),
-        "vector": pa.array([v.tolist() for v in rows["vector"]],
-                           pa.list_(pa.float32(), dim)),
+        "vector": vec_arr,
     })
     st = store.table("embeddings").state()
     # `model` must be the id of the model that defines the SPACE — the query
