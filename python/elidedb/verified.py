@@ -373,6 +373,25 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # tabletop deltas, so this channel answers DIRECTION, not content: it
     # never proposes candidates, it only scores what the content channels
     # (appearance/lexical/ctx) surfaced. Index-only, no model call.
+    # OBJECT channel — every subject FastSAM discovered in the frames
+    # (nothing predefined, nested sub-subjects, per-region motion). Score
+    # of a span = best region cosine in its recording, nudged by that
+    # region's motion energy: the moving subject is the one acting.
+    obj_lookup = None
+    try:
+        from .objects import object_candidates, object_lookup
+        obj_lookup = object_lookup(store, qvs)          # per-atom matrix
+        for s_, a, b, _sc in object_candidates(store, qvs, top=per):
+            if streams and s_ not in streams:
+                continue
+            if t0 is not None and b < t0:
+                continue
+            if t1 is not None and a > t1:
+                continue
+            cand.setdefault((s_, a, b), 0.0)
+    except Exception:
+        pass
+
     mot_lookup = None
     if qv_swap is not None:
         try:
@@ -435,6 +454,7 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # NaN = the ctx ranker ABSTAINS on that segment; RRF gives it the
     # median rank rather than the bottom (see fusion.py on why).
     seg_score, seg_ctx, seg_lex, seg_mot, seg_anc = {}, {}, {}, {}, {}
+    seg_obj = {}
     for (s_, a, b), sc in cand.items():
         for seg in segs:
             if seg[0] == s_ and seg[1] <= a and b <= seg[2]:
@@ -459,6 +479,14 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
         # every segment is clamped inside exactly one recording
         seg_mot[seg] = (mot_lookup(*seg) if mot_lookup is not None
                         else float("nan"))
+        if obj_lookup is not None:
+            osc, omo = obj_lookup(*seg)
+            # motion-weighted: a matching subject that MOVES outranks the
+            # same subject sitting still (the acting subject)
+            seg_obj[seg] = (osc * (1.0 + omo) if osc == osc
+                            else float("nan"))
+        else:
+            seg_obj[seg] = float("nan")
 
     # directional queries hash differently: their margins are swap-CONTRASTS
     # (query minus inverted query), a different quantity than the absolute
@@ -528,6 +556,7 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                      "lex": np.array([seg_lex[g] for g in fresh]),
                      "mot": np.array([seg_mot[g] for g in fresh]),
                      "anc": np.array([seg_anc[g] for g in fresh]),
+                     "obj": np.array([seg_obj[g] for g in fresh]),
                      "scr": np.array([scr_m.get(g, float("nan"))
                                       for g in fresh])},
                     weights={"mot": 2.5 if qv_swap is not None else 0.0})

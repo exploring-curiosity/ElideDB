@@ -50,3 +50,4 @@ myenv
 # scripts. They are deliberately outside the store so the query path cannot
 # reach them; they are also not the product, so they are not shipped.
 eval/
+FastSAM-*.pt
