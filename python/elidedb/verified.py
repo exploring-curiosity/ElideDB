@@ -144,6 +144,9 @@ def _recording_spans(store):
     key = (str(store.dir), ver)
     if key not in _REC_CACHE:
         ep = store.table("episodes").scan()
+        if len(ep) == 0 or not {"stream", "ts", "t1"} <= set(ep.schema.names):
+            _REC_CACHE[key] = {}
+            return {}
         spans = {}
         for s, a, b in zip(ep.column("stream").to_pylist(),
                            ep.column("ts").to_pylist(),
@@ -212,7 +215,20 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     tbl, vecs = _vec_table(store, "embeddings")
     w_t0 = tbl.column("ts").to_numpy()
     w_t1 = tbl.column("t1").to_numpy()
-    w_s = tbl.column("stream").to_numpy(zero_copy_only=False)
+    # stores written before the multi-stream schema have no `stream` column
+    # on embeddings; a single-stream store can borrow the frames stream —
+    # a KeyError here bricked search on every pre-schema store (measured
+    # on lab/oxford during pilot prep)
+    if "stream" in tbl.schema.names:
+        w_s = tbl.column("stream").to_numpy(zero_copy_only=False)
+    else:
+        try:
+            fs = store.table("frames").scan(columns=["stream"])
+            uniq = set(fs.column("stream").to_pylist())
+            only = uniq.pop() if len(uniq) == 1 else ""
+        except Exception:
+            only = ""
+        w_s = np.array([only] * len(tbl))
 
     # hybrid predicates pushed INTO recall, as everywhere else in this store
     pred = np.ones(len(w_t0), bool)
@@ -384,10 +400,17 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # (query minus inverted query), a different quantity than the absolute
     # margins cached before — colliding them would rank with stale semantics
     from .rerank import directional_swap
-    qh = _qhash(("dir:" + text) if directional_swap(text) else text)
+    dtag = ("dir:" + text) if directional_swap(text) else text
+    qh = _qhash(dtag)
+    dqh = _qhash("deep:" + dtag)
     vmap = _verdict_map(store)
-    cached_m = {seg: vmap[(seg[0], seg[1], qh)] for seg in segs
-                if (seg[0], seg[1], qh) in vmap}
+    # deep (7B, AUC 0.91) margins win over screen (2B, 0.86) when both exist
+    cached_m = {}
+    for seg in segs:
+        if (seg[0], seg[1], dqh) in vmap:
+            cached_m[seg] = vmap[(seg[0], seg[1], dqh)]
+        elif (seg[0], seg[1], qh) in vmap:
+            cached_m[seg] = vmap[(seg[0], seg[1], qh)]
     fresh = [seg for seg in segs if seg not in cached_m]
 
     if verify == "sync":
@@ -459,8 +482,21 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
             todo = fresh[:pool]
 
             def worker():
+                # CASCADE IN THE BACKGROUND: 2B screens every fresh segment
+                # (0.5 s each), then the 7B contrast re-judges the top of
+                # what the 2B liked. Cached quality converges to the
+                # 0.91-AUC tier while queries stay index-only — the user
+                # never pays for either model.
                 try:
-                    _verify_segments(store, todo, text, qh, frames_per_clip)
+                    m2 = _verify_segments(store, todo, text, qh,
+                                          frames_per_clip)
+                    top = [{"stream": s_, "t0": a, "t1": b,
+                            "margin": mm, "score": mm}
+                           for (s_, a, b), mm in
+                           sorted(m2.items(), key=lambda kv: -kv[1])[:6]]
+                    if top:
+                        _deep_rerank(store, top, text, len(top),
+                                     _verdict_map(store))
                 except Exception:
                     pass
                 finally:

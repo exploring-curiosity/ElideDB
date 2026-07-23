@@ -138,8 +138,16 @@ def pool_windows(store, window_s=2.0, stride_s=None, table="frame_vectors"):
         ts = sub.column("ts").to_numpy()
         order = np.argsort(ts)
         ts = ts[order]
-        vecs = np.asarray(sub.column("vector").to_pylist(),
-                          dtype=np.float32)[order]
+        # zero-copy reshape, NOT to_pylist(): at 1.6M frames the Python-list
+        # road needs ~50 GB; the FixedSizeList buffer is already the matrix
+        col = sub.column("vector")
+        if isinstance(col, pa.ChunkedArray):
+            col = col.combine_chunks()
+        try:
+            vecs = col.values.to_numpy(zero_copy_only=False) \
+                .astype(np.float32, copy=False).reshape(len(sub), -1)[order]
+        except Exception:
+            vecs = np.asarray(col.to_pylist(), dtype=np.float32)[order]
         t = int(ts[0])
         while t <= int(ts[-1]):
             lo, hi = np.searchsorted(ts, [t, t + win])
