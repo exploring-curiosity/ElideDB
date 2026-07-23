@@ -174,6 +174,136 @@ def api_map(key: str):
     return out
 
 
+def api_architecture(key: str):
+    """The store as a living schematic: every node and edge derived from
+    what is ACTUALLY on disk — parquet footers for schemas, _meta.json for
+    state, table meta for lineage, _cache for mmap sidecars. Nothing here
+    is drawn from documentation; a table that vanished vanishes from the
+    drawing, a channel appears the moment its table exists."""
+    import pyarrow.parquet as _pq
+    db = STORES[key]
+    nodes, edges = [], []
+
+    def table_node(name):
+        tab = db.table(name)
+        try:
+            st = tab.state()
+        except Exception:
+            return None
+        if not st.files:
+            return None
+        meta_json = {}
+        mf = tab.dir / "_meta.json"
+        if mf.exists():
+            try:
+                meta_json = json.loads(mf.read_text())
+            except Exception:
+                pass
+        fields = []
+        try:
+            sch = _pq.ParquetFile(tab.dir / st.files[0].path).schema_arrow
+            for f in sch:
+                t = str(f.type)
+                t = t.replace("fixed_size_list<item: float>", "f32vec")
+                fields.append({"name": f.name, "type": t})
+        except Exception:
+            pass
+        sidecars = sorted(p.name for p in (tab.dir / "_cache").glob("*.npy")) \
+            if (tab.dir / "_cache").is_dir() else []
+        rows = sum(f.rows for f in st.files)
+        return {"id": name, "kind": st.kind, "rows": rows,
+                "bytes": sum(f.bytes for f in st.files),
+                "files": len(st.files), "version": st.version,
+                "min_ts": min((f.min_ts for f in st.files), default=None),
+                "max_ts": max((f.max_ts for f in st.files), default=None),
+                "fields": fields, "meta": st.meta or {},
+                "meta_json": bool(meta_json), "sidecars": sidecars}
+
+    names = db.tables()
+    for n in names:
+        nd = table_node(n)
+        if nd:
+            nodes.append(nd)
+    have = {n["id"] for n in nodes}
+
+    # media + models are first-class citizens of the drawing
+    mdir = db.dir / "media"
+    if mdir.is_dir():
+        fs = list(mdir.glob("*"))
+        nodes.append({"id": "media", "kind": "media",
+                      "rows": len(fs),
+                      "bytes": sum(f.stat().st_size for f in fs
+                                   if f.is_file()),
+                      "files": len(fs), "fields": [], "meta": {},
+                      "note": "transcoded H.264, byte-range decoded"})
+    for m in sorted((db.dir / "models").glob("*")) \
+            if (db.dir / "models").is_dir() else []:
+        if m.is_dir():
+            nodes.append({"id": f"model:{m.name}", "kind": "model",
+                          "bytes": sum(f.stat().st_size
+                                       for f in m.rglob("*") if f.is_file()),
+                          "fields": [], "meta": {},
+                          "rows": None, "files": None})
+
+    # lineage: explicit table meta first, then structural conventions
+    def edge(a, b, label):
+        if a in have or a in ("media", "SOURCE", "QUERIES") or \
+                a.startswith("model:"):
+            edges.append({"from": a, "to": b, "label": label})
+    for n in nodes:
+        meta, nid = n.get("meta", {}), n["id"]
+        if meta.get("source_table"):
+            edge(meta["source_table"], nid,
+                 meta.get("built_by", "derived"))
+        if meta.get("events_table"):
+            edge(meta["events_table"], nid, "spans")
+        if meta.get("teacher"):
+            edge("frames", nid, meta.get("model", "encoder"))
+    conventions = {
+        "frame_vectors": ("frames", "encoder, every frame"),
+        "object_vectors": ("frames", "FastSAM regions + crops"),
+        "context_captions": ("frames", "VLM captions"),
+        "context_events": ("frames", "gate segmentation"),
+        "vlm_verdicts": ("frames", "2B/7B judgments"),
+        "frames": ("media", "frame index"),
+    }
+    done = {(e["from"], e["to"]) for e in edges}
+    for nid, (src, lab) in conventions.items():
+        if nid in have and (src, nid) not in done and \
+                (src in have or src == "media"):
+            edges.append({"from": src, "to": nid, "label": lab})
+
+    # query channels: present iff their table/artifact exists
+    channels = []
+    def chan(cid, label, need, note):
+        ok = need() if callable(need) else need in have
+        if ok:
+            channels.append({"id": cid, "label": label, "note": note})
+    chan("app", "appearance", "embeddings", "window vectors · soft-AND atoms")
+    chan("anc", "anchor",
+         lambda: (db.dir / "tables/frames/_subjects.json").exists(),
+         "self-mined subject prefix")
+    chan("lex", "captions", "context_captions", "TF-IDF over VLM text")
+    chan("met", "metadata", "meta_text", "uploader text · search-time only")
+    chan("ctx", "context", "context_events", "FDNN-V2 event vectors")
+    chan("mot", "motion", "motion_vectors", "delta-appearance × swap")
+    chan("obj", "objects", "object_vectors", "region crops · conjunctive")
+    chan("scr", "screen", "vlm_verdicts", "cached 2B margins")
+
+    total_rows = sum(n.get("rows") or 0 for n in nodes)
+    total_bytes = sum(n.get("bytes") or 0 for n in nodes)
+    return {"store": db.name, "key": key, "nodes": nodes, "edges": edges,
+            "channels": channels,
+            "verify": {"screen": "Qwen2-VL-2B · swap-contrast",
+                       "judge": "Qwen2-VL-7B · pins ranks",
+                       "cache": "vlm_verdicts" if "vlm_verdicts" in have
+                                else None},
+            "totals": {"rows": total_rows, "bytes": total_bytes,
+                       "tables": len([n for n in nodes
+                                      if n["kind"] not in
+                                      ("media", "model")])}}
+
+
 def api_geo(key: str):
     """Generic geo panel: any timeseries table with latitude+longitude."""
     db = STORES[key]
@@ -589,6 +719,8 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/stores":
                 discover()
                 return self._json([store_summary(k) for k in STORES])
+            if u.path == "/api/architecture":
+                return self._json(api_architecture(q["store"]))
             if u.path == "/api/map":
                 return self._json(api_map(q["store"]))
             if u.path == "/api/geo":

@@ -227,6 +227,7 @@
       <button data-v="timeline">Timeline</button>
       <button data-v="data">Data</button>
       <button data-v="storage">Storage</button>
+      <button data-v="arch">Architecture</button>
       <button data-v="map">Semantic map</button>
       <button data-v="geo" id="geo-btn" style="display:none">Geo</button>
       <button data-v="query">Query</button>
@@ -244,6 +245,15 @@
           zone-map pruning reads or skips. Pick a table:</p>
         <div class="seg qmodes" id="storage-tables" style="flex-wrap:wrap"></div>
         <div id="storage-out"></div>
+      </div>
+    </div>
+    <div class="view" id="v-arch">
+      <div id="arch-wrap">
+        <svg id="arch-svg"><g id="arch-cam"></g></svg>
+        <div id="arch-title"></div>
+        <div id="arch-detail"></div>
+        <div id="arch-hint">drag to pan · wheel to zoom · drag blocks ·
+          click a block for its full schema · double-click to reset</div>
       </div>
     </div>
     <div class="view" id="v-map">
@@ -1088,6 +1098,7 @@ document.querySelectorAll("#views button").forEach(b =>
     document.querySelectorAll(".view").forEach(v => v.classList.remove("on"));
     $("v-" + b.dataset.v).classList.add("on");
     if (b.dataset.v === "map") loadMap();
+    if (b.dataset.v === "arch") loadArch();
     if (b.dataset.v === "storage") loadStorage();
     if (b.dataset.v === "geo") drawGeo();
     if (b.dataset.v === "data") loadData();
@@ -1097,6 +1108,306 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { dr
 addEventListener("resize", () => { clearTimeout(window._rz); window._rz = setTimeout(() => { if (MAP) drawScatter(); drawGeo(); }, 150); });
 syncFloor();
 loadStores();
+</script>
+<style>
+/* ================= architecture schematic ================= */
+#v-arch { position: relative; padding: 0;
+  height: calc(100vh - 118px); min-height: 480px; }
+#arch-wrap { position: absolute; inset: 0; overflow: hidden;
+  background:
+    radial-gradient(ellipse at 30% 0%, rgba(56,110,180,.10), transparent 60%),
+    #0b1220; }
+#arch-wrap::before { content: ""; position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(94,140,255,.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(94,140,255,.055) 1px, transparent 1px),
+    linear-gradient(rgba(94,140,255,.028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(94,140,255,.028) 1px, transparent 1px);
+  background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+  pointer-events: none; }
+#arch-svg { width: 100%; height: 100%; cursor: grab; display: block; }
+#arch-svg:active { cursor: grabbing; }
+#arch-svg text { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.an-card { fill: #101a2e; stroke: #2c3f63; stroke-width: 1.2; rx: 3; }
+.an-card.sel { stroke: #ffb454; stroke-width: 2; }
+.an-head { fill: #16233d; }
+.an-title { fill: #dce7ff; font-size: 12.5px; font-weight: 700;
+  letter-spacing: .04em; }
+.an-kind { font-size: 8.5px; letter-spacing: .14em; }
+.an-stat { fill: #7d92bd; font-size: 9.5px; }
+.an-field-n { fill: #a8bbe0; font-size: 9.5px; }
+.an-field-t { fill: #5c729e; font-size: 9.5px; }
+.an-badge { fill: #0d2b1e; stroke: #1f5c40; }
+.an-badge-t { fill: #5fd39a; font-size: 8px; letter-spacing: .08em; }
+.an-lane { fill: #40507a; font-size: 10px; letter-spacing: .35em;
+  opacity: .75; }
+.an-lane-rule { stroke: #22304f; stroke-dasharray: 2 6; }
+.an-edge { fill: none; stroke: #3d5686; }
+.an-trace { stroke: #3d5686; stroke-width: 1.3; fill: none; }
+.an-flow { stroke: #6ea8ff; stroke-width: 1.3; fill: none;
+  stroke-dasharray: 3 9; animation: an-dash 1.6s linear infinite;
+  opacity: .8; }
+@keyframes an-dash { to { stroke-dashoffset: -12; } }
+.an-elabel { fill: #55688f; font-size: 8.5px; }
+.an-chan { fill: #101a2e; stroke: #2c3f63; }
+.an-chan-t { fill: #9fd7ff; font-size: 10px; font-weight: 600; }
+.an-chan-n { fill: #5c729e; font-size: 8.5px; }
+#arch-title { position: absolute; right: 18px; bottom: 16px;
+  border: 1px solid #34496f; background: rgba(13,20,36,.92);
+  font-family: ui-monospace, Menlo, monospace; color: #8fa7d4;
+  font-size: 10px; line-height: 1.55; padding: 8px 12px; min-width: 240px;
+  pointer-events: none; }
+#arch-title b { color: #e8f0ff; font-size: 11.5px; letter-spacing: .12em; }
+#arch-title .rule { border-top: 1px solid #2b3d61; margin: 5px -12px; }
+#arch-hint { position: absolute; left: 18px; bottom: 16px; color: #46587e;
+  font: 10px ui-monospace, Menlo, monospace; pointer-events: none; }
+#arch-detail { position: absolute; top: 14px; right: 14px; width: 340px;
+  max-height: calc(100% - 90px); overflow: auto; display: none;
+  border: 1px solid #34496f; background: rgba(13,20,36,.97);
+  font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+  color: #a8bbe0; padding: 12px 14px; }
+#arch-detail.on { display: block; }
+#arch-detail h4 { margin: 0 0 4px; color: #ffd9a0; font-size: 13px; }
+#arch-detail table { width: 100%; border-collapse: collapse; margin: 6px 0; }
+#arch-detail td { padding: 1.5px 4px 1.5px 0; border-bottom:
+  1px solid #1c2a47; vertical-align: top; }
+#arch-detail td:last-child { color: #5c729e; text-align: right; }
+#arch-detail pre { background: #0a1122; border: 1px solid #1c2a47;
+  padding: 6px; overflow: auto; font-size: 10px; color: #7d92bd; }
+#arch-detail .x { position: sticky; float: right; top: 0; cursor: pointer;
+  color: #5c729e; }
+</style>
+<script>
+let ARCH = null, ARCH_KEY = null;
+async function loadArch() {
+  if (!ARCH || ARCH_KEY !== CUR.key) {
+    ARCH = await j(`/api/architecture?store=${CUR.key}`);
+    ARCH_KEY = CUR.key;
+  }
+  drawArch();
+}
+function archLane(n) {
+  if (n.kind === "media") return 0;
+  if (n.kind === "model") return 3;
+  if (["context_captions", "vlm_verdicts", "teacher_windows",
+       "centroids"].includes(n.id)) return 3;
+  if (n.kind === "embeddings" || n.id === "context") return 2;
+  return 1;                                    // raw timeseries
+}
+const AN_LANES = ["MEDIA", "RAW TABLES", "DERIVED INDEXES", "KNOWLEDGE"];
+const AN_KINDC = { media: "#c99a5b", timeseries: "#7fb0ff",
+                   embeddings: "#5fd39a", model: "#d98fd4",
+                   frame_index: "#7fb0ff" };
+function fmtTs(ns) { return ns == null ? "—" :
+  new Date(ns / 1e6).toISOString().slice(0, 19).replace("T", " "); }
+function drawArch() {
+  const svg = $("arch-svg"), cam = $("arch-cam");
+  cam.innerHTML = "";
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (t, a, parent) => { const e = document.createElementNS(NS, t);
+    for (const k in a) e.setAttribute(k, a[k]);
+    (parent || cam).appendChild(e); return e; };
+  const txt = (x, y, s, cls, parent, anchor) => {
+    const e = el("text", { x, y, class: cls }, parent);
+    if (anchor) e.setAttribute("text-anchor", anchor);
+    e.textContent = s; return e; };
+
+  // ---- layout: lanes as columns, blocks stacked by size ----
+  const LANE_X = [40, 330, 660, 990], LANE_W = 250, PIPE_X = 1330;
+  const laneY = [70, 70, 70, 70];
+  const pos = {};
+  const byLane = [[], [], [], []];
+  ARCH.nodes.forEach(n => byLane[archLane(n)].push(n));
+  byLane.forEach(l => l.sort((a, b) => (b.bytes || 0) - (a.bytes || 0)));
+  const g_edges = el("g", {}), g_nodes = el("g", {});
+  byLane.forEach((lane, li) => {
+    txt(LANE_X[li], 40, AN_LANES[li], "an-lane");
+    el("line", { x1: LANE_X[li] - 20, y1: 50, x2: LANE_X[li] - 20,
+                 y2: 1400, class: "an-lane-rule" });
+    lane.forEach(n => {
+      const fields = (n.fields || []).slice(0, 7);
+      const h = 46 + fields.length * 13 +
+                ((n.sidecars || []).length || n.meta_json ? 18 : 6);
+      const g = el("g", { class: "an-node", "data-id": n.id,
+                          transform: `translate(${LANE_X[li]},${laneY[li]})` },
+                   g_nodes);
+      pos[n.id] = { x: LANE_X[li], y: laneY[li], w: LANE_W, h };
+      laneY[li] += h + 26;
+      el("rect", { width: LANE_W, height: h, class: "an-card" }, g);
+      el("rect", { width: LANE_W, height: 22, class: "an-head" }, g);
+      el("rect", { width: 3, height: h,
+                   fill: AN_KINDC[n.kind] || "#7fb0ff" }, g);
+      txt(10, 15, n.id.replace("model:", "⚙ "), "an-title", g);
+      const kt = txt(LANE_W - 8, 14, n.kind.toUpperCase(), "an-kind", g,
+                     "end");
+      kt.setAttribute("fill", AN_KINDC[n.kind] || "#7fb0ff");
+      txt(10, 36, (n.rows != null ? fmtN(n.rows) + " rows · " : "") +
+          fmtB(n.bytes || 0) +
+          (n.files != null ? ` · ${n.files}f` : "") +
+          (n.version ? ` · v${n.version}` : ""), "an-stat", g);
+      fields.forEach((f, i) => {
+        txt(12, 52 + i * 13, f.name, "an-field-n", g);
+        txt(LANE_W - 10, 52 + i * 13, f.type.length > 18 ?
+            f.type.slice(0, 17) + "…" : f.type, "an-field-t", g, "end");
+      });
+      let bx = 10;
+      const by = 46 + fields.length * 13 + 2;
+      const badge = (s) => {
+        const w = s.length * 5.4 + 10;
+        el("rect", { x: bx, y: by - 9, width: w, height: 12, rx: 6,
+                     class: "an-badge" }, g);
+        txt(bx + w / 2, by, s, "an-badge-t", g, "middle");
+        bx += w + 6; };
+      if ((n.sidecars || []).length) badge("MMAP×" + n.sidecars.length);
+      if (n.meta_json) badge("META");
+      g.style.cursor = "pointer";
+    });
+  });
+
+  // ---- edges: routed traces with flow animation ----
+  ARCH.edges.forEach(e => {
+    const a = pos[e.from], b = pos[e.to];
+    if (!a || !b) return;
+    const x1 = a.x + a.w, y1 = a.y + 22, x2 = b.x, y2 = b.y + 22;
+    const mx = (x1 + x2) / 2;
+    const d = `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+    el("path", { d, class: "an-trace" }, g_edges);
+    el("path", { d, class: "an-flow" }, g_edges);
+    txt(mx, (y1 + y2) / 2 - 5, e.label || "", "an-elabel", g_edges,
+        "middle");
+  });
+
+  // ---- query pipeline: channels -> RRF -> verify tiers ----
+  txt(PIPE_X, 40, "QUERY PIPELINE", "an-lane");
+  el("line", { x1: PIPE_X - 20, y1: 50, x2: PIPE_X - 20, y2: 1400,
+               class: "an-lane-rule" });
+  let cy = 70;
+  const CH_W = 190;
+  ARCH.channels.forEach(c => {
+    const g = el("g", { transform: `translate(${PIPE_X},${cy})` });
+    el("rect", { width: CH_W, height: 34, rx: 3, class: "an-chan" }, g);
+    txt(10, 14, c.label, "an-chan-t", g);
+    txt(10, 26, c.note, "an-chan-n", g);
+    txt(CH_W - 8, 14, c.id, "an-kind", g, "end");
+    const y = cy + 17;
+    const d = `M${PIPE_X + CH_W},${y} C${PIPE_X + CH_W + 45},${y} ` +
+              `${PIPE_X + CH_W + 45},${170} ${PIPE_X + CH_W + 90},${170}`;
+    el("path", { d, class: "an-trace" }, g_edges);
+    el("path", { d, class: "an-flow" }, g_edges);
+    cy += 46;
+  });
+  const stage = (x, y, w, title, note, col) => {
+    const g = el("g", { transform: `translate(${x},${y})` });
+    el("rect", { width: w, height: 44, rx: 3, class: "an-chan",
+                 stroke: col }, g);
+    txt(10, 18, title, "an-chan-t", g);
+    txt(10, 32, note, "an-chan-n", g);
+    return { x, y, w }; };
+  const rrf = stage(PIPE_X + CH_W + 90, 148, 130, "RRF fusion",
+                    "rank consensus · no vetoes", "#6ea8ff");
+  const scr = stage(PIPE_X + CH_W + 90, 240, 130, "2B screen",
+                    ARCH.verify.screen, "#c99a5b");
+  const jdg = stage(PIPE_X + CH_W + 90, 320, 130, "7B judge",
+                    ARCH.verify.judge, "#ffb454");
+  [[rrf, scr, "background"], [scr, jdg, "top of fused ∪ 2B"]].forEach(
+    ([p, q2, lab]) => {
+      const x = p.x + p.w / 2;
+      const d = `M${x},${p.y + 44} L${x},${q2.y}`;
+      el("path", { d, class: "an-trace" }, g_edges);
+      el("path", { d, class: "an-flow" }, g_edges);
+      txt(x + 6, (p.y + 44 + q2.y) / 2, lab, "an-elabel", g_edges);
+    });
+  if (ARCH.verify.cache) {
+    const x = jdg.x + jdg.w / 2;
+    txt(x, jdg.y + 62, "↺ verdicts append to " + ARCH.verify.cache +
+        " · the store learns", "an-elabel", cam, "middle");
+  }
+
+  // ---- title block (engineering drawing stamp) ----
+  $("arch-title").innerHTML =
+    `<b>ELIDEDB · STORE SCHEMATIC</b><div class="rule"></div>` +
+    `store&nbsp;&nbsp;&nbsp;${esc(ARCH.store)}<br>` +
+    `tables&nbsp;&nbsp;${ARCH.totals.tables} · ` +
+    `${fmtN(ARCH.totals.rows)} rows · ${fmtB(ARCH.totals.bytes)}<br>` +
+    `channels ${ARCH.channels.map(c => c.id).join(" · ")}` +
+    `<div class="rule"></div>drawn from live state · ` +
+    new Date().toISOString().slice(0, 16).replace("T", " ");
+
+  // ---- interactions: pan / zoom / drag / select ----
+  let view = svg._view || { x: 0, y: 0, k: 0.82 };
+  svg._view = view;
+  const apply = () => cam.setAttribute("transform",
+    `translate(${view.x},${view.y}) scale(${view.k})`);
+  apply();
+  svg.onwheel = (ev) => { ev.preventDefault();
+    const r = svg.getBoundingClientRect();
+    const px = ev.clientX - r.left, py = ev.clientY - r.top;
+    const k2 = Math.min(3, Math.max(.15,
+      view.k * (ev.deltaY < 0 ? 1.12 : 0.89)));
+    view.x = px - (px - view.x) * k2 / view.k;
+    view.y = py - (py - view.y) * k2 / view.k;
+    view.k = k2; apply(); };
+  let drag = null;
+  svg.onpointerdown = (ev) => {
+    const nodeG = ev.target.closest(".an-node");
+    drag = { px: ev.clientX, py: ev.clientY, node: nodeG,
+             vx: view.x, vy: view.y };
+    if (nodeG) { const p = pos[nodeG.dataset.id];
+      drag.nx = p.x; drag.ny = p.y; }
+    svg.setPointerCapture(ev.pointerId); };
+  svg.onpointermove = (ev) => { if (!drag) return;
+    const dx = ev.clientX - drag.px, dy = ev.clientY - drag.py;
+    if (drag.node) {
+      const p = pos[drag.node.dataset.id];
+      p.x = drag.nx + dx / view.k; p.y = drag.ny + dy / view.k;
+      drag.node.setAttribute("transform", `translate(${p.x},${p.y})`);
+      drag.moved = (Math.abs(dx) + Math.abs(dy)) > 3;
+      if (drag.moved) redrawEdges();
+    } else { view.x = drag.vx + dx; view.y = drag.vy + dy; apply(); } };
+  function redrawEdges() {
+    g_edges.querySelectorAll(".an-trace, .an-flow, .an-elabel")
+      .forEach(e => e.remove());
+    ARCH.edges.forEach(e => {
+      const a = pos[e.from], b = pos[e.to];
+      if (!a || !b) return;
+      const x1 = a.x + a.w, y1 = a.y + 22, x2 = b.x, y2 = b.y + 22;
+      const mx = (x1 + x2) / 2;
+      const d = `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+      el("path", { d, class: "an-trace" }, g_edges);
+      el("path", { d, class: "an-flow" }, g_edges);
+      txt(mx, (y1 + y2) / 2 - 5, e.label || "", "an-elabel", g_edges,
+          "middle");
+    }); }
+  svg.onpointerup = (ev) => {
+    if (drag && drag.node && !drag.moved) archSelect(drag.node.dataset.id);
+    drag = null; };
+  svg.ondblclick = () => { view.x = 0; view.y = 0; view.k = 0.82; apply(); };
+}
+function archSelect(id) {
+  const n = ARCH.nodes.find(x => x.id === id);
+  if (!n) return;
+  document.querySelectorAll(".an-card").forEach(c =>
+    c.classList.remove("sel"));
+  const g = document.querySelector(`.an-node[data-id="${CSS.escape(id)}"]`);
+  if (g) g.querySelector(".an-card").classList.add("sel");
+  let h = `<span class="x" onclick="$('arch-detail').classList.remove('on')">✕</span>` +
+    `<h4>${esc(n.id)}</h4>` +
+    `<div>${n.kind} · ${n.rows != null ? fmtN(n.rows) + " rows · " : ""}` +
+    `${fmtB(n.bytes || 0)}${n.files != null ? " · " + n.files + " files" : ""}` +
+    `${n.version ? " · " + n.version + " commits" : ""}</div>` +
+    `<div style="color:#5c729e">${fmtTs(n.min_ts)} → ${fmtTs(n.max_ts)}</div>`;
+  if ((n.fields || []).length) {
+    h += `<table>` + n.fields.map(f =>
+      `<tr><td>${esc(f.name)}</td><td>${esc(f.type)}</td></tr>`).join("") +
+      `</table>`;
+  }
+  if ((n.sidecars || []).length)
+    h += `<div>mmap sidecars:</div><pre>${esc(n.sidecars.join("\n"))}</pre>`;
+  if (n.meta && Object.keys(n.meta).length)
+    h += `<div>table meta:</div><pre>${esc(JSON.stringify(n.meta, null, 1))}</pre>`;
+  $("arch-detail").innerHTML = h;
+  $("arch-detail").classList.add("on");
+}
 </script>
 </body>
 </html>
