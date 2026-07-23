@@ -401,6 +401,13 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
         # Strip leading verb tokens mechanically; keep the noun phrase.
         import re as _re
         def _np(a_):
+            # GUARDS (user-reported regression): never strip the verb from
+            # a directional query — "closing the drawer" became "the
+            # drawer" and the object channel voted for every drawer in the
+            # corpus. Short atoms ARE their verb; only long compound
+            # clauses carry a strippable noun phrase.
+            if sq is not None or len(a_.split()) <= 3:
+                return a_
             w = a_.split()
             while len(w) > 2 and _re.fullmatch(
                     r"\w+ing|\w+s?|up|down|out|off|then", w[0]) and \

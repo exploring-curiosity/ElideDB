@@ -1,7 +1,7 @@
 [
   {
     "query": "put a green object in the drawer and close it",
-    "s": 2.7,
+    "s": 3.7,
     "hits": [
       {
         "label": "Pick up the object beside the cabinet",
@@ -36,7 +36,7 @@
   },
   {
     "query": "close the drawer",
-    "s": 0.5,
+    "s": 0.4,
     "hits": [
       {
         "label": "close the drawer",
@@ -75,7 +75,7 @@
   },
   {
     "query": "open the drawer",
-    "s": 0.5,
+    "s": 0.2,
     "hits": [
       {
         "label": "open the drawer",
@@ -111,7 +111,7 @@
   },
   {
     "query": "take something out of the drawer and put it on the table",
-    "s": 0.3,
+    "s": 0.4,
     "hits": [
       {
         "label": "close the drawer",
@@ -148,62 +148,60 @@
   },
   {
     "query": "pick up a banana",
-    "s": 0.3,
+    "s": 1.1,
     "hits": [
       {
-        "label": "moved the yellow brush to the lower right of the burner",
+        "label": "Open the drawer",
         "match_words": [],
         "label_ok": false,
-        "sig": 0.045,
+        "sig": 0.125,
         "margin": null,
         "caption": ""
       },
       {
-        "label": "closed the drawer",
+        "label": "close the drawer",
         "match_words": [],
         "label_ok": false,
-        "sig": 0.111,
+        "sig": 0.121,
         "margin": null,
         "caption": ""
       },
       {
-        "label": "put the yellow banana in the drawer",
-        "match_words": [
-          "banana"
-        ],
-        "label_ok": true,
-        "sig": 0.104,
+        "label": "opens the drawer",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.123,
         "margin": null,
         "caption": ""
       }
     ],
-    "label_ok_top3": 1
+    "label_ok_top3": 0
   },
   {
     "query": "put the pot on the stove",
-    "s": 0.6,
+    "s": 0.5,
     "hits": [
+      {
+        "label": "move the orange object to the top of the left burner",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.101,
+        "margin": null,
+        "caption": ""
+      },
+      {
+        "label": "put the lid on top of the silver dish",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.106,
+        "margin": null,
+        "caption": ""
+      },
       {
         "label": "move the objet to the right side of burner",
         "match_words": [],
         "label_ok": false,
         "sig": 0.111,
-        "margin": null,
-        "caption": ""
-      },
-      {
-        "label": "move a brush from bottom left burner to the upper left burner",
-        "match_words": [],
-        "label_ok": false,
-        "sig": 0.107,
-        "margin": null,
-        "caption": ""
-      },
-      {
-        "label": "moved the blue spoon to the top right burner",
-        "match_words": [],
-        "label_ok": false,
-        "sig": 0.103,
         "margin": null,
         "caption": ""
       }
@@ -212,8 +210,16 @@
   },
   {
     "query": "wipe the table with a cloth",
-    "s": 0.5,
+    "s": 1.0,
     "hits": [
+      {
+        "label": "close the drawer",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.059,
+        "margin": null,
+        "caption": ""
+      },
       {
         "label": "put the blue thing inside the drawer",
         "match_words": [],
@@ -223,29 +229,19 @@
         "caption": ""
       },
       {
-        "label": "put the yellow toy to the table",
-        "match_words": [
-          "table"
-        ],
-        "label_ok": true,
-        "sig": 0.041,
-        "margin": null,
-        "caption": ""
-      },
-      {
-        "label": "close the drawer",
+        "label": "Move the green chip to the lower side to the right of the length",
         "match_words": [],
         "label_ok": false,
-        "sig": 0.059,
+        "sig": 0.052,
         "margin": null,
         "caption": ""
       }
     ],
-    "label_ok_top3": 1
+    "label_ok_top3": 0
   },
   {
     "query": "put a red object into the sink",
-    "s": 0.3,
+    "s": 0.2,
     "hits": [
       {
         "label": "move the blue cloth to the bottom right of the stove",
