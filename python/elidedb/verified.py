@@ -127,6 +127,37 @@ def _caption_candidates(store, text, n):
 
 
 _ADAPTER_CACHE = {}
+_REC_CACHE = {}
+
+
+def _recording_spans(store):
+    """Per-stream recording boundaries from the `episodes` table, when the
+    store has one. STRUCTURAL ingest metadata — where one recording ends
+    and the next begins, the same class of fact as a file boundary; no task
+    labels involved. Needed because packed corpora leave NO timeline gap
+    between recordings (measured: max frame dt 0.2 s across episode cuts),
+    so time alone cannot see the seam."""
+    try:
+        ver = store.table("episodes").state().version
+    except Exception:
+        return {}
+    key = (str(store.dir), ver)
+    if key not in _REC_CACHE:
+        ep = store.table("episodes").scan()
+        spans = {}
+        for s, a, b in zip(ep.column("stream").to_pylist(),
+                           ep.column("ts").to_pylist(),
+                           ep.column("t1").to_pylist()):
+            spans.setdefault(s, []).append((int(a), int(b)))
+        out = {}
+        for s, lst in spans.items():
+            lst.sort()
+            out[s] = (np.array([a for a, _ in lst], np.int64),
+                      np.array([b for _, b in lst], np.int64))
+        if len(_REC_CACHE) > 8:
+            _REC_CACHE.clear()
+        _REC_CACHE[key] = out
+    return _REC_CACHE[key]
 
 
 def _ctx_event_scores(store, qv):
@@ -261,11 +292,25 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
         pass
 
     # ---- SEGMENTS: pad each window so the verifier sees the WHOLE event
-    # (the close happens after the put; a bare window may hold only one) ----
+    # (the close happens after the put; a bare window may hold only one) —
+    # but NEVER across a recording boundary. Packed corpora butt recordings
+    # together with no time gap, and an unclamped pad+merge produced
+    # "clips" spanning two recordings: broken playback, and worse, the
+    # before/after verifier judging frames from two DIFFERENT recordings —
+    # every such cached verdict was noise (an opening clip scored +0.97
+    # for "closing the drawer" this way).
+    rec = _recording_spans(store)
     pad = int(pad_s * 1e9)
     by_stream = {}
     for (s, a, b) in cand:
-        by_stream.setdefault(s, []).append((a - pad, b + pad))
+        lo, hi = a - pad, b + pad
+        if s in rec:
+            r0, r1 = rec[s]
+            j = int(np.searchsorted(r0, (a + b) // 2, side="right")) - 1
+            if 0 <= j < len(r0):
+                lo, hi = max(lo, int(r0[j])), min(hi, int(r1[j]))
+        if hi > lo:
+            by_stream.setdefault(s, []).append((lo, hi))
     segs = []
     for s, spans in by_stream.items():
         spans.sort()
@@ -300,7 +345,11 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
         seg_ctx.setdefault(seg, float("nan"))
         seg_lex.setdefault(seg, float("nan"))
 
-    qh = _qhash(text)
+    # directional queries hash differently: their margins are swap-CONTRASTS
+    # (query minus inverted query), a different quantity than the absolute
+    # margins cached before — colliding them would rank with stale semantics
+    from .rerank import directional_swap
+    qh = _qhash(("dir:" + text) if directional_swap(text) else text)
     vmap = _verdict_map(store)
     cached_m = {seg: vmap[(seg[0], seg[1], qh)] for seg in segs
                 if (seg[0], seg[1], qh) in vmap}
@@ -389,12 +438,13 @@ def _verify_segments(store, segs, text, qh, frames_per_clip=2):
     from PIL import Image
 
     from .rerank import as_change_question, as_clip_question, \
-        score_clip_sequences
+        directional_swap, score_clip_sequences
     from .video import FrameSet
     if not segs:
         return {}
-    question = (as_change_question(text) if frames_per_clip == 2
-                else as_clip_question(text))
+    q_form = (as_change_question if frames_per_clip == 2
+              else as_clip_question)
+    question = q_form(text)
     frames_tbl = store.table("frames").scan()
     rot = store.meta.get("display", {}).get("rotate", 0)
     need, clips = [], []
@@ -418,9 +468,17 @@ def _verify_segments(store, segs, text, qh, frames_per_clip=2):
         clips.append(imgs)
     if not clips:
         return {}
-    margins = {}
-    for seg, m in zip(need, score_clip_sequences(clips, question)):
-        margins[seg] = float(m)
+    # SWAP-CONTRAST for directional queries: both VLM tiers are direction-
+    # inverted on absolute questions (AUC 0.36 — they score salient
+    # interaction, not direction), but the DIFFERENCE against the inverted
+    # query cancels the appearance bias: 2B AUC 0.86 (see directional_swap).
+    # One extra VLM pass, only when the query has a direction to invert.
+    raw = np.array(score_clip_sequences(clips, question), dtype=float)
+    sq = directional_swap(text)
+    if sq:
+        raw = raw - np.array(score_clip_sequences(clips, q_form(sq)),
+                             dtype=float)
+    margins = {seg: float(m) for seg, m in zip(need, raw)}
     # `query` is stored as TEXT, not only qhash: verdicts are the one verb
     # supervision source that survived measurement (yes/no margins, AUC
     # 0.75-0.82, where free-form captions failed at 1-8/24), and as
@@ -450,10 +508,12 @@ def _deep_rerank(store, hits, text, deep, vmap):
     """7B judge over the top hits — sync callers only."""
     from PIL import Image
 
-    from .rerank import DEEP_VLM, as_clip_question, score_clip_sequences
+    from .rerank import (DEEP_VLM, as_clip_question, directional_swap,
+                         score_clip_sequences)
     from .video import FrameSet
     frames_tbl = store.table("frames").scan()
-    dqh = _qhash("deep:" + text)
+    dqh = _qhash("deep:" + (("dir:" + text) if directional_swap(text)
+                            else text))
     head = hits[:deep]
     keep, clips7 = [], []
     for h in head:
@@ -476,8 +536,15 @@ def _deep_rerank(store, hits, text, deep, vmap):
         clips7.append([Image.fromarray(d[1]) for d in sorted(dec)])
         keep.append(h)
     if clips7:
-        deep_m = score_clip_sequences(clips7, as_clip_question(text),
-                                      model_id=DEEP_VLM)
+        deep_m = np.array(score_clip_sequences(
+            clips7, as_clip_question(text), model_id=DEEP_VLM), dtype=float)
+        # same swap-contrast as the 2B tier: 7B is also direction-inverted
+        # on absolute questions (AUC 0.36) and 0.91 on the difference
+        sq = directional_swap(text)
+        if sq:
+            deep_m = deep_m - np.array(score_clip_sequences(
+                clips7, as_clip_question(sq), model_id=DEEP_VLM),
+                dtype=float)
         rows = []
         for h, m in zip(keep, deep_m):
             h["deep_margin"] = round(float(m), 3)
@@ -493,8 +560,9 @@ def _deep_rerank(store, hits, text, deep, vmap):
                     "qhash": pa.array([dqh] * len(rows), pa.int64()),
                     "margin": pa.array([h["score"] for h in rows],
                                        pa.float32()),
-                }), kind="timeseries", meta={"written_by": "deep verify",
-                                             "query": text[:120]})
+                    "query": pa.array([text] * len(rows)),
+                }), kind="timeseries", evolve=True,
+                    meta={"written_by": "deep verify", "query": text[:120]})
             except Exception:
                 pass
     head.sort(key=lambda h: -h["score"])

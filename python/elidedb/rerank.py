@@ -151,6 +151,28 @@ def rerank_hits(store, hits, query, top_n: int = 12, alpha: float = 0.7,
 # ===========================================================================
 # Multi-frame (clip-level) verification — actions live BETWEEN frames
 # ===========================================================================
+def directional_swap(query: str) -> str | None:
+    """The query with its first directional term inverted (open<->close,
+    into<->out of, ...), or None when the query has no direction.
+
+    WHY: measured on ground-truth close/open episode clips, BOTH VLM tiers
+    are direction-INVERTED on absolute before/after questions (2B AUC 0.36,
+    7B 0.36, and a 'direction matters' phrasing made 7B worse at 0.25) —
+    they score salient-drawer-interaction, not direction. But the direction
+    information exists: scoring the query AND its swap and taking the
+    DIFFERENCE cancels the appearance bias by construction — 2B 0.86,
+    7B 0.91. Deterministic (first applicable swap) so cached margins keyed
+    by query stay stable."""
+    from .fdnnv2 import VERB_SWAPS
+    t = " " + query.lower() + " "
+    for a, b in VERB_SWAPS:
+        for x, y in ((a, b), (b, a)):
+            if f" {x} " in t:
+                return re.sub(rf"\b{re.escape(x)}\b", y, query.lower(),
+                              count=1)
+    return None
+
+
 def as_clip_question(query: str) -> str:
     """The clip-level question. Unlike the single-frame form, this one hands
     the VLM the frames in time order and asks about the EVENT — which is the

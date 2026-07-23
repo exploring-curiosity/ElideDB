@@ -1,61 +1,52 @@
 [
   {
     "query": "put a green object in the drawer and close it",
-    "s": 1.5,
+    "s": 1.7,
     "hits": [
       {
-        "label": "move the yellow object to the lower left side of the table",
-        "match_words": [],
-        "label_ok": false,
-        "sig": 0.124,
-        "margin": null,
-        "caption": ""
-      },
-      {
-        "label": "place the red object into the drawer",
+        "label": "take the circle yellow object and put it inside the drawer.",
         "match_words": [
           "drawer"
         ],
         "label_ok": true,
-        "sig": 0.163,
+        "sig": 0.185,
         "margin": null,
         "caption": ""
       },
       {
-        "label": "move the green object into the drawer",
+        "label": "take the red thing out of the drawer and put it in between of banana and potato",
         "match_words": [
-          "drawer",
-          "green"
+          "drawer"
         ],
         "label_ok": true,
-        "sig": 0.189,
+        "sig": 0.177,
+        "margin": null,
+        "caption": ""
+      },
+      {
+        "label": "put the cheese bar  in the drawer",
+        "match_words": [
+          "drawer"
+        ],
+        "label_ok": true,
+        "sig": 0.21,
         "margin": null,
         "caption": ""
       }
     ],
-    "label_ok_top3": 2
+    "label_ok_top3": 3
   },
   {
     "query": "close the drawer",
     "s": 0.0,
     "hits": [
       {
-        "label": "open the drawer",
-        "match_words": [
-          "drawer"
-        ],
-        "label_ok": true,
-        "sig": 0.145,
-        "margin": null,
-        "caption": ""
-      },
-      {
         "label": "move the green object inside the drawer",
         "match_words": [
           "drawer"
         ],
         "label_ok": true,
-        "sig": 0.143,
+        "sig": 0.155,
         "margin": null,
         "caption": ""
       },
@@ -66,12 +57,20 @@
           "drawer"
         ],
         "label_ok": true,
-        "sig": 0.111,
+        "sig": 0.145,
+        "margin": null,
+        "caption": ""
+      },
+      {
+        "label": "move the yellow object to the lower left side of the table",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.149,
         "margin": null,
         "caption": ""
       }
     ],
-    "label_ok_top3": 3
+    "label_ok_top3": 2
   },
   {
     "query": "open the drawer",
@@ -83,33 +82,30 @@
           "drawer"
         ],
         "label_ok": true,
-        "sig": 0.11,
+        "sig": 0.147,
         "margin": null,
         "caption": ""
       },
       {
-        "label": "open the drawer",
-        "match_words": [
-          "drawer",
-          "open"
-        ],
-        "label_ok": true,
-        "sig": 0.148,
+        "label": "put the yellow toy to the table",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.139,
         "margin": null,
         "caption": ""
       },
       {
-        "label": "move the green object inside the drawer",
+        "label": "put the red object into the drawer",
         "match_words": [
           "drawer"
         ],
         "label_ok": true,
-        "sig": 0.147,
+        "sig": 0.16,
         "margin": null,
         "caption": ""
       }
     ],
-    "label_ok_top3": 3
+    "label_ok_top3": 2
   },
   {
     "query": "take something out of the drawer and put it on the table",
@@ -119,16 +115,6 @@
         "label": "close the drawer",
         "match_words": [
           "drawer"
-        ],
-        "label_ok": true,
-        "sig": 0.136,
-        "margin": null,
-        "caption": ""
-      },
-      {
-        "label": "put the yellow toy to the table",
-        "match_words": [
-          "table"
         ],
         "label_ok": true,
         "sig": 0.164,
@@ -141,7 +127,17 @@
           "drawer"
         ],
         "label_ok": true,
-        "sig": 0.166,
+        "sig": 0.177,
+        "margin": null,
+        "caption": ""
+      },
+      {
+        "label": "put the yellow toy to the table",
+        "match_words": [
+          "table"
+        ],
+        "label_ok": true,
+        "sig": 0.17,
         "margin": null,
         "caption": ""
       }
@@ -156,15 +152,7 @@
         "label": "move the pie inside the silver pot",
         "match_words": [],
         "label_ok": false,
-        "sig": 0.047,
-        "margin": null,
-        "caption": ""
-      },
-      {
-        "label": "Move the yellow towel behind the pot with the pickle",
-        "match_words": [],
-        "label_ok": false,
-        "sig": 0.082,
+        "sig": 0.053,
         "margin": null,
         "caption": ""
       },
@@ -172,7 +160,15 @@
         "label": "Move the silver pot on the top of yellow towel in the upper right corner",
         "match_words": [],
         "label_ok": false,
-        "sig": 0.071,
+        "sig": 0.052,
+        "margin": null,
+        "caption": ""
+      },
+      {
+        "label": "closed the drawer",
+        "match_words": [],
+        "label_ok": false,
+        "sig": 0.111,
         "margin": null,
         "caption": ""
       }
@@ -184,16 +180,6 @@
     "s": 0.0,
     "hits": [
       {
-        "label": "take the bite-size mango from the pot and put it between the two left burners",
-        "match_words": [
-          "pot"
-        ],
-        "label_ok": true,
-        "sig": 0.1,
-        "margin": null,
-        "caption": ""
-      },
-      {
         "label": "take the red object in the silver pot and put it on the  upper right burner",
         "match_words": [
           "pot"
@@ -204,15 +190,27 @@
         "caption": ""
       },
       {
-        "label": "move the red spoon to the bottom left burner",
-        "match_words": [],
-        "label_ok": false,
-        "sig": 0.112,
+        "label": "take the bite-size mango from the pot and put it between the two left burners",
+        "match_words": [
+          "pot"
+        ],
+        "label_ok": true,
+        "sig": 0.115,
+        "margin": null,
+        "caption": ""
+      },
+      {
+        "label": "move the blue fork to the top right of the stove",
+        "match_words": [
+          "stove"
+        ],
+        "label_ok": true,
+        "sig": 0.11,
         "margin": null,
         "caption": ""
       }
     ],
-    "label_ok_top3": 2
+    "label_ok_top3": 3
   },
   {
     "query": "wipe the table with a cloth",
@@ -222,7 +220,7 @@
         "label": "put the sushi into the drawer",
         "match_words": [],
         "label_ok": false,
-        "sig": 0.05,
+        "sig": 0.052,
         "margin": null,
         "caption": ""
       },
@@ -230,46 +228,48 @@
         "label": "move the green thing to in the drawer",
         "match_words": [],
         "label_ok": false,
-        "sig": 0.065,
+        "sig": 0.084,
         "margin": null,
         "caption": ""
       },
       {
-        "label": "open the drawer",
-        "match_words": [],
-        "label_ok": false,
-        "sig": 0.052,
+        "label": "put the yellow toy to the table",
+        "match_words": [
+          "table"
+        ],
+        "label_ok": true,
+        "sig": 0.042,
         "margin": null,
         "caption": ""
       }
     ],
-    "label_ok_top3": 0
+    "label_ok_top3": 1
   },
   {
     "query": "put a red object into the sink",
     "s": 0.0,
     "hits": [
       {
-        "label": "move the green object into the drawer",
+        "label": "Move the measuring spoon towards the left burner.",
         "match_words": [],
         "label_ok": false,
-        "sig": 0.117,
+        "sig": 0.146,
         "margin": null,
         "caption": ""
       },
       {
-        "label": "moved the silver pot to the left top side of the burner",
+        "label": "move the orange cloth above the left burner",
         "match_words": [],
         "label_ok": false,
-        "sig": 0.141,
+        "sig": 0.14,
         "margin": null,
         "caption": ""
       },
       {
-        "label": "move the silver pot to the right side of the oven top",
+        "label": "put the grey toy in the drawer",
         "match_words": [],
         "label_ok": false,
-        "sig": 0.132,
+        "sig": 0.127,
         "margin": null,
         "caption": ""
       }

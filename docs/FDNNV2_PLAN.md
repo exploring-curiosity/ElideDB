@@ -215,3 +215,37 @@ TF-IDF fitted-model caching (50 ms → ~2 ms), one batched tower pass for all
 query atoms (compound queries 106 → 43 ms). Warm index-only latency:
 25/43/54 ms for 1/3/4-atom queries. Cold index-only battery 13/24 — equal to
 the full sync VLM cascade's previous score, at query-time model cost ZERO.
+
+## Verb polarity fixed at the verifier (2026-07-22, later)
+
+User-reported: "closing the drawer" returned opens/put-ins and clips were
+broken joins. Chased to two causes, both fixed:
+
+1. **Segments crossed recording boundaries.** Packed corpora butt episodes
+   together with NO time gap (measured: max frame dt 0.2 s across cuts), so
+   pad+merge glued clips from different recordings — broken playback AND a
+   verifier judging before/after frames from two different recordings (an
+   opening clip scored +0.97 for "closing" this way). Segments now clamp to
+   the `episodes` table (structural ingest metadata, same class as file
+   boundaries); event index rebuilt per-recording (1,295 → 4,710 events,
+   recurrent state no longer carries across cuts).
+
+2. **Both VLM tiers are direction-INVERTED on absolute questions.** On
+   ground-truth close vs open episode clips: 2B AUC 0.36, 7B 0.36, and an
+   explicit "direction matters" phrasing made 7B WORSE (0.25) — the models
+   score salient-drawer-interaction, not direction. The direction signal
+   exists but is swamped by appearance salience. SWAP-CONTRAST recovers it:
+   score(query) − score(query with its directional term inverted) cancels
+   the appearance bias by construction — 2B AUC 0.86, 7B 0.91.
+   (Reversal-contrast — query on time-reversed frames — is itself inverted,
+   0.14/0.17: the models barely read frame order at all.) Wired into both
+   tiers; triggered generically by the VERB_SWAPS vocabulary; costs one
+   extra VLM pass only for directional queries; directional verdicts hash
+   under a versioned key so stale absolute margins cannot collide.
+
+Result (verb-strict, top-5, episode labels): "opening the drawer" 0→3
+correct with zero opposites (deep: ranks 1-2 both true opens, +1.8/+1.4);
+"closing the drawer" 0→1 with zero opposites (was: opens at rank 1). The
+remaining "closing" top hits are put-in-drawer episodes, which in this
+corpus typically END with a close — undecidable at episode-label
+granularity. Cold index-only battery 13→14/24; warm async latency 31 ms.
