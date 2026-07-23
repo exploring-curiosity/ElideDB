@@ -37,14 +37,41 @@ ROW_GROUP_ROWS = 64 * 1024  # the amortize-vs-overfetch dial (Parquet's
                             # row-group size == SDX's chunk_target_rows)
 
 
+ROW_GROUP_TARGET_BYTES = 8 * 1024 * 1024
+
+
+def _row_width(schema: pa.Schema) -> int:
+    """Approximate uncompressed bytes per row, for row-group sizing."""
+    w = 0
+    for f in schema:
+        t = f.type
+        try:
+            if pa.types.is_fixed_size_list(t):
+                w += t.list_size * (t.value_type.bit_width // 8)
+            else:
+                w += t.bit_width // 8
+        except (ValueError, AttributeError):
+            w += 32                       # strings/lists: a guess is fine
+    return max(w, 1)
+
+
 def write_parquet(table: pa.Table, path):
     """One writer for every file in the store. `ts` gets
     DELTA_BINARY_PACKED — timestamps are near-arithmetic, so delta encoding
     beats generic zstd ~3x on that column (the Gorilla/TSDB observation);
-    string columns keep dictionary encoding; everything rides zstd."""
+    string columns keep dictionary encoding; everything rides zstd.
+
+    Row groups are sized by ROW WIDTH to a byte target, not a fixed row
+    count: at 64k rows a 1152-d float32 vector table packed ~295 MB into
+    ONE group, so time-range pruning inside a file could skip nothing —
+    the elision law applied to layout. A narrow sensor table still gets
+    tens of thousands of rows per group; a vector table gets ~1.8k, and a
+    2 s window read touches one group instead of the whole file."""
+    rows = min(ROW_GROUP_ROWS,
+               max(4096, ROW_GROUP_TARGET_BYTES // _row_width(table.schema)))
     dict_cols = [f.name for f in table.schema
                  if pa.types.is_string(f.type) or pa.types.is_large_string(f.type)]
-    pq.write_table(table, path, row_group_size=ROW_GROUP_ROWS,
+    pq.write_table(table, path, row_group_size=rows,
                    compression="zstd",
                    use_dictionary=dict_cols,
                    column_encoding={"ts": "DELTA_BINARY_PACKED"})
@@ -329,8 +356,15 @@ class Table:
             fmask = file_ids == fi
             frows = rows[fmask]
             pf = pq.ParquetFile(self.dir / st.files[fi].path)
-            groups = np.unique(frows // ROW_GROUP_ROWS).tolist()
             md = pf.metadata
+            # metadata-driven row->group mapping: group sizes are whatever
+            # the writer chose (now width-adaptive), so boundaries come
+            # from the footer, never from an assumed constant
+            rg_start = np.cumsum(
+                [0] + [md.row_group(g).num_rows
+                       for g in range(md.num_row_groups)])
+            g_of = np.searchsorted(rg_start, frows, side="right") - 1
+            groups = np.unique(g_of).tolist()
             for g in groups:
                 for c in range(md.row_group(g).num_columns):
                     name = md.schema.names[c]
@@ -340,10 +374,9 @@ class Table:
             tbl = pf.read_row_groups(groups, columns=want_cols)
             # map absolute rows -> positions inside the concatenated groups
             base = np.cumsum([0] + [md.row_group(g).num_rows for g in groups])
-            gpos = np.searchsorted(np.asarray(groups) * ROW_GROUP_ROWS,
-                                   frows, side="right") - 1
-            local = frows - np.asarray(groups)[gpos] * ROW_GROUP_ROWS + \
-                base[gpos]
+            gsel = {g: k for k, g in enumerate(groups)}
+            gpos = np.array([gsel[g] for g in g_of])
+            local = frows - rg_start[g_of] + base[gpos]
             parts.append(tbl.take(pa.array(np.sort(local))))
             stats.files_touched += 1
         out = pa.concat_tables(parts) if parts else \

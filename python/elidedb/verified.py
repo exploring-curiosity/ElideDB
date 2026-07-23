@@ -92,25 +92,26 @@ def _atoms(text: str):
 _CAP_CACHE = {}
 
 
-def _caption_candidates(store, text, n):
-    """Lexical recall over VLM captions, when the store has them. Verbs live
-    in words, so this is the ranker most likely to surface action matches.
+def _text_candidates(store, text, n, table, column):
+    """Lexical recall over any per-span TEXT table (VLM captions, or
+    uploader metadata when a store carries it). Verbs live in words, so
+    this is the ranker most likely to surface action matches.
 
     The fitted TF-IDF + document matrix are cached per table VERSION —
     refitting on every query was 50 ms of an 81 ms query (measured), i.e.
     the entire latency gate spent recomputing something that only changes
-    when captions are appended. A query now pays one sparse transform."""
+    when rows are appended. A query pays one sparse transform."""
     try:
-        ver = store.table("context_captions").state().version
+        ver = store.table(table).state().version
     except Exception:
         return []
-    key = (str(store.dir), ver)
+    key = (str(store.dir), table, ver)
     if key not in _CAP_CACHE:
-        caps = store.table("context_captions").scan()
-        if len(caps) == 0:
+        caps = store.table(table).scan()
+        if len(caps) == 0 or column not in caps.column_names:
             return []
         from sklearn.feature_extraction.text import TfidfVectorizer
-        texts = caps.column("caption").to_pylist()
+        texts = [t or "" for t in caps.column(column).to_pylist()]
         vec = TfidfVectorizer(stop_words="english", ngram_range=(1, 2))
         X = vec.fit_transform(texts)
         wins = list(zip(caps.column("stream").to_pylist(),
@@ -124,6 +125,10 @@ def _caption_candidates(store, text, n):
     sc = np.asarray((X @ q.T).todense()).ravel()
     order = np.argsort(-sc)[:n]
     return [(wins[int(i)], float(sc[i])) for i in order if sc[i] > 0]
+
+
+def _caption_candidates(store, text, n):
+    return _text_candidates(store, text, n, "context_captions", "caption")
 
 
 _ADAPTER_CACHE = {}
@@ -330,6 +335,17 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
             continue
         cand.setdefault(w, 0.0)
         lex_of[w] = max(lex_of.get(w, 0.0), sc)
+    # UPLOADER METADATA channel — search-time only, and only for stores
+    # that carry a `meta_text` table by the uploader's choice. The
+    # no-metadata rule still binds training and indexing; refusing
+    # customer-provided labels at SEARCH time was just leaving quality on
+    # the table (the Daft-stack comparison). Control store has none.
+    met_of = {}
+    for w, sc in _text_candidates(store, text, per, "meta_text", "text"):
+        if streams and w[0] not in streams:
+            continue
+        cand.setdefault(w, 0.0)
+        met_of[w] = max(met_of.get(w, 0.0), sc)
     # stores with the full context tier contribute their caption-LSA ranking
     try:
         from .context import _ctx_matrix, caption_space
@@ -380,8 +396,24 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     obj_lookup = None
     try:
         from .objects import object_candidates, object_lookup
-        obj_lookup = object_lookup(store, qvs)          # per-atom matrix
-        for s_, a, b, _sc in object_candidates(store, qvs, top=per):
+        # crops are STATIC objects — the verb in a clause pollutes crop
+        # matching (measured: green-binding unmoved with clause atoms).
+        # Strip leading verb tokens mechanically; keep the noun phrase.
+        import re as _re
+        def _np(a_):
+            w = a_.split()
+            while len(w) > 2 and _re.fullmatch(
+                    r"\w+ing|\w+s?|up|down|out|off|then", w[0]) and \
+                    w[0] not in ("a", "an", "the"):
+                w = w[1:]
+                if w[0] in ("a", "an", "the"):
+                    break
+            return " ".join(w)
+        np_atoms = [_np(a_) for a_ in atoms]
+        qvs_obj = (embed_texts(np_atoms)
+                   if np_atoms != list(atoms) else qvs)
+        obj_lookup = object_lookup(store, qvs_obj)      # per-atom matrix
+        for s_, a, b, _sc in object_candidates(store, qvs_obj, top=per):
             if streams and s_ not in streams:
                 continue
             if t0 is not None and b < t0:
@@ -454,7 +486,7 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # NaN = the ctx ranker ABSTAINS on that segment; RRF gives it the
     # median rank rather than the bottom (see fusion.py on why).
     seg_score, seg_ctx, seg_lex, seg_mot, seg_anc = {}, {}, {}, {}, {}
-    seg_obj = {}
+    seg_obj, seg_met = {}, {}
     for (s_, a, b), sc in cand.items():
         for seg in segs:
             if seg[0] == s_ and seg[1] <= a and b <= seg[2]:
@@ -465,6 +497,9 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                 if (s_, a, b) in lex_of:
                     seg_lex[seg] = max(seg_lex.get(seg, 0.0),
                                        lex_of[(s_, a, b)])
+                if (s_, a, b) in met_of:
+                    seg_met[seg] = max(seg_met.get(seg, 0.0),
+                                       met_of[(s_, a, b)])
                 if (s_, a, b) in anc_of:
                     seg_anc[seg] = max(seg_anc.get(seg, -2.0),
                                        anc_of[(s_, a, b)])
@@ -473,6 +508,7 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
         seg_score.setdefault(seg, 0.0)
         seg_ctx.setdefault(seg, float("nan"))
         seg_lex.setdefault(seg, float("nan"))
+        seg_met.setdefault(seg, float("nan"))
         seg_anc.setdefault(seg, float("nan"))
         # motion attaches by RECORDING overlap: motion rows are recording
         # spans (the scale where the state change is fully straddled) and
@@ -557,6 +593,7 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                      "mot": np.array([seg_mot[g] for g in fresh]),
                      "anc": np.array([seg_anc[g] for g in fresh]),
                      "obj": np.array([seg_obj[g] for g in fresh]),
+                     "met": np.array([seg_met[g] for g in fresh]),
                      "scr": np.array([scr_m.get(g, float("nan"))
                                       for g in fresh])},
                     weights={"mot": 2.5 if qv_swap is not None else 0.0})

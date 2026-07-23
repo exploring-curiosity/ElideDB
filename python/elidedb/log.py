@@ -198,6 +198,26 @@ class TableLog:
                                 "files": [f.to_json() for f in st.files]}))
                 os.replace(cp_tmp,  # checkpoints are derived: replace is fine
                            self.log_dir / f"{version:020d}.checkpoint.json")
+            # `_meta.json` beside the table: the human/tool-readable summary
+            # of CURRENT state (schema, rows, bytes, ts range) so a store
+            # browser or a pilot's script answers "what is in this table?"
+            # with one file read, not a log replay. Derived — a failure
+            # here must never fail the commit.
+            try:
+                st = self.read_state(version)
+                meta_tmp = self.dir / f".meta.{os.getpid()}.tmp"
+                meta_tmp.write_text(json.dumps({
+                    "version": st.version, "op": op, "kind": st.kind,
+                    "rows": sum(f.rows for f in st.files),
+                    "bytes": sum(f.bytes for f in st.files),
+                    "files": len(st.files),
+                    "min_ts": min((f.min_ts for f in st.files), default=None),
+                    "max_ts": max((f.max_ts for f in st.files), default=None),
+                    "schema": st.schema, "meta": st.meta,
+                    "ts_utc": entry["ts_utc"]}, indent=1))
+                os.replace(meta_tmp, self.dir / "_meta.json")
+            except Exception:
+                pass
             return version
         raise CommitConflict(f"lost the commit race {retries} times")
 
