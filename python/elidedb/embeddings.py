@@ -13,6 +13,7 @@ import time
 import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
+import pyarrow.parquet as pq
 
 _MODEL_CACHE = {}
 DEFAULT_MODEL = "mlx-community/siglip-so400m-patch14-384"
@@ -77,37 +78,77 @@ _MAT_CACHE: dict = {}
 
 
 def _vec_table(store, name="embeddings", version=None, column="vector"):
-    """Vector table + matrix, zero-copy and cached per log version.
+    """Vector table + MEMORY-MAPPED matrix, cached per log version.
 
-    The old path went Arrow -> Python lists -> np.stack: ~1 s per query on a
-    7k x 1152 table, paid on EVERY search. FixedSizeList vectors are already
-    a flat float32 buffer; reshape it. With the version key, a query costs a
-    log read, not a table scan — and any append invalidates naturally.
+    Two generations of this function materialized the matrix in RAM. At
+    pilot scale that broke: bridge-full's 180k x 1152 embeddings are 0.83 GB
+    of data but cost +4.3 GB peak RSS to load (parquet decode + Arrow
+    chunks + combine copy + the cache holding table AND matrix), and the
+    desk warms every store — 7 GB before the first query. The fix is the
+    store's own law applied to vectors: mmap for reads. The matrix is
+    materialized ONCE per (table, version) into a raw .npy sidecar, then
+    every process maps it — RSS is only the pages a query touches, startup
+    costs a file open, and the OS page cache decides residency.
+
+    Row alignment: the sidecar is written from the same scan() that serves
+    the meta columns; scan's ts sort is stable over a deterministic file
+    order, so a later projected scan yields the identical permutation. A
+    length mismatch (e.g. sidecar from a dead version) forces a rebuild.
+    The parquet remains the source of truth — a sidecar is disposable.
     """
+    import os
+    import uuid as _uuid
     ver = store.table(name).state().version if version is None else version
     key = (str(store.dir), name, column, ver)
     if key in _MAT_CACHE:
         return _MAT_CACHE[key]
-    t = store.table(name).scan(version=version)
-    if len(t) == 0:
-        extra = ""
-        try:
-            if store.table("frame_vectors").state().files:
-                extra = (" Per-frame vectors already exist, so this costs a "
-                         "numpy mean, not a GPU pass.")
-        except Exception:
-            pass
-        raise RuntimeError(
-            f"store '{store.name}' has no '{name}' table — run "
-            f"store.embed_windows() first.{extra}")
-    col = t.column(column)
-    if isinstance(col, pa.ChunkedArray):
-        col = col.combine_chunks()
-    try:                                   # FixedSizeList: flat buffer reshape
-        vecs = col.values.to_numpy(zero_copy_only=False)             .astype(np.float32, copy=False).reshape(len(t), -1)
-    except Exception:                      # any other layout: the slow road
-        vecs = np.stack([np.asarray(v, dtype=np.float32)
-                         for v in col.to_pylist()])
+
+    tab = store.table(name)
+    cache_dir = tab.dir / "_cache"
+    npy = cache_dir / f"{column}-v{ver}.npy"
+
+    t = vecs = None
+    if npy.exists():
+        st = tab.state(version)
+        if st.files:
+            names = pq.ParquetFile(
+                tab.dir / st.files[0].path).schema_arrow.names
+            meta_cols = [c for c in names if c != column]
+            t = tab.scan(version=version, columns=meta_cols)
+            vecs = np.load(npy, mmap_mode="r")
+            if len(vecs) != len(t):
+                t = vecs = None                    # stale sidecar: rebuild
+
+    if vecs is None:
+        t_full = tab.scan(version=version)
+        if len(t_full) == 0:
+            extra = ""
+            try:
+                if store.table("frame_vectors").state().files:
+                    extra = (" Per-frame vectors already exist, so this "
+                             "costs a numpy mean, not a GPU pass.")
+            except Exception:
+                pass
+            raise RuntimeError(
+                f"store '{store.name}' has no '{name}' table — run "
+                f"store.embed_windows() first.{extra}")
+        col = t_full.column(column)
+        if isinstance(col, pa.ChunkedArray):
+            col = col.combine_chunks()
+        try:                               # FixedSizeList: flat buffer reshape
+            mat = col.values.to_numpy(zero_copy_only=False) \
+                .astype(np.float32, copy=False).reshape(len(t_full), -1)
+        except Exception:                  # any other layout: the slow road
+            mat = np.stack([np.asarray(v, dtype=np.float32)
+                            for v in col.to_pylist()])
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp = cache_dir / f".{_uuid.uuid4().hex[:8]}.npy"
+        np.save(tmp, np.ascontiguousarray(mat))
+        os.replace(tmp, npy)               # atomic: readers see whole files
+        t = t_full.drop_columns([column])  # meta only — no double storage
+        del t_full, mat, col
+        vecs = np.load(npy, mmap_mode="r")
+
     if len(_MAT_CACHE) > 8:
         _MAT_CACHE.clear()
     _MAT_CACHE[key] = (t, vecs)

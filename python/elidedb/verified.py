@@ -271,7 +271,11 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # a bag-of-concepts space), while the clauses individually rank green
     # things and drawer scenes correctly — a clip must score on EVERY
     # clause to rank. The atom embeddings are already paid for by recall.
-    A = np.stack([vecs[idx_all] @ qv for qv in qvs[:len(atoms)]])
+    # vecs is a memory-map; fancy-indexing it materializes a full copy, so
+    # only do that when a predicate actually filtered rows — and ONCE, not
+    # per atom (the per-atom form copied 0.83 GB x atoms at pilot scale)
+    sub = vecs if len(idx_all) == len(vecs) else vecs[idx_all]
+    A = np.stack([sub @ qv for qv in qvs[:len(atoms)]])
     app_all = A.mean(axis=0)
     app_of = {int(i): float(sc) for i, sc in zip(idx_all, app_all)}
     for row in A:
