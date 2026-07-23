@@ -231,15 +231,19 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     atoms = _atoms(text)
     per = max(pool // len(atoms), 12)
     cand = {}
-    # ONE tower pass for the query and all its atoms: per-atom embed_text
-    # calls cost ~21 ms EACH, which put every compound query over the
-    # latency gate (measured 84-106 ms); a batch of 3 costs the same as 1.
+    # ONE tower pass for the query, its atoms, AND the directional swap:
+    # per-text embed_text calls cost ~21 ms EACH, which put every compound
+    # query over the latency gate (measured 84-106 ms); one batch costs the
+    # same as one text.
     from .context import embed_texts
-    qvs = embed_texts(atoms)
+    from .rerank import directional_swap
+    sq = directional_swap(text)
+    qvs = embed_texts(atoms + ([sq] if sq else []))
     q_full = qvs[0]
+    qv_swap = qvs[-1] if sq else None
     app_all = vecs[idx_all] @ q_full          # index signal, reused below
     app_of = {int(i): float(sc) for i, sc in zip(idx_all, app_all)}
-    for a, qv in zip(atoms, qvs):
+    for a, qv in zip(atoms, qvs[:len(atoms)]):
         sub = idx_all[np.argsort(-(vecs[idx_all] @ qv))[:per]]
         for i in sub:
             cand.setdefault((str(w_s[i]), int(w_t0[i]), int(w_t1[i])),
@@ -290,6 +294,21 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
             cand.setdefault(w, 0.0)
     except Exception:
         pass
+    # MOTION channel — the Marengo multi-vector lesson, ElideDB-style:
+    # motion = delta-appearance per RECORDING vs (query − swap) direction.
+    # Measured: close/open direction AUC 0.98 among drawer recordings —
+    # but corpus-wide the tiny direction cosines (~0.07) drown in random
+    # tabletop deltas, so this channel answers DIRECTION, not content: it
+    # never proposes candidates, it only scores what the content channels
+    # (appearance/lexical/ctx) surfaced. Index-only, no model call.
+    mot_of = {}
+    if qv_swap is not None:
+        try:
+            from .motion import motion_scores
+            mot_of = {(s_, a, b): sc for s_, a, b, sc
+                      in motion_scores(store, q_full, qv_swap)}
+        except Exception:
+            pass
 
     # ---- SEGMENTS: pad each window so the verifier sees the WHOLE event
     # (the close happens after the put; a bare window may hold only one) —
@@ -328,7 +347,7 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # plus (when the store has a V2 event index) best member ctx cosine.
     # NaN = the ctx ranker ABSTAINS on that segment; RRF gives it the
     # median rank rather than the bottom (see fusion.py on why).
-    seg_score, seg_ctx, seg_lex = {}, {}, {}
+    seg_score, seg_ctx, seg_lex, seg_mot = {}, {}, {}, {}
     for (s_, a, b), sc in cand.items():
         for seg in segs:
             if seg[0] == s_ and seg[1] <= a and b <= seg[2]:
@@ -344,6 +363,14 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
         seg_score.setdefault(seg, 0.0)
         seg_ctx.setdefault(seg, float("nan"))
         seg_lex.setdefault(seg, float("nan"))
+        # motion attaches by RECORDING overlap: motion rows are recording
+        # spans (the scale where the state change is fully straddled) and
+        # every segment is clamped inside exactly one recording
+        seg_mot[seg] = float("nan")
+        for (ms_, ma, mb), sc in mot_of.items():
+            if ms_ == seg[0] and ma <= seg[1] and seg[2] <= mb + 1:
+                seg_mot[seg] = sc
+                break
 
     # directional queries hash differently: their margins are swap-CONTRASTS
     # (query minus inverted query), a different quantity than the absolute
@@ -389,9 +416,14 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # ranker likes. NaN = that ranker abstains (median rank, no veto).
     if fresh:
         from .fusion import rrf
+        # For directional queries, motion is the ONLY channel measuring the
+        # query's discriminating dimension (the others are direction-blind,
+        # measured), so it carries extra weight; otherwise it is off.
         fused = rrf({"app": np.array([seg_score[g] for g in fresh]),
                      "ctx": np.array([seg_ctx[g] for g in fresh]),
-                     "lex": np.array([seg_lex[g] for g in fresh])})
+                     "lex": np.array([seg_lex[g] for g in fresh]),
+                     "mot": np.array([seg_mot[g] for g in fresh])},
+                    weights={"mot": 2.5 if qv_swap is not None else 0.0})
         fresh = [g for _, g in sorted(zip(-fused, fresh))]
     neg.sort(key=lambda g: -cached_m[g])
 

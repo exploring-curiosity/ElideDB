@@ -269,3 +269,31 @@ system's shape (FDNN-V 0.27 ms/frame ingest; index-only 25-54 ms queries;
 quality of the joint space, and the only supervision that survived
 measurement remains discriminative margins — swap-contrast verification
 (0.86/0.91) live now, verdict-triple adapter retraining next (task #26).
+
+## Motion vector channel (2026-07-22, night) — the Marengo lesson, measured in
+
+Multi-vector layout: motion as its own channel, chosen by measurement:
+
+| candidate motion channel | close/open direction | verdict |
+|---|---|---|
+| X-CLIP (video-native, cross-frame attn, MPS 72 ms/ep) | 0.67; loses to SigLIP appearance on 4/5 verb classes | rejected — bag-of-frames, as the literature warns |
+| VLM swap-contrast (query-time, 2 model calls) | 0.86/0.91 | kept as verify tier |
+| **delta-appearance + query-swap difference** | **0.98** (drawer recordings) | SHIPPED |
+
+motion.py: event motion vector = normalize(app(end) − app(start)) from
+frame vectors already on disk (ingest cost: 2.5 s for 2,097 recordings);
+query motion vector = normalize(embed(q) − embed(swap(q))) — swap-contrast
+moved from VLM logits into embedding space, index-only.
+
+Two granularity findings: gate events (~3 s) do NOT straddle the state
+change (deltas = arm-motion noise, retrieval 1/8); RECORDING spans do.
+And corpus-wide the direction cosines (~0.07) drown in random tabletop
+deltas — so motion NEVER proposes candidates, it only SCORES what the
+content channels surfaced, attached by recording overlap, weighted 2.5 in
+RRF for directional queries (it is the only sighted channel there), off
+otherwise.
+
+Result, cold + index-only (no VLM anywhere), verb-strict episode labels:
+all four close/open phrasings rank-1 correct, 10/20 top-5 correct,
+**0/20 opposite-direction results** (was: opposites at rank 1), 25-36 ms.
+Matches the 7B deep cascade at zero model calls. Battery 14 -> 16/24.
