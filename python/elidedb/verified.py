@@ -241,10 +241,18 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     qvs = embed_texts(atoms + ([sq] if sq else []))
     q_full = qvs[0]
     qv_swap = qvs[-1] if sq else None
-    app_all = vecs[idx_all] @ q_full          # index signal, reused below
+    # appearance score = MEAN over clause cosines (soft-AND), not the
+    # full-sentence cosine alone. Measured: for "pick up a green toy and
+    # put it in the drawer" the full-sentence cosine ranked burner/spoon
+    # clips top-5 (a compound sentence matches everything and nothing in
+    # a bag-of-concepts space), while the clauses individually rank green
+    # things and drawer scenes correctly — a clip must score on EVERY
+    # clause to rank. The atom embeddings are already paid for by recall.
+    A = np.stack([vecs[idx_all] @ qv for qv in qvs[:len(atoms)]])
+    app_all = A.mean(axis=0)
     app_of = {int(i): float(sc) for i, sc in zip(idx_all, app_all)}
-    for a, qv in zip(atoms, qvs[:len(atoms)]):
-        sub = idx_all[np.argsort(-(vecs[idx_all] @ qv))[:per]]
+    for row in A:
+        sub = idx_all[np.argsort(-row)[:per]]
         for i in sub:
             cand.setdefault((str(w_s[i]), int(w_t0[i]), int(w_t1[i])),
                             app_of.get(int(i), 0.0))
@@ -424,6 +432,10 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                      "lex": np.array([seg_lex[g] for g in fresh]),
                      "mot": np.array([seg_mot[g] for g in fresh])},
                     weights={"mot": 2.5 if qv_swap is not None else 0.0})
+        # displayed score = the fused score that actually ordered the hit;
+        # showing raw appearance while ordering by fusion read as broken
+        fused_of = dict(zip(fresh, fused))
+        seg_score.update(fused_of)
         fresh = [g for _, g in sorted(zip(-fused, fresh))]
     neg.sort(key=lambda g: -cached_m[g])
 

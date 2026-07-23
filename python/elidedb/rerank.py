@@ -152,8 +152,8 @@ def rerank_hits(store, hits, query, top_n: int = 12, alpha: float = 0.7,
 # Multi-frame (clip-level) verification — actions live BETWEEN frames
 # ===========================================================================
 def directional_swap(query: str) -> str | None:
-    """The query with its first directional term inverted (open<->close,
-    into<->out of, ...), or None when the query has no direction.
+    """The query with its first STATE-REVERSAL term inverted (open<->close,
+    into<->out of, ...), or None when the query has no true direction.
 
     WHY: measured on ground-truth close/open episode clips, BOTH VLM tiers
     are direction-INVERTED on absolute before/after questions (2B AUC 0.36,
@@ -162,10 +162,25 @@ def directional_swap(query: str) -> str | None:
     information exists: scoring the query AND its swap and taking the
     DIFFERENCE cancels the appearance bias by construction — 2B 0.86,
     7B 0.91. Deterministic (first applicable swap) so cached margins keyed
-    by query stay stable."""
+    by query stay stable.
+
+    Bare adverb pairs (up/down, left/right, front/back) are EXCLUDED here:
+    they match incidental particles and produce nonsense swaps — measured
+    live when "pick up a green toy..." swapped to "pick DOWN..." and the
+    motion channel fired at weight 2.5 on a garbage direction, putting a
+    pot-on-stove clip at rank 1. A swap that is not a meaningful sentence
+    is worse than no swap. (The full pair list stays in VERB_SWAPS for
+    training-time hard negatives, where nonsense negatives are harmless.)
+    Multiword pairs are tried first so "picks up" wins before any single
+    word could."""
     from .fdnnv2 import VERB_SWAPS
+    weak = {frozenset(p) for p in ((("left", "right")),
+                                   (("up", "down")),
+                                   (("front", "back")))}
+    pairs = [p for p in VERB_SWAPS if frozenset(p) not in weak]
+    pairs.sort(key=lambda p: -max(len(p[0]), len(p[1])))
     t = " " + query.lower() + " "
-    for a, b in VERB_SWAPS:
+    for a, b in pairs:
         for x, y in ((a, b), (b, a)):
             if f" {x} " in t:
                 return re.sub(rf"\b{re.escape(x)}\b", y, query.lower(),

@@ -116,22 +116,22 @@
     "s": 0.0,
     "hits": [
       {
-        "label": "close the drawer",
-        "match_words": [
-          "drawer"
-        ],
-        "label_ok": true,
-        "sig": 0.164,
-        "margin": null,
-        "caption": ""
-      },
-      {
         "label": "put the sushi into the drawer",
         "match_words": [
           "drawer"
         ],
         "label_ok": true,
         "sig": 0.172,
+        "margin": null,
+        "caption": ""
+      },
+      {
+        "label": "close the drawer",
+        "match_words": [
+          "drawer"
+        ],
+        "label_ok": true,
+        "sig": 0.164,
         "margin": null,
         "caption": ""
       },
@@ -153,10 +153,10 @@
     "s": 0.0,
     "hits": [
       {
-        "label": "Take the cucumber out of the pot and move it to the middle of the stove.",
+        "label": "move the pie inside the silver pot",
         "match_words": [],
         "label_ok": false,
-        "sig": 0.046,
+        "sig": 0.053,
         "margin": null,
         "caption": ""
       },
@@ -169,10 +169,10 @@
         "caption": ""
       },
       {
-        "label": "remove the food from the drawer and put on the table",
+        "label": "closed the drawer",
         "match_words": [],
         "label_ok": false,
-        "sig": 0.093,
+        "sig": 0.111,
         "margin": null,
         "caption": ""
       }
