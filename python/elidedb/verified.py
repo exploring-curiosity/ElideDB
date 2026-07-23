@@ -37,6 +37,7 @@ task vocabulary. The prompts are the user's own words.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import threading
 import time
@@ -112,7 +113,12 @@ def _text_candidates(store, text, n, table, column):
             return []
         from sklearn.feature_extraction.text import TfidfVectorizer
         texts = [t or "" for t in caps.column(column).to_pylist()]
-        vec = TfidfVectorizer(stop_words="english", ngram_range=(1, 2))
+        # char n-grams instead of word tokens: 'closes'/'closing'/'close'
+        # share their subword mass, so inflections meet without a stemmer —
+        # measured on the regression set, word-token TF-IDF scored 2/10 on
+        # a query whose labels used a different inflection of its verb
+        vec = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5),
+                              sublinear_tf=True)
         X = vec.fit_transform(texts)
         wins = list(zip(caps.column("stream").to_pylist(),
                         (int(v) for v in caps.column("ts").to_pylist()),
@@ -256,7 +262,11 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # The VLM budget (`pool`) stays fixed — only the index-side pool grows,
     # and index candidates cost microseconds each.
     atoms = _atoms(text)
-    eff_pool = max(pool, min(len(idx_all) // 1500, 256))
+    # floor raised to 120: weight-fitting exposed pools where a PERFECT
+    # ranker could not reach 10 relevant hits (2 relevant of 48 candidates
+    # for an attribute query). Index candidates cost microseconds; recall
+    # starvation costs correctness that nothing downstream can repair.
+    eff_pool = max(pool, min(max(len(idx_all) // 1500, 120), 256))
     per = max(eff_pool // len(atoms), 12)
     cand = {}
     # ONE tower pass for the query, its atoms, AND the directional swap:
@@ -399,24 +409,23 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
         # crops are STATIC objects — the verb in a clause pollutes crop
         # matching (measured: green-binding unmoved with clause atoms).
         # Strip leading verb tokens mechanically; keep the noun phrase.
+        # crops are STATIC objects: match them against the query's
+        # DETERMINER PHRASES ("a green object", "the drawer"), extracted
+        # mechanically — regression-measured: full sentences against small
+        # crops scored drawer clips #1 for "the robot moves a green
+        # object". Verb-led queries with no noun phrase keep the sentence.
         import re as _re
-        def _np(a_):
-            # GUARDS (user-reported regression): never strip the verb from
-            # a directional query — "closing the drawer" became "the
-            # drawer" and the object channel voted for every drawer in the
-            # corpus. Short atoms ARE their verb; only long compound
-            # clauses carry a strippable noun phrase.
-            if sq is not None or len(a_.split()) <= 3:
-                return a_
-            w = a_.split()
-            while len(w) > 2 and _re.fullmatch(
-                    r"\w+ing|\w+s?|up|down|out|off|then", w[0]) and \
-                    w[0] not in ("a", "an", "the"):
-                w = w[1:]
-                if w[0] in ("a", "an", "the"):
-                    break
-            return " ".join(w)
-        np_atoms = [_np(a_) for a_ in atoms]
+        _TAIL = {"and", "then", "in", "on", "to", "into", "onto", "of",
+                 "from", "at", "with", "it", "is", "robot", "arm"}
+        nps = []
+        for m in _re.finditer(
+                r"\b(?:a|an|the)\s+(?:\w+\s+){0,2}\w+", text.lower()):
+            w = m.group(0).split()
+            while len(w) > 1 and w[-1] in _TAIL:
+                w.pop()
+            if len(w) > 1:
+                nps.append(" ".join(w))
+        np_atoms = nps if nps else list(atoms)
         qvs_obj = (embed_texts(np_atoms)
                    if np_atoms != list(atoms) else qvs)
         obj_lookup = object_lookup(store, qvs_obj)      # per-atom matrix
@@ -494,23 +503,35 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # median rank rather than the bottom (see fusion.py on why).
     seg_score, seg_ctx, seg_lex, seg_mot, seg_anc = {}, {}, {}, {}, {}
     seg_obj, seg_met = {}, {}
+    # candidate -> containing segment by per-stream binary search: the
+    # nested scan was O(candidates x segments) Python and went to ~700 ms
+    # when the recall floor raised both (measured); this is O(n log n)
+    seg_sorted = {}
+    for si, seg in enumerate(segs):
+        seg_sorted.setdefault(seg[0], []).append(seg)
+    for s_ in seg_sorted:
+        seg_sorted[s_].sort(key=lambda g: g[1])
+    import bisect
+    starts = {s_: [g[1] for g in lst] for s_, lst in seg_sorted.items()}
     for (s_, a, b), sc in cand.items():
-        for seg in segs:
-            if seg[0] == s_ and seg[1] <= a and b <= seg[2]:
-                seg_score[seg] = max(seg_score.get(seg, -1.0), sc)
-                if (s_, a, b) in ctx_of:
-                    seg_ctx[seg] = max(seg_ctx.get(seg, -2.0),
-                                       ctx_of[(s_, a, b)])
-                if (s_, a, b) in lex_of:
-                    seg_lex[seg] = max(seg_lex.get(seg, 0.0),
-                                       lex_of[(s_, a, b)])
-                if (s_, a, b) in met_of:
-                    seg_met[seg] = max(seg_met.get(seg, 0.0),
-                                       met_of[(s_, a, b)])
-                if (s_, a, b) in anc_of:
-                    seg_anc[seg] = max(seg_anc.get(seg, -2.0),
-                                       anc_of[(s_, a, b)])
-                break
+        lst = seg_sorted.get(s_)
+        if not lst:
+            continue
+        j = bisect.bisect_right(starts[s_], a) - 1
+        if j < 0:
+            continue
+        seg = lst[j]
+        if not (seg[1] <= a and b <= seg[2]):
+            continue
+        seg_score[seg] = max(seg_score.get(seg, -1.0), sc)
+        if (s_, a, b) in ctx_of:
+            seg_ctx[seg] = max(seg_ctx.get(seg, -2.0), ctx_of[(s_, a, b)])
+        if (s_, a, b) in lex_of:
+            seg_lex[seg] = max(seg_lex.get(seg, 0.0), lex_of[(s_, a, b)])
+        if (s_, a, b) in met_of:
+            seg_met[seg] = max(seg_met.get(seg, 0.0), met_of[(s_, a, b)])
+        if (s_, a, b) in anc_of:
+            seg_anc[seg] = max(seg_anc.get(seg, -2.0), anc_of[(s_, a, b)])
     for seg in segs:
         seg_score.setdefault(seg, 0.0)
         seg_ctx.setdefault(seg, float("nan"))
@@ -591,6 +612,17 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     fresh = [g for g in segs if g not in deep_m]
     if fresh:
         from .fusion import rrf
+        # channel weights are a LEARNED, per-store artifact: fitted offline
+        # against a labeled regression set (scripts/fit_weights.py) from
+        # captured channel scores — never hand-tuned, reloaded when the
+        # file changes, defaults to 1.0 everywhere.
+        wfile = Path(store.dir) / "_channel_weights.json"
+        learned = {}
+        try:
+            if wfile.exists():
+                learned = json.loads(wfile.read_text()).get("weights", {})
+        except Exception:
+            pass
         # For directional queries, motion is the ONLY channel measuring the
         # query's discriminating dimension (the others are direction-blind,
         # measured), so it carries extra weight; otherwise it is off.
@@ -603,9 +635,24 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                      "met": np.array([seg_met[g] for g in fresh]),
                      "scr": np.array([scr_m.get(g, float("nan"))
                                       for g in fresh])},
-                    weights={"mot": 2.5 if qv_swap is not None else 0.0})
+                    weights={**{c: learned.get(c, 1.0) for c in
+                                ("app", "ctx", "lex", "met", "anc",
+                                 "obj", "scr")},
+                             "mot": (learned.get("mot", 2.5)
+                                     if qv_swap is not None else 0.0)})
         # displayed score = the fused score that actually ordered the hit;
         # showing raw appearance while ordering by fusion read as broken
+        # attribution hook: which channel put each segment where — the
+        # regression bench reads this to give every miss a named cause
+        global _LAST_ATTR
+        _LAST_ATTR = {"segs": list(fresh),
+                      "channels": {"app": [seg_score[g] for g in fresh],
+                                   "ctx": [seg_ctx[g] for g in fresh],
+                                   "lex": [seg_lex[g] for g in fresh],
+                                   "met": [seg_met[g] for g in fresh],
+                                   "mot": [seg_mot[g] for g in fresh],
+                                   "anc": [seg_anc[g] for g in fresh],
+                                   "obj": [seg_obj[g] for g in fresh]}}
         fused_of = dict(zip(fresh, fused))
         seg_score.update(fused_of)
         fresh = [g for _, g in sorted(zip(-fused, fresh))]
