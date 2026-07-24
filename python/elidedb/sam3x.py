@@ -231,6 +231,7 @@ def _masklets(per_frame, n):
                 "any_moved": False}
     best_id = max(totals, key=totals.get)
     per_id_centers = {}
+    per_id_best = {}
     for i in range(n):
         o = per_frame.get(i)
         if not isinstance(o, dict):
@@ -244,27 +245,39 @@ def _masklets(per_frame, n):
             per_id_centers.setdefault(oid, []).append(
                 (bx[0] + bx[2] / 2, bx[1] + bx[3] / 2,
                  max(bx[2], bx[3])))
+            m = o.get("out_binary_masks")
+            mj = (np.squeeze(np.asarray(m[j])) > 0.5
+                  if m is not None and len(m) > j else None)
+            if oid not in per_id_best \
+                    or probs[j] > per_id_best[oid][0]:
+                per_id_best[oid] = (float(probs[j]), i, mj)
             if oid != best_id:
                 continue
             presence[i] = float(probs[j])
             boxes[i] = np.array([bx[0], bx[1],
                                  bx[0] + bx[2], bx[1] + bx[3]])
-            m = o.get("out_binary_masks")
-            if m is not None and len(m) > j:
-                masks[i] = np.squeeze(np.asarray(m[j])) > 0.5
+            masks[i] = mj
     # "does ANY instance of this concept move" — the manipulated object
     # may be a different identity than the most-visible one (a second
-    # green toy); the static-kill must not execute true clips for that
+    # green toy); the static-kill must not execute true clips for that.
+    # The MOVER's identity is also exposed so attribute checks (color)
+    # interrogate the object that actually acted, not the most visible
     any_moved = False
-    for pts in per_id_centers.values():
+    mover, mover_ratio = None, 0.0
+    for oid, pts in per_id_centers.items():
         if len(pts) < 2:
             continue
         cs = np.asarray([(x, y) for x, y, _ in pts])
-        size = float(np.median([s for _, _, s in pts]))
+        size = float(np.median([s for _, _, s in pts])) + 1e-6
         exc = float(np.max(np.linalg.norm(cs - cs.mean(0),
                                           axis=1))) * 2.0
         if exc >= 0.7 * size:
             any_moved = True
-            break
+            if exc / size > mover_ratio:
+                mover, mover_ratio = oid, exc / size
+    mover_frame = mover_mask = None
+    if mover is not None and mover in per_id_best:
+        _, mover_frame, mover_mask = per_id_best[mover]
     return {"presence": presence, "boxes": boxes, "masks": masks,
-            "any_moved": any_moved}
+            "any_moved": any_moved, "mover_frame": mover_frame,
+            "mover_mask": mover_mask}

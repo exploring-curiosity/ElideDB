@@ -349,6 +349,61 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     }
 
 
+# closed-class color words -> OpenCV hue bands (H in 0..180); S/V
+# floors exclude gray/white. Deterministic pixel evidence from the
+# tracked masklet — no model, no metadata, fully explainable.
+_HUE = {"red": [(0, 10), (170, 180)], "orange": [(10, 20)],
+        "yellow": [(20, 33)], "green": [(35, 85)],
+        "blue": [(95, 130)], "purple": [(130, 165)],
+        "pink": [(150, 175)]}
+
+
+def _mask_color_frac(store, stream, t0, t1, tr_x, color):
+    """Fraction of the tracked X masklet's pixels in the color band,
+    measured on the MOVER identity at its most confident frame (the
+    object that acted — a static, genuinely-green bystander must not
+    vouch for a clip where the yellow cheese did the moving)."""
+    import cv2
+    import pyarrow.compute as pc
+
+    from .video import FrameSet
+    if tr_x.get("mover_mask") is not None:
+        best_f = int(tr_x["mover_frame"])
+        m0 = tr_x["mover_mask"]
+    else:
+        best_f = int(np.argmax(tr_x["presence"]))
+        m0 = tr_x["masks"][best_f]
+    if m0 is None:
+        return None
+    frames_tbl = store.table("frames").scan()
+    sel = frames_tbl.filter(pc.and_(
+        pc.equal(frames_tbl.column("stream"), stream),
+        pc.and_(pc.greater_equal(frames_tbl.column("ts"), t0),
+                pc.less_equal(frames_tbl.column("ts"), t1))))
+    if len(sel) < 4:
+        return None
+    n = len(tr_x["presence"])
+    pick = np.linspace(0, len(sel) - 1, n).round().astype(int)
+    dec = FrameSet(store, "frames",
+                   sel.take(pick[best_f:best_f + 1])).decode(width=480)
+    if not dec:
+        return None
+    img = sorted(dec)[0][1]
+    m = m0
+    if m.shape != img.shape[:2]:
+        m = cv2.resize(m.astype(np.uint8), (img.shape[1],
+                                            img.shape[0])) > 0
+    if m.sum() < 20:
+        return None
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+    h, s, v = hsv[..., 0][m], hsv[..., 1][m], hsv[..., 2][m]
+    ok = np.zeros(len(h), bool)
+    for lo, hi in _HUE[color]:
+        ok |= (h >= lo) & (h <= hi)
+    ok &= (s > 60) & (v > 50)
+    return float(ok.mean())
+
+
 def _binding_audit(store, rel, clip_keys):
     """SAM 3.1 tracker BINDING audit on every returned clip: does the
     queried OBJECT actually appear, and does it engage the LANDMARK?
@@ -372,7 +427,7 @@ def _binding_audit(store, rel, clip_keys):
     phrases = [p for p in (x, y) if p]
     keep = np.ones(len(clip_keys), bool)
     checked = killed_absent = killed_disjoint = abstained = 0
-    killed_static = 0
+    killed_static = killed_wrong_color = 0
     for i, (s, a, b) in enumerate(clip_keys):
         try:
             tr = track_concepts(store, s, a, b, phrases, n_frames=8)
@@ -396,6 +451,18 @@ def _binding_audit(store, rel, clip_keys):
             keep[i] = False
             killed_static += 1
             continue
+        # COLOR CHECK, pixel-level: SAM 3's presence token accepts a
+        # yellow-green cheese for "a green object" (audit-bench-caught,
+        # zero kills on attribute queries) — but the masklet hands us
+        # the object's PIXELS, and color words are closed-class. The
+        # object claimed as <color> must actually be <color>.
+        color = next((c for c in _HUE if x and c in x), None)
+        if color is not None:
+            frac = _mask_color_frac(store, s, a, b, tr[x], color)
+            if frac is not None and frac < 0.25:
+                keep[i] = False
+                killed_wrong_color += 1
+                continue
         if x is not None and y is not None \
                 and max(tr[y]["presence"]) >= 0.5:
             near = False
@@ -426,6 +493,7 @@ def _binding_audit(store, rel, clip_keys):
     return ({"checked": checked, "killed_absent": killed_absent,
              "killed_disjoint": killed_disjoint,
              "killed_static": killed_static,
+             "killed_wrong_color": killed_wrong_color,
              "abstained": abstained,
              "ungroundable": ungroundable,
              "x": x, "y": y}, keep)
