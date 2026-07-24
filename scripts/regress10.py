@@ -48,6 +48,18 @@ QUERIES = [
      lambda L: "pick" in L or "take" in L or "grab" in L),
     ("moving the pot to the burner",
      lambda L: ("burner" in L or "stove" in L or "pot" in L)),
+    # relational / binding shapes (user-reported failing): the OBJECT and
+    # the DESTINATION must both be right, not just present
+    ("put the lid on a vessel",
+     lambda L: "lid" in L),
+    ("put the green object in the drawer",
+     lambda L: "green" in L and "drawer" in L),
+    ("place a toy on top of the towel",
+     lambda L: ("towel" in L or "cloth" in L) and
+               any(w in L for w in ("put", "place", "move", "top"))),
+    ("take something out of the pot",
+     lambda L: "pot" in L and any(w in L for w in
+                                  ("take", "out", "remove", "get"))),
 ]
 
 

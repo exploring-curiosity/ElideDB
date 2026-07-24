@@ -261,7 +261,12 @@ def object_lookup(store, qv):
             return float("nan"), 0.0
         per_atom = S[run].max(axis=0)                # best region per atom
         which = int(np.argmax(S[run][:, 0]))
-        return float(per_atom.mean()), float(mo[run[which]])
+        # CONJUNCTION = the WEAKEST required object. The mean let one
+        # strong crop carry a recording whose other object barely matched
+        # (attributed live: 'a vessel' matched nothing, so any fork with a
+        # good 'lid'-ish crop won; drawer crops are everywhere, so 'green'
+        # never had to be real). min() makes every named object earn it.
+        return float(per_atom.min()), float(mo[run[which]])
     return lookup
 
 
@@ -292,7 +297,7 @@ def object_candidates(store, qv, top=24):
             run = rows[start:end]
             r0 = int(run[0])
             rec_score[(s, int(sa[r0]), int(sb[r0]))] = \
-                float(S[run].max(axis=0).mean())
+                float(S[run].max(axis=0).min())
             start = end
     out = sorted(rec_score.items(), key=lambda kv: -kv[1])[:top]
     return [(*k, v) for k, v in out]
