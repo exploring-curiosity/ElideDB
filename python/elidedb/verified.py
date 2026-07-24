@@ -424,6 +424,23 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     except Exception:
         pass
 
+    # PE channel — Meta Perception Encoder (published SOTA zero-shot
+    # video-text retrieval; best single-encoder p@10 measured here).
+    pe_look = None
+    try:
+        from .pe import pe_lookup
+        pe_look, pe_cands = pe_lookup(store, text)
+        for s_, a, b, _sc in pe_cands[:per]:
+            if streams and s_ not in streams:
+                continue
+            if t0 is not None and b < t0:
+                continue
+            if t1 is not None and a > t1:
+                continue
+            cand.setdefault((s_, a, b), 0.0)
+    except Exception:
+        pass
+
     obj_lookup = None
     try:
         from .objects import object_candidates, object_lookup
@@ -523,7 +540,7 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # NaN = the ctx ranker ABSTAINS on that segment; RRF gives it the
     # median rank rather than the bottom (see fusion.py on why).
     seg_score, seg_ctx, seg_lex, seg_mot, seg_anc = {}, {}, {}, {}, {}
-    seg_obj, seg_met, seg_vid = {}, {}, {}
+    seg_obj, seg_met, seg_vid, seg_pe = {}, {}, {}, {}
     # candidate -> containing segment by per-stream binary search: the
     # nested scan was O(candidates x segments) Python and went to ~700 ms
     # when the recall floor raised both (measured); this is O(n log n)
@@ -574,6 +591,8 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
             seg_obj[seg] = float("nan")
         seg_vid[seg] = (vid_look(*seg) if vid_look is not None
                         else float("nan"))
+        seg_pe[seg] = (pe_look(*seg) if pe_look is not None
+                       else float("nan"))
 
     # directional queries hash differently: their margins are swap-CONTRASTS
     # (query minus inverted query), a different quantity than the absolute
@@ -663,11 +682,12 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                      "obj": np.array([seg_obj[g] for g in fresh]),
                      "met": np.array([seg_met[g] for g in fresh]),
                      "vid": np.array([seg_vid[g] for g in fresh]),
+                     "pe": np.array([seg_pe[g] for g in fresh]),
                      "scr": np.array([scr_m.get(g, float("nan"))
                                       for g in fresh])},
                     weights={**{c: learned.get(c, 1.0) for c in
                                 ("app", "ctx", "lex", "met", "anc",
-                                 "obj", "scr", "vid")},
+                                 "obj", "scr", "vid", "pe")},
                              "mot": (learned.get("mot", 2.5)
                                      if qv_swap is not None else 0.0)})
         # displayed score = the fused score that actually ordered the hit;
@@ -683,7 +703,8 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                                    "mot": [seg_mot[g] for g in fresh],
                                    "anc": [seg_anc[g] for g in fresh],
                                    "obj": [seg_obj[g] for g in fresh],
-                                   "vid": [seg_vid[g] for g in fresh]}}
+                                   "vid": [seg_vid[g] for g in fresh],
+                                   "pe": [seg_pe[g] for g in fresh]}}
         fused_of = dict(zip(fresh, fused))
         seg_score.update(fused_of)
         fresh = [g for _, g in sorted(zip(-fused, fresh))]
