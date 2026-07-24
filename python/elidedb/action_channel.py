@@ -18,16 +18,51 @@ import numpy as np
 _IDX = {}
 
 
-def act_lookup(store, text):
-    """(lookup(stream, t0, t1) -> weighted posterior | nan,
-    candidates top-64). Rows in action_probs are one per episode."""
-    from .action_probe import query_class_weights
-    from .embeddings import _vec_table
-    from .rerank import directional_swap
+# canonical direction contrasts: LITERAL SSv2 class families, chosen
+# from the measured class-leaning lists on labeled direction pairs
+# (put-in vs take-out AUC 0.889; these are generic action classes of a
+# public model's vocabulary, nothing per-dataset). Text-mapped weights
+# proved noisy for direction ("open" mapped onto the pulling-out
+# family, which fires on take-out clips — product-bench-caught).
+CANON = {
+    # strictly containment-ENTERING classes: compound outward queries
+    # ("take X out and put it on the table") contain putting-onto
+    # actions, so onto-classes must not count against them
+    "inward": (("Putting something into something",
+                "Stuffing something into something"),
+               ("Taking something out of something",
+                "Pulling something out of something",
+                "Taking something from somewhere")),
+    "close": (("Closing something",
+               "Pushing something with something"),
+              ("Opening something",
+               "Pulling something out of something")),
+}
 
+
+def canonical_contrast(direction):
+    """direction in {inward, outward, close, open} -> 174-d contrast
+    vector over literal class indices."""
+    from .action_probe import ssv2_classes
+    flip = direction in ("outward", "open")
+    pos, neg = CANON["close" if direction in ("close", "open")
+                     else "inward"]
+    if flip:
+        pos, neg = neg, pos
+    ci = {c: i for i, c in enumerate(ssv2_classes())}
+    w = np.zeros(len(ci))
+    for c in pos:
+        w[ci[c]] = 1.0 / len(pos)
+    for c in neg:
+        w[ci[c]] = -1.0 / len(neg)
+    return w
+
+
+def _index(store):
     ver = store.table("action_probs").state().version
     key = (str(store.dir), ver)
     if key not in _IDX:
+        from .embeddings import _vec_table
         tbl, _ = _vec_table(store, "action_probs")
         ss = tbl.column("stream").to_pylist()
         sa = [int(v) for v in tbl.column("ts").to_pylist()]
@@ -40,13 +75,28 @@ def act_lookup(store, text):
         if len(_IDX) > 8:
             _IDX.clear()
         _IDX[key] = idx
-    idx = _IDX[key]
+    return _IDX[key]
+
+
+def act_lookup(store, text, contrast=None):
+    """(lookup(stream, t0, t1) -> weighted posterior | nan,
+    candidates top-64). Rows in action_probs are one per episode.
+    `contrast`: an explicit 174-d weight vector (canonical_contrast)
+    overrides the text-mapped weights."""
+    from .action_probe import query_class_weights
+    from .embeddings import _vec_table
+    from .rerank import directional_swap
+
+    idx = _index(store)
     _, probs = _vec_table(store, "action_probs")
 
-    w = query_class_weights(text)
-    sq = directional_swap(text)
-    if sq is not None:
-        w = w - query_class_weights(sq)
+    if contrast is not None:
+        w = contrast
+    else:
+        w = query_class_weights(text)
+        sq = directional_swap(text)
+        if sq is not None:
+            w = w - query_class_weights(sq)
     sc = np.asarray(probs) @ w
 
     def lookup(s, a, b):

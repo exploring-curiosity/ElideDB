@@ -110,6 +110,37 @@ def _episodes(store):
                     (int(v) for v in ep.column("t1").to_pylist())))
 
 
+# generic English verb -> SSv2 class family (model vocabulary, nothing
+# per-dataset). Only verbs with an unambiguous class mapping gate.
+_VERB_CLASSES = {
+    "fold": ("Folding something",),
+    "unfold": ("Unfolding something",),
+    "tear": ("Tearing something into two pieces",
+             "Tearing something just a little bit"),
+    "throw": ("Throwing something",),
+    "pour": ("Pouring something into something",),
+    "squeeze": ("Squeezing something",),
+    "stack": ("Stacking number of something",),
+}
+
+
+def _action_support(store, text_lower):
+    """{verb, classes, max_p} when the query names a gateable action;
+    None otherwise. max_p = the corpus's best SSv2 posterior for the
+    family — an index-only 'does this action happen here at all'."""
+    hit = next((v for v in _VERB_CLASSES if v in text_lower), None)
+    if hit is None:
+        return None
+    from .action_probe import ssv2_classes
+    from .embeddings import _vec_table
+    _, probs = _vec_table(store, "action_probs")
+    ci = {c: i for i, c in enumerate(ssv2_classes())}
+    cols = [ci[c] for c in _VERB_CLASSES[hit] if c in ci]
+    mp = float(np.asarray(probs)[:, cols].max()) if cols else 1.0
+    return {"verb": hit, "classes": list(_VERB_CLASSES[hit]),
+            "max_p": round(mp, 4)}
+
+
 def _knee(sorted_desc):
     """Set boundary on the sorted fused curve. The raw largest-drop
     knee cut 183-episode classes to 4 (RRF consensus gives the top few
@@ -139,10 +170,26 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
                      the query parses as a relation; abstains otherwise.
     """
     from .fusion import rrf
+    from .grounding import _INWARD, parse_relation
     from .rerank import directional_swap
     t0 = time.perf_counter()
     keys = _episodes(store)
     sq = directional_swap(text)
+
+    # QUERY UNDERSTANDING, all mechanical: the parsed relation names
+    # the containment direction relative to the landmark; open/close
+    # verbs name the articulation direction. These select CANONICAL
+    # literal-class contrasts for the act channel — the text-mapped
+    # weights sent "open" onto the pulling-out family, which fires on
+    # take-out clips (product-bench-caught).
+    rel = parse_relation(text)
+    tl = text.lower()
+    verb_dir = ("close" if any(w in tl for w in
+                               ("close", "closes", "closing", "shut"))
+                else "open" if "open" in tl else None)
+    containment = None
+    if rel is not None and verb_dir is None:
+        containment = "inward" if rel[1] in _INWARD else "outward"
 
     ch = {}
     try:
@@ -152,8 +199,10 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     except Exception:
         pass
     try:
-        from .action_channel import act_lookup
-        look, _ = act_lookup(store, text)
+        from .action_channel import act_lookup, canonical_contrast
+        contrast = (canonical_contrast(containment or verb_dir)
+                    if (containment or verb_dir) else None)
+        look, _ = act_lookup(store, text, contrast=contrast)
         ch["act"] = np.array([look(*k) for k in keys])
     except Exception:
         pass
@@ -163,57 +212,112 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
         ch["vid"] = np.array([look(*k) for k in keys])
     except Exception:
         pass
+    # OBJ channel — FastSAM crops matched against the query's noun
+    # phrases (SigLIP space): the color/attribute binding the product
+    # bench showed missing from the set path
+    try:
+        from .context import embed_texts
+        from .objects import object_lookup
+        nps = [p for p in ((rel[0], rel[2]) if rel else ())
+               if p and "object" not in p]
+        if not nps:
+            import re as _re
+            nps = [m.group(0) for m in _re.finditer(
+                r"\b(?:a|an|the)\s+(?:\w+\s+){0,2}\w+", tl)][:2]
+        if nps:
+            olook = object_lookup(store, embed_texts(nps))
+            def _obj(k):
+                osc, omo = olook(*k)
+                return osc * (1.0 + omo) if osc == osc else float("nan")
+            ch["obj"] = np.array([_obj(k) for k in keys])
+    except Exception:
+        pass
     mot = None
-    if sq is not None:
+    if sq is not None or verb_dir is not None:
         try:
             from .context import embed_texts
             from .motion import motion_lookup
-            qv2 = embed_texts([text, sq])
-            mlook = motion_lookup(store, qv2[0], qv2[1])
-            mot = np.array([mlook(*k) for k in keys])
-            ch["mot"] = mot
+            msq = sq or directional_swap(
+                "opening the drawer" if verb_dir == "open"
+                else "closing the drawer")
+            if msq:
+                qv2 = embed_texts([text, msq])
+                mlook = motion_lookup(store, qv2[0], qv2[1])
+                mot = np.array([mlook(*k) for k in keys])
+                ch["mot"] = mot
         except Exception:
             pass
 
-    # learned per-store weights, routed by query type (same artifact
-    # the ranked path uses)
+    # weights: learned per-store artifact, routed; for OPEN/CLOSE the
+    # motion channel is the AUTHORITY (0.98 AUC, measured — the weight
+    # fit diluted it chasing containment gains, breaking open 0/4)
+    directional = sq is not None or verb_dir is not None
     weights = {c: 1.0 for c in ch}
     try:
         from pathlib import Path
         cfg = json.loads((Path(store.dir) / "_channel_weights.json")
                          .read_text())
         learned = (cfg.get("weights_dir", cfg.get("weights", {}))
-                   if sq is not None else cfg.get("weights", {}))
+                   if directional else cfg.get("weights", {}))
         weights = {c: float(learned.get(c, 1.0)) for c in ch}
-        if sq is not None and "mot" in weights:
-            weights["mot"] = max(weights["mot"], 1.0)
     except Exception:
         pass
+    if verb_dir is not None and "mot" in ch:
+        weights["mot"] = max(weights.get("mot", 1.0), 8.0)
+    elif directional and "mot" in weights:
+        weights["mot"] = max(weights["mot"], 1.0)
 
     fused = rrf(ch, weights=weights)
 
-    # DIRECTION HARD FILTER — QUANTILE, NOT SIGN. Both direction
-    # channels were validated by AUC (an ORDERING property); their zero
-    # point is uncalibrated — a sign test executed 130/183 true closes
-    # (measured) because most true closes score mildly negative on both.
-    # Rank properties get rank thresholds: drop only episodes that BOTH
-    # channels place in the bottom third of their contrast orderings.
-    # NaN = neutral (median), abstain never kills.
+    # NO-MATCH GATE, video-native: when the query names an ACTION and
+    # the corpus's maximum SSv2 posterior for that action family is at
+    # noise level, the action does not happen anywhere in this store —
+    # the honest answer is the EMPTY set. Measured separation on
+    # bridge4h: absent actions max 0.008-0.021 (fold/tear/throw) vs
+    # present ones 0.12-0.93 (close/open/put-in); threshold 0.05 sits
+    # in the gap. (A PE-cosine z-gate was tried first and could not
+    # separate — fold z 2.2 ranked ABOVE lid z 1.9; cosine spread
+    # compresses on compositional phrasings.)
+    gate = _action_support(store, tl)
+    if gate is not None and gate["max_p"] < 0.05:
+        ms = (time.perf_counter() - t0) * 1e3
+        return {"clips": [], "borderline": [], "audit": None,
+                "no_match": True, "reason": gate,
+                "direction_filtered": 0, "channels": sorted(ch),
+                "scored": len(keys), "ms": round(ms, 1)}
+
+    # DIRECTION HARD FILTER — QUANTILE, NOT SIGN (AUC-validated
+    # channels have uncalibrated zero points; a sign test executed
+    # 130/183 true closes). For open/close, motion ALONE decides
+    # (bottom half dropped); for containment, both direction channels
+    # must agree (bottom third AND).
+    def _rankfrac(v):
+        r = np.full(len(v), 0.5)
+        fin = np.isfinite(v)
+        if fin.sum() > 1:
+            order = np.argsort(np.argsort(v[fin]))
+            r[fin] = order / (fin.sum() - 1)
+        return r
+
     dropped = 0
     alive = np.ones(len(keys), bool)
-    if sq is not None:
-        act = ch.get("act")
-        if mot is not None and act is not None:
-            def _rankfrac(v):
-                r = np.full(len(v), 0.5)
-                fin = np.isfinite(v)
-                if fin.sum() > 1:
-                    order = np.argsort(np.argsort(v[fin]))
-                    r[fin] = order / (fin.sum() - 1)
-                return r
-            bad = (_rankfrac(mot) < 1 / 3) & (_rankfrac(act) < 1 / 3)
-            alive &= ~bad
-            dropped = int(bad.sum())
+    act = ch.get("act")
+    if verb_dir is not None and mot is not None:
+        # bottom THIRD only: motion's 0.98 AUC is close-vs-OPEN
+        # (pairwise); against the whole corpus true closes sit
+        # mid-distribution and a half-cut executed them (bench-caught,
+        # close 4/6 -> 2/7)
+        bad = _rankfrac(mot) < 1 / 3
+        alive &= ~bad
+        dropped = int(bad.sum())
+    elif containment is not None and act is not None:
+        af = _rankfrac(act)
+        if mot is not None:
+            bad = (af < 1 / 3) & (_rankfrac(mot) < 1 / 3)
+        else:
+            bad = af < 1 / 4
+        alive &= ~bad
+        dropped = int(bad.sum())
 
     idx = np.where(alive)[0]
     order = idx[np.argsort(-fused[idx])]
@@ -222,13 +326,13 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     borderline = order[cut:cut + 20]
 
     audit = None
-    if purity == "audited" and len(chosen) >= 4:
-        audit, keep = _geometry_audit(store, text,
-                                      [keys[i] for i in chosen],
-                                      n_sample=audit_n)
-        if keep is not None:
-            borderline = np.concatenate([chosen[keep:], borderline])
-            chosen = chosen[:keep]
+    if purity == "audited" and len(chosen) > 0 and rel is not None:
+        audit, keep_mask = _binding_audit(store, rel,
+                                          [keys[i] for i in chosen])
+        if keep_mask is not None:
+            killed = chosen[~keep_mask]
+            borderline = np.concatenate([killed, borderline])
+            chosen = chosen[keep_mask]
 
     ms = (time.perf_counter() - t0) * 1e3
     return {
@@ -245,31 +349,62 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     }
 
 
-def _geometry_audit(store, text, clip_keys, n_sample=12):
-    """SAM 3 containment-change audit on a stratified sample. Returns
-    ({checked, judged, positive, abstained, pass_rate},
-    prune_point|None); (None, None) when the query has no parseable
-    relation — geometry only ever claims what geometry can see."""
-    from .grounding import parse_relation, verify_relation
-    if parse_relation(text) is None:
+def _binding_audit(store, rel, clip_keys):
+    """SAM 3.1 tracker BINDING audit on every returned clip: does the
+    queried OBJECT actually appear, and does it engage the LANDMARK?
+
+    Division of labor fixed by measurement: DIRECTION belongs to the
+    index channels (mot 0.98 open/close, act 0.889 put/take, free);
+    the tracker's occlusion-persistent memory made it a poor direction
+    instrument (AUC 0.643) but a robust IDENTITY one — exactly the
+    binding failures the product bench showed (wrong colors, wrong
+    objects). A clip is killed only on positive evidence of absence:
+    the X masklet never appears, or X and Y masklets never come near
+    each other. Tracker failure on a clip = abstain = keep.
+    """
+    from .grounding import _ioa
+    from .sam3x import track_concepts
+    x, _, y = rel
+    x = None if (not x or "object" in x or "something" in x) else x
+    y = None if (not y or "object" in y or "something" in y) else y
+    if x is None and y is None:
         return None, None
-    n = len(clip_keys)
-    pos_idx = sorted(set(np.linspace(0, n - 1, min(n_sample, n))
-                         .round().astype(int)))
-    sample = [clip_keys[i] for i in pos_idx]
-    margins = verify_relation(store, text, sample)
-    if margins is None:
-        return None, None
-    abstained = int(np.isnan(margins).sum())
-    judged = int(np.isfinite(margins).sum())
-    passed = int((margins[np.isfinite(margins)] > 0).sum())
-    keep = None
-    fin = np.isfinite(margins)
-    if judged and not (margins[fin] > 0).all():
-        good = [p for p, m in zip(pos_idx, margins)
-                if np.isfinite(m) and m > 0]
-        keep = (max(good) + 1) if good else 0
-    return ({"checked": len(sample), "judged": judged,
-             "positive": passed, "abstained": abstained,
-             "pass_rate": round(passed / judged, 2) if judged
-             else None}, keep)
+    phrases = [p for p in (x, y) if p]
+    keep = np.ones(len(clip_keys), bool)
+    checked = killed_absent = killed_disjoint = abstained = 0
+    for i, (s, a, b) in enumerate(clip_keys):
+        try:
+            tr = track_concepts(store, s, a, b, phrases, n_frames=8)
+        except Exception:
+            tr = None
+        if tr is None:
+            abstained += 1
+            continue
+        checked += 1
+        if x is not None and max(tr[x]["presence"]) < 0.5:
+            keep[i] = False
+            killed_absent += 1
+            continue
+        if x is not None and y is not None \
+                and max(tr[y]["presence"]) >= 0.5:
+            near = False
+            for f in range(len(tr[x]["boxes"])):
+                bx, by = tr[x]["boxes"][f], tr[y]["boxes"][f]
+                if bx is None or by is None:
+                    continue
+                # engagement: overlap, or gap under half of X's size
+                if _ioa(bx, by) > 0.02:
+                    near = True
+                    break
+                gap = max(by[0] - bx[2], bx[0] - by[2],
+                          by[1] - bx[3], bx[1] - by[3])
+                if gap < 0.5 * max(bx[2] - bx[0], bx[3] - bx[1]):
+                    near = True
+                    break
+            if not near:
+                keep[i] = False
+                killed_disjoint += 1
+    return ({"checked": checked, "killed_absent": killed_absent,
+             "killed_disjoint": killed_disjoint,
+             "abstained": abstained,
+             "x": x, "y": y}, keep)

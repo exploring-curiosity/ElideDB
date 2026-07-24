@@ -61,13 +61,20 @@ def main():
                           t["task"]):
         if k:
             lab[(stream_of.get(int(i)), int(a))] = k.lower()
+    mode = sys.argv[2] if len(sys.argv) > 2 else "fast"
     frames_tbl = db.table("frames").scan()
     for qi, q in enumerate(QUERIES):
-        r = search_set(db, q, purity="fast", k_max=10)
+        r = search_set(db, q, purity=mode, k_max=10)
         clips = r["clips"]
+        au = ""
+        if r.get("audit"):
+            a = r["audit"]
+            au = (f"  audit[chk {a['checked']} absent "
+                  f"{a['killed_absent']} disjoint "
+                  f"{a['killed_disjoint']}]")
         print(f"[q{qi:02d}] returned {len(clips):2d}  "
-              f"dirdrop {r['direction_filtered']:4d}  "
-              f"{r['ms']:5.0f}ms  {q}")
+              f"dirdrop {r['direction_filtered']:4d}{au}  "
+              f"{r['ms']:5.0f}ms  {q}", flush=True)
         if not clips:
             continue
         rows = []
