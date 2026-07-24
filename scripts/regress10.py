@@ -20,8 +20,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 from elidedb import Store                                    # noqa: E402
 import elidedb.verified as V                                 # noqa: E402
 
-V._verdict_map = lambda s: {}
-V._verify_segments = lambda *a, **k: {}
+
+def _cold_patch():
+    """Disable verdict cache + verification for cold index-only grading.
+    Called from main() ONLY — as a module-level side effect it silently
+    no-opped the judge for ANY script importing QUERIES (found when the
+    curated bench returned 0/140 in 0 s)."""
+    V._verdict_map = lambda s: {}
+    V._verify_segments = lambda *a, **k: {}
 
 QUERIES = [
     ("the robot closes the drawer",
@@ -64,6 +70,7 @@ QUERIES = [
 
 
 def main():
+    _cold_patch()
     store = sys.argv[1] if len(sys.argv) > 1 else "bridge4h"
     db = Store.open(f"lake/{store}")
     t = pq.read_table("eval/bridge4h_truth.parquet").to_pydict()
