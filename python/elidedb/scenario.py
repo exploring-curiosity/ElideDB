@@ -419,9 +419,21 @@ def _binding_audit(store, rel, clip_keys):
     """
     from .grounding import _ioa
     from .sam3x import track_concepts
+
+    def _concrete(p):
+        """None for placeholder-only phrases ('the object'); an
+        ATTRIBUTE-bearing phrase ('a green object') is groundable —
+        the blanket 'object'-in-phrase test silently skipped the whole
+        X audit on every attribute query (debug-caught: any_moved and
+        color fracs were real, the audit just never asked)."""
+        if not p:
+            return None
+        words = [w for w in p.split()
+                 if w not in ("a", "an", "the", "object", "objects",
+                              "something", "thing")]
+        return p if words else None
     x, _, y = rel
-    x = None if (not x or "object" in x or "something" in x) else x
-    y = None if (not y or "object" in y or "something" in y) else y
+    x, y = _concrete(x), _concrete(y)
     if x is None and y is None:
         return None, None
     phrases = [p for p in (x, y) if p]
