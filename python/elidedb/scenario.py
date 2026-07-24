@@ -1,29 +1,30 @@
-"""SET RETRIEVAL — the robotics query model, seconds-scale.
+"""SET RETRIEVAL — the robotics query model, seconds-scale, VLM-free.
 
 The product truth (user-stated): a robotics team doesn't want the one
 best clip, they want ALL clips matching a scenario, clean enough to
-retrain on. That flips the design: precision of the DELIVERED SET is
-king, recall is negotiable, latency budget is seconds (it is a database,
-not a batch job).
+retrain on. Precision of the DELIVERED SET is king; latency budget is
+seconds.
 
-Architecture (the IVF idea with learned cells, finally made physical):
-  INGEST  per-recording PE vector (top-frame pooled, best measured
-          encoder) -> HDBSCAN clusters = SCENARIO CELLS. Centroids +
-          member permutation live as derived artifacts. Clusters double
-          as a browsable "scenario map" of the corpus.
-  QUERY   text -> PE text vector -> score ~K centroids (microseconds)
-          -> open only the matching cells (elision: untouched cells are
-          never read) -> exact scoring inside -> distribution knee sets
-          the set boundary -> optional 2B SAMPLE AUDIT (~8 stratified
-          clips, ~4 s) estimates purity WITHOUT labels and prunes the
-          set to the requested purity.
-  OUTPUT  {clips, scores, est_purity, borderline, cells} — counts and
-          confidences, and an honest borderline pile, never junk mixed
-          silently into the delivery.
-
-Torn out per measurement: caption-trained ctx and subject-anchor
-channels play no part here (measured harmful in composites); this path
-is PE-primary with motion contrast for directional queries.
+v2 after the visual calibration (2026-07-24) tore v1 down:
+  - Scene-clustered IVF cells hid 45/46 true "lid" episodes from the
+    opened-6 — actions do not live in scene cells. At this corpus size
+    (thousands of episodes) a flat exact scan is sub-millisecond, so
+    query-time cell pruning bought nothing and cost nearly all recall.
+    Cells remain as the browsable scenario MAP (build_scenarios) and
+    as the pruning layout for a future 100k+ corpus.
+  - Single-encoder scoring cannot rank relational actions deep into a
+    list (PE full-scan R@257 = 9/46 on "lid"). The set path now fuses
+    the channels that each own a dimension: PE (appearance-text),
+    ACT (SSv2 action posteriors — put-in vs take-out AUC 0.889),
+    VID (X-CLIP), MOT (delta-appearance contrast, close/open AUC 0.98).
+  - Direction is a HARD FILTER, not a rerank: an episode both
+    direction-aware channels score negative is dropped, not demoted —
+    junk excluded from the delivery, per the set-purity mandate.
+  - The VLM sample audit is GONE (user directive: no LLM/VLM judges;
+    calibration showed 7B est 1.0 on visually ~10%-pure sets). The
+    audited tier is now GEOMETRY: SAM 3 grounds the query's noun
+    phrases and the containment change over time verifies the
+    relation. Deterministic, explainable, abstains honestly.
 """
 from __future__ import annotations
 
@@ -63,16 +64,12 @@ def _pool_recordings(store):
 
 
 def build_scenarios(store, min_cluster_size=8):
-    """HDBSCAN over recording vectors -> scenario cells, persisted as a
-    derived artifact beside the pe_vectors table."""
+    """HDBSCAN scenario groups (the human-browsable map) + KMeans-IVF
+    cells (the physical layout for 100k+ scale), persisted beside
+    pe_vectors. NOT used for query-time pruning at this corpus size —
+    measured hiding 45/46 relational positives."""
     t0 = time.time()
     keys, M, rowsets = _pool_recordings(store)
-    # TWO clusterings, two jobs (HDBSCAN alone gave 4 density groups on
-    # this space — a fine scenario MAP, a useless INDEX):
-    #   scenario groups (HDBSCAN): the human-browsable map of what the
-    #     corpus contains — density-true, few, nameable
-    #   index cells (KMeans-IVF): the physical pruning layout — enough
-    #     cells that opening a handful elides most of the corpus
     try:
         from sklearn.cluster import HDBSCAN
         groups = HDBSCAN(min_cluster_size=min_cluster_size,
@@ -106,157 +103,171 @@ def build_scenarios(store, min_cluster_size=8):
             "seconds": round(time.time() - t0, 1)}
 
 
-def _load_cells(store):
-    ver = store.table("pe_vectors").state().version
-    key = (str(store.dir), ver)
-    if key in _CELLS:
-        return _CELLS[key]
-    cell_dir = store.table("pe_vectors").dir / "_cache"
-    meta = json.loads((cell_dir / "cells.json").read_text())
-    if meta["version"] != ver:
-        raise RuntimeError("scenario cells stale — run build_scenarios()")
-    cents = np.load(cell_dir / "cell_centroids.npy")
-    lab = np.load(cell_dir / "cell_labels.npy")
-    M = np.load(cell_dir / "cell_matrix.npy", mmap_mode="r")
-    keys = [(k[0], int(k[1]), int(k[2])) for k in meta["keys"]]
-    by_cell = {}
-    for i, c in enumerate(lab):
-        by_cell.setdefault(int(c), []).append(i)
-    if len(_CELLS) > 4:
-        _CELLS.clear()
-    _CELLS[key] = (keys, M, cents, lab, by_cell)
-    return _CELLS[key]
+def _episodes(store):
+    ep = store.table("episodes").scan()
+    return list(zip((str(s) for s in ep.column("stream").to_pylist()),
+                    (int(v) for v in ep.column("ts").to_pylist()),
+                    (int(v) for v in ep.column("t1").to_pylist())))
 
 
 def _knee(sorted_desc):
-    """Largest relative drop in the sorted score curve = set boundary.
-    Generic — no labels, no tuned constants beyond a minimum set size."""
+    """Set boundary on the sorted fused curve. The raw largest-drop
+    knee cut 183-episode classes to 4 (RRF consensus gives the top few
+    an outsized gap): the boundary is now the last position whose score
+    keeps a fixed fraction of the top-5 mean — scale-stable under RRF
+    (scores are bounded sums of w/(60+rank)) — with the largest-drop
+    knee only allowed to TIGHTEN it, never to cut inside the top-8."""
     s = np.asarray(sorted_desc, float)
     if len(s) < 6:
         return len(s)
+    top = float(np.mean(s[:5]))
+    floor_cut = int(np.searchsorted(-s, -0.62 * top, side="right"))
     d = s[:-1] - s[1:]
-    j = int(np.argmax(d[3:])) + 3          # never cut inside the top-3
-    return j + 1
+    knee = int(np.argmax(d[8:])) + 8 + 1 if len(d) > 8 else len(s)
+    return max(min(floor_cut, knee), 8)
 
 
-def search_set(store, text, purity="audited", k_max=400, cells_top=6):
-    """The robotics query: ALL matching clips, purity-first.
+def search_set(store, text, purity="fast", k_max=400, audit_n=12):
+    """The robotics query: ALL matching clips, purity-first, VLM-free.
 
-    purity="fast"    index-only (~0.1-0.3 s warm)
-    purity="audited" + ~8-clip 2B sample audit (~4-6 s) -> est_purity,
-                     and the set is pruned to the audited boundary
+    purity="fast"    exact fused scan, direction filter, knee cut
+    purity="audited" + geometric relational audit (SAM 3 boxes over
+                     time) on a stratified sample of the set; pruned at
+                     the last geometry-positive sample. Only fires when
+                     the query parses as a relation; abstains otherwise.
     """
-    from .pe import _text_vec
-    t0 = time.perf_counter()
-    keys, M, cents, lab, by_cell = _load_cells(store)
-    qv = _text_vec(text)
-
-    # 1. cells: open only the scenario cells the query points at
-    csc = cents @ qv
-    open_cells = np.argsort(-csc)[:cells_top]
-    members = []
-    for c in open_cells:
-        members += by_cell.get(int(c), [])
-    members = np.asarray(sorted(set(members)))
-
-    # 2. exact scoring inside the opened cells only (elision)
-    sc = np.asarray(M[members]) @ qv
-    order = np.argsort(-sc)
-    cut = min(_knee(sc[order]), k_max)
-    chosen = members[order[:cut]]
-    chosen_sc = sc[order[:cut]]
-    borderline = members[order[cut:min(cut + 20, len(order))]]
-
-    # 3. directional queries: motion contrast re-ranks within the set
+    from .fusion import rrf
     from .rerank import directional_swap
+    t0 = time.perf_counter()
+    keys = _episodes(store)
     sq = directional_swap(text)
+
+    ch = {}
+    try:
+        from .pe import pe_lookup
+        look, _ = pe_lookup(store, text)
+        ch["pe"] = np.array([look(*k) for k in keys])
+    except Exception:
+        pass
+    try:
+        from .action_channel import act_lookup
+        look, _ = act_lookup(store, text)
+        ch["act"] = np.array([look(*k) for k in keys])
+    except Exception:
+        pass
+    try:
+        from .vid import vid_lookup
+        look, _ = vid_lookup(store, text)
+        ch["vid"] = np.array([look(*k) for k in keys])
+    except Exception:
+        pass
+    mot = None
     if sq is not None:
         try:
-            from .motion import motion_lookup
             from .context import embed_texts
+            from .motion import motion_lookup
             qv2 = embed_texts([text, sq])
             mlook = motion_lookup(store, qv2[0], qv2[1])
-            m = np.array([mlook(*keys[i]) for i in chosen])
-            m = np.nan_to_num(m, nan=np.nanmedian(m) if
-                              np.isfinite(m).any() else 0.0)
-            reorder = np.argsort(-(0.5 * (chosen_sc / (np.abs(chosen_sc)
-                                  .max() + 1e-8)) + 0.5 * (m / (np.abs(m)
-                                  .max() + 1e-8))))
-            chosen = chosen[reorder]
-            chosen_sc = chosen_sc[reorder]
+            mot = np.array([mlook(*k) for k in keys])
+            ch["mot"] = mot
         except Exception:
             pass
 
-    est_purity = None
-    if purity in ("audited", "deep") and len(chosen) >= 4:
-        est_purity, keep = _sample_audit(store, text,
-                                         [keys[i] for i in chosen],
-                                         n_sample=6 if purity == "deep"
-                                         else 8,
-                                         deep=(purity == "deep"))
+    # learned per-store weights, routed by query type (same artifact
+    # the ranked path uses)
+    weights = {c: 1.0 for c in ch}
+    try:
+        from pathlib import Path
+        cfg = json.loads((Path(store.dir) / "_channel_weights.json")
+                         .read_text())
+        learned = (cfg.get("weights_dir", cfg.get("weights", {}))
+                   if sq is not None else cfg.get("weights", {}))
+        weights = {c: float(learned.get(c, 1.0)) for c in ch}
+        if sq is not None and "mot" in weights:
+            weights["mot"] = max(weights["mot"], 1.0)
+    except Exception:
+        pass
+
+    fused = rrf(ch, weights=weights)
+
+    # DIRECTION HARD FILTER — QUANTILE, NOT SIGN. Both direction
+    # channels were validated by AUC (an ORDERING property); their zero
+    # point is uncalibrated — a sign test executed 130/183 true closes
+    # (measured) because most true closes score mildly negative on both.
+    # Rank properties get rank thresholds: drop only episodes that BOTH
+    # channels place in the bottom third of their contrast orderings.
+    # NaN = neutral (median), abstain never kills.
+    dropped = 0
+    alive = np.ones(len(keys), bool)
+    if sq is not None:
+        act = ch.get("act")
+        if mot is not None and act is not None:
+            def _rankfrac(v):
+                r = np.full(len(v), 0.5)
+                fin = np.isfinite(v)
+                if fin.sum() > 1:
+                    order = np.argsort(np.argsort(v[fin]))
+                    r[fin] = order / (fin.sum() - 1)
+                return r
+            bad = (_rankfrac(mot) < 1 / 3) & (_rankfrac(act) < 1 / 3)
+            alive &= ~bad
+            dropped = int(bad.sum())
+
+    idx = np.where(alive)[0]
+    order = idx[np.argsort(-fused[idx])]
+    cut = min(_knee(fused[order]), k_max)
+    chosen = order[:cut]
+    borderline = order[cut:cut + 20]
+
+    audit = None
+    if purity == "audited" and len(chosen) >= 4:
+        audit, keep = _geometry_audit(store, text,
+                                      [keys[i] for i in chosen],
+                                      n_sample=audit_n)
         if keep is not None:
             borderline = np.concatenate([chosen[keep:], borderline])
             chosen = chosen[:keep]
-            chosen_sc = chosen_sc[:keep]
 
     ms = (time.perf_counter() - t0) * 1e3
     return {
         "clips": [{"stream": keys[i][0], "t0": keys[i][1],
-                   "t1": keys[i][2], "score": float(s)}
-                  for i, s in zip(chosen, chosen_sc)],
+                   "t1": keys[i][2], "score": float(fused[i])}
+                  for i in chosen],
         "borderline": [{"stream": keys[i][0], "t0": keys[i][1],
                         "t1": keys[i][2]} for i in borderline],
-        "est_purity": est_purity,
-        "cells_opened": [int(c) for c in open_cells],
-        "cells_total": int(len(cents)),
+        "audit": audit,
+        "direction_filtered": dropped,
+        "channels": sorted(ch),
+        "scored": len(keys),
         "ms": round(ms, 1),
     }
 
 
-def _sample_audit(store, text, clip_keys, n_sample=8, deep=False):
-    """Judge a STRATIFIED sample with the 2B (before/after, swap-contrast
-    when directional) -> purity estimate + a prune point. No labels; the
-    judge looks at pixels. ~0.5 s per sampled clip."""
-    import pyarrow.compute as pc
-    from PIL import Image
-
-    from .rerank import (as_change_question, directional_swap,
-                         score_clip_sequences)
-    from .video import FrameSet
-    n = len(clip_keys)
-    idx = sorted(set(np.linspace(0, n - 1, min(n_sample, n))
-                     .round().astype(int)))
-    frames_tbl = store.table("frames").scan()
-    clips, pos = [], []
-    for i in idx:
-        s, a, b = clip_keys[i]
-        sel = frames_tbl.filter(pc.and_(
-            pc.equal(frames_tbl.column("stream"), s),
-            pc.and_(pc.greater_equal(frames_tbl.column("ts"), a),
-                    pc.less_equal(frames_tbl.column("ts"), b))))
-        if len(sel) < 2:
-            continue
-        dec = FrameSet(store, "frames", sel.take(
-            np.array([0, len(sel) - 1]))).decode(width=448)
-        if len(dec) < 2:
-            continue
-        clips.append([Image.fromarray(d[1]) for d in sorted(dec)])
-        pos.append(i)
-    if not clips:
+def _geometry_audit(store, text, clip_keys, n_sample=12):
+    """SAM 3 containment-change audit on a stratified sample. Returns
+    ({checked, judged, positive, abstained, pass_rate},
+    prune_point|None); (None, None) when the query has no parseable
+    relation — geometry only ever claims what geometry can see."""
+    from .grounding import parse_relation, verify_relation
+    if parse_relation(text) is None:
         return None, None
-    from .rerank import DEEP_VLM
-    kw = {"model_id": DEEP_VLM} if deep else {}
-    q = as_change_question(text)
-    m = np.array(score_clip_sequences(clips, q, **kw), float)
-    sq = directional_swap(text)
-    if sq:
-        m = m - np.array(score_clip_sequences(
-            clips, as_change_question(sq), **kw), float)
-    ok = m > 0
-    est = float(ok.mean())
-    # prune to the last sampled position that still judged positive
+    n = len(clip_keys)
+    pos_idx = sorted(set(np.linspace(0, n - 1, min(n_sample, n))
+                         .round().astype(int)))
+    sample = [clip_keys[i] for i in pos_idx]
+    margins = verify_relation(store, text, sample)
+    if margins is None:
+        return None, None
+    abstained = int(np.isnan(margins).sum())
+    judged = int(np.isfinite(margins).sum())
+    passed = int((margins[np.isfinite(margins)] > 0).sum())
     keep = None
-    if not ok.all():
-        good = [p for p, o in zip(pos, ok) if o]
+    fin = np.isfinite(margins)
+    if judged and not (margins[fin] > 0).all():
+        good = [p for p, m in zip(pos_idx, margins)
+                if np.isfinite(m) and m > 0]
         keep = (max(good) + 1) if good else 0
-    return round(est, 2), keep
+    return ({"checked": len(sample), "judged": judged,
+             "positive": passed, "abstained": abstained,
+             "pass_rate": round(passed / judged, 2) if judged
+             else None}, keep)

@@ -441,6 +441,25 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     except Exception:
         pass
 
+    # ACT channel — SSv2 action posteriors (V-JEPA 2 + Meta probe),
+    # video-native WHAT-HAPPENED evidence, index-only at query time.
+    # Adopted on measurement: put-in vs take-out AUC 0.889 zero-shot —
+    # the containment direction no other channel sees.
+    act_look = None
+    try:
+        from .action_channel import act_lookup
+        act_look, act_cands = act_lookup(store, text)
+        for s_, a, b, _sc in act_cands[:per]:
+            if streams and s_ not in streams:
+                continue
+            if t0 is not None and b < t0:
+                continue
+            if t1 is not None and a > t1:
+                continue
+            cand.setdefault((s_, a, b), 0.0)
+    except Exception:
+        pass
+
     obj_lookup = None
     try:
         from .objects import object_candidates, object_lookup
@@ -540,7 +559,7 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # NaN = the ctx ranker ABSTAINS on that segment; RRF gives it the
     # median rank rather than the bottom (see fusion.py on why).
     seg_score, seg_ctx, seg_lex, seg_mot, seg_anc = {}, {}, {}, {}, {}
-    seg_obj, seg_met, seg_vid, seg_pe = {}, {}, {}, {}
+    seg_obj, seg_met, seg_vid, seg_pe, seg_act = {}, {}, {}, {}, {}
     # candidate -> containing segment by per-stream binary search: the
     # nested scan was O(candidates x segments) Python and went to ~700 ms
     # when the recall floor raised both (measured); this is O(n log n)
@@ -593,6 +612,8 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                         else float("nan"))
         seg_pe[seg] = (pe_look(*seg) if pe_look is not None
                        else float("nan"))
+        seg_act[seg] = (act_look(*seg) if act_look is not None
+                        else float("nan"))
 
     # directional queries hash differently: their margins are swap-CONTRASTS
     # (query minus inverted query), a different quantity than the absolute
@@ -640,18 +661,15 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
         return hits[:k], stats
 
     # ---- ASYNC (default): the query is INDEX-ONLY — no model call ever ----
-    # Ranking rule, deliberately explainable:
-    #   1. verified positives, by the VLM's cached margin
-    #   2. unverified candidates, by index score (they are what the
-    #      background worker is judging right now)
-    #   3. verified negatives last — the VLM looked and said no
-    pos = [seg for seg, m in deep_m.items() if m >= 0]
-    neg = [seg for seg, m in deep_m.items() if m < 0]
-    pos.sort(key=lambda g: -deep_m[g])
-    # everything the 7B has not judged — 2B-screened or unverified alike —
-    # is ordered by RRF over all index channels PLUS the 2B margin as a
-    # channel ("scr", abstaining where absent). Scale-free, no vetoes.
-    fresh = [g for g in segs if g not in deep_m]
+    # VLM-FREE (2026-07-24): the 2B/7B court is out of the shipping path
+    # entirely — user directive after calibration showed both tiers
+    # overclaim scene matches (7B est 1.0 on visually ~10%-pure sets).
+    # Cached verdicts carry NO ranking authority; ordering is pure fused
+    # index. Video-native verification lives in the channels themselves
+    # (act = SSv2 posteriors, mot = delta-appearance contrast) and in the
+    # geometric audit tier of the set path. The sync branch above remains
+    # for EVALUATION scripts only.
+    fresh = list(segs)
     if fresh:
         from .fusion import rrf
         # channel weights are a LEARNED, per-store artifact: fitted offline
@@ -683,11 +701,10 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                      "met": np.array([seg_met[g] for g in fresh]),
                      "vid": np.array([seg_vid[g] for g in fresh]),
                      "pe": np.array([seg_pe[g] for g in fresh]),
-                     "scr": np.array([scr_m.get(g, float("nan"))
-                                      for g in fresh])},
+                     "act": np.array([seg_act[g] for g in fresh])},
                     weights={**{c: learned.get(c, 1.0) for c in
                                 ("app", "ctx", "lex", "met", "anc",
-                                 "obj", "scr", "vid", "pe")},
+                                 "obj", "vid", "pe", "act")},
                              "mot": (learned.get("mot", 2.5)
                                      if qv_swap is not None else 0.0)})
         # displayed score = the fused score that actually ordered the hit;
@@ -704,72 +721,18 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                                    "anc": [seg_anc[g] for g in fresh],
                                    "obj": [seg_obj[g] for g in fresh],
                                    "vid": [seg_vid[g] for g in fresh],
-                                   "pe": [seg_pe[g] for g in fresh]}}
+                                   "pe": [seg_pe[g] for g in fresh],
+                                   "act": [seg_act[g] for g in fresh]}}
         fused_of = dict(zip(fresh, fused))
         seg_score.update(fused_of)
         fresh = [g for _, g in sorted(zip(-fused, fresh))]
-    neg.sort(key=lambda g: -deep_m[g])
 
-    def _hit(seg, verified):
-        m = (deep_m[seg] if verified
-             else scr_m.get(seg))              # 2B margin shown as evidence
-        return {"stream": seg[0], "t0": seg[1], "t1": seg[2],
-                "margin": round(m, 3) if m is not None else None,
-                "score": deep_m.get(seg, seg_score[seg]),
-                "verified": verified, "cached": verified}
-    hits = ([_hit(g, True) for g in pos]
-            + [_hit(g, False) for g in fresh]
-            + [_hit(g, True) for g in neg])
-
-    launched = False
-    if fresh:
-        key = (str(store.dir), qh)
-        with _BG_LOCK:
-            if key not in _BG_INFLIGHT:
-                _BG_INFLIGHT.add(key)
-                launched = True
-        if launched:
-            # cap the burst: verifying every fresh segment after one query
-            # meant ~70 s of GPU (72 segments x 2 contrast passes at 100 h
-            # scale), starving every FOREGROUND query meanwhile — the user
-            # saw 5 s searches. 16 covers everything a k=8 page shows;
-            # the rest verifies when the user asks again (cracking: effort
-            # follows attention).
-            todo = fresh[:min(pool, 16)]
-
-            def worker():
-                # CASCADE IN THE BACKGROUND: 2B screens what it has not
-                # yet seen; the 7B then judges the FUSED-order top UNION
-                # the 2B's favorites. Judging only what the 2B liked let a
-                # 2B mistake keep the true clip away from the judge — the
-                # fused top is where the index's best candidates live, so
-                # they always get their day in court.
-                try:
-                    need = [g for g in todo if g not in scr_m][:16]
-                    m2 = dict(scr_m)
-                    m2.update(_verify_segments(store, need, text, qh,
-                                               frames_per_clip))
-                    court = list(fresh[:4])
-                    court += [g for g, _ in sorted(m2.items(),
-                                                   key=lambda kv: -kv[1])
-                              if g not in court][:4]
-                    top = [{"stream": g[0], "t0": g[1], "t1": g[2],
-                            "margin": m2.get(g, 0.0),
-                            "score": m2.get(g, 0.0)} for g in court]
-                    if top:
-                        _deep_rerank(store, top, text, len(top),
-                                     _verdict_map(store))
-                except Exception:
-                    pass
-                finally:
-                    with _BG_LOCK:
-                        _BG_INFLIGHT.discard(key)
-            threading.Thread(target=worker, daemon=True).start()
+    hits = [{"stream": g[0], "t0": g[1], "t1": g[2], "margin": None,
+             "score": seg_score[g], "verified": False, "cached": False}
+            for g in fresh]
 
     stats = {"method": "verified", "verify": "async", "atoms": atoms,
              "candidates": len(cand), "segments": len(segs),
-             "verified_cached": len(cached_m),
-             "verifying_in_background": len(fresh) if launched else 0,
              "ms": round((time.perf_counter() - t_start) * 1e3, 1)}
     return hits[:k], stats
 

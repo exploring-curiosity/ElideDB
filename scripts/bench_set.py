@@ -16,7 +16,7 @@ def main():
     lab = {}
     for i, a, b, k in zip(t["episode_index"], t["ts"], t["t1"], t["task"]):
         if k: lab[(stream_of.get(int(i)), int(a))] = k.lower()
-    mode = sys.argv[1] if len(sys.argv) > 1 else "audited"
+    mode = sys.argv[1] if len(sys.argv) > 1 else "fast"
     tot_del = tot_ok = 0
     lats = []
     for q, pred in QUERIES:
@@ -26,8 +26,12 @@ def main():
         tot_del += len(labs); tot_ok += ok
         lats.append(r["ms"])
         pu = 100 * ok / max(len(labs), 1)
-        print(f"  {len(labs):3d} delivered, purity {pu:3.0f}%"
-              f"{'  est ' + str(r['est_purity']) if r['est_purity'] is not None else ''}"
+        au = ""
+        if r.get("audit"):
+            au = (f"  geom {r['audit']['positive']}/"
+                  f"{r['audit']['judged']}")
+        print(f"  {len(labs):3d} delivered, purity {pu:3.0f}%{au}"
+              f"  dirdrop {r.get('direction_filtered', 0):3d}"
               f"  {r['ms']:6.0f}ms  {q}")
     print(f"\n== {mode}: {tot_del} clips delivered, TRUE purity "
           f"{100 * tot_ok / max(tot_del, 1):.0f}%, p50 latency "

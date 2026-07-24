@@ -51,3 +51,4 @@ myenv
 # reach them; they are also not the product, so they are not shipped.
 eval/
 FastSAM-*.pt
+models/

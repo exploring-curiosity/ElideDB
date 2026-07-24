@@ -25,7 +25,8 @@ from regress10 import QUERIES                                # noqa: E402
 V._verdict_map = lambda s: {}
 V._verify_segments = lambda *a, **k: {}
 
-CH = ["app", "ctx", "lex", "met", "mot", "anc", "obj", "vid", "pe"]
+CH = ["app", "ctx", "lex", "met", "mot", "anc", "obj", "vid", "pe",
+      "act"]
 
 
 def main():
