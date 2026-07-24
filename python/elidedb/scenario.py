@@ -372,6 +372,7 @@ def _binding_audit(store, rel, clip_keys):
     phrases = [p for p in (x, y) if p]
     keep = np.ones(len(clip_keys), bool)
     checked = killed_absent = killed_disjoint = abstained = 0
+    killed_static = 0
     for i, (s, a, b) in enumerate(clip_keys):
         try:
             tr = track_concepts(store, s, a, b, phrases, n_frames=8)
@@ -385,6 +386,24 @@ def _binding_audit(store, rel, clip_keys):
             keep[i] = False
             killed_absent += 1
             continue
+        # THE MANIPULATED-OBJECT TEST: the queried X must MOVE. "a
+        # green object" grounds on any green thing in the scene
+        # (audit-bench-caught: zero kills on the green/yellow sets);
+        # the query is about the object being ACTED ON, and that one
+        # travels. Static X = wrong clip.
+        if x is not None:
+            centers = [((b_[0] + b_[2]) / 2, (b_[1] + b_[3]) / 2)
+                       for b_ in tr[x]["boxes"] if b_ is not None]
+            sizes = [max(b_[2] - b_[0], b_[3] - b_[1])
+                     for b_ in tr[x]["boxes"] if b_ is not None]
+            if len(centers) >= 2:
+                cs = np.asarray(centers)
+                disp = float(np.max(np.linalg.norm(
+                    cs - cs.mean(0), axis=1))) * 2.0
+                if disp < 0.7 * float(np.median(sizes)):
+                    keep[i] = False
+                    killed_static += 1
+                    continue
         if x is not None and y is not None \
                 and max(tr[y]["presence"]) >= 0.5:
             near = False
@@ -404,7 +423,17 @@ def _binding_audit(store, rel, clip_keys):
             if not near:
                 keep[i] = False
                 killed_disjoint += 1
+    # 100% absent = the PHRASE does not ground in this detector's
+    # vocabulary ("a vessel" — audit-bench-caught killing the two true
+    # pot-lifts along with everything else). Phrase failure is not clip
+    # evidence: keep everything, report it.
+    ungroundable = (checked > 0 and killed_absent == checked)
+    if ungroundable:
+        keep[:] = True
+        killed_absent = 0
     return ({"checked": checked, "killed_absent": killed_absent,
              "killed_disjoint": killed_disjoint,
+             "killed_static": killed_static,
              "abstained": abstained,
+             "ungroundable": ungroundable,
              "x": x, "y": y}, keep)

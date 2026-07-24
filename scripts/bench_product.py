@@ -70,8 +70,10 @@ def main():
         if r.get("audit"):
             a = r["audit"]
             au = (f"  audit[chk {a['checked']} absent "
-                  f"{a['killed_absent']} disjoint "
-                  f"{a['killed_disjoint']}]")
+                  f"{a['killed_absent']} static "
+                  f"{a.get('killed_static', 0)} disjoint "
+                  f"{a['killed_disjoint']}"
+                  f"{' UNGROUNDABLE' if a.get('ungroundable') else ''}]")
         print(f"[q{qi:02d}] returned {len(clips):2d}  "
               f"dirdrop {r['direction_filtered']:4d}{au}  "
               f"{r['ms']:5.0f}ms  {q}", flush=True)
