@@ -118,13 +118,15 @@ def _knee(sorted_desc):
     (scores are bounded sums of w/(60+rank)) — with the largest-drop
     knee only allowed to TIGHTEN it, never to cut inside the top-8."""
     s = np.asarray(sorted_desc, float)
-    if len(s) < 6:
+    if len(s) < 2:
         return len(s)
-    top = float(np.mean(s[:5]))
+    top = float(np.mean(s[:min(5, len(s))]))
     floor_cut = int(np.searchsorted(-s, -0.62 * top, side="right"))
     d = s[:-1] - s[1:]
-    knee = int(np.argmax(d[8:])) + 8 + 1 if len(d) > 8 else len(s)
-    return max(min(floor_cut, knee), 8)
+    knee = int(np.argmax(d[2:])) + 2 + 1 if len(d) > 2 else len(s)
+    # NO minimum set size: the user's contract is "up to K, and
+    # everything returned is true" — a forced floor delivers junk
+    return min(floor_cut, knee)
 
 
 def search_set(store, text, purity="fast", k_max=400, audit_n=12):

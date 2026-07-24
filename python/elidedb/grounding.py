@@ -72,16 +72,6 @@ def detect_phrases(images, phrases, threshold=0.3):
     return per
 
 
-def _detector():
-    """SAM 3 when available (masks + presence-token discrimination),
-    Grounding DINO otherwise — the geometry consumes boxes either way."""
-    try:
-        from .sam3x import detect_phrases_sam3
-        return detect_phrases_sam3
-    except Exception:
-        return detect_phrases
-
-
 def _ioa(a, b):
     """Intersection over area of A — how much of X sits inside Y."""
     x0 = max(a[0], b[0]); y0 = max(a[1], b[1])
@@ -132,55 +122,51 @@ def parse_relation(text):
 
 
 def relation_margin(store, stream, t0, t1, x_phrase, y_phrase,
-                    inward, n_frames=6):
-    """Containment-change margin for one episode. Positive = geometry
-    agrees with the query direction; NaN = abstain.
+                    inward, n_frames=8):
+    """Containment-change margin for one episode, computed on the SAM
+    3.1 VIDEO tracker's masklets (user rule: never per-frame images
+    when a video API exists — tracked identity through time is the
+    point). Positive = geometry agrees with the query direction; NaN =
+    abstain (landmark never seen, or no signal defined).
 
     Two complementary signals, because containers OCCLUDE (bench-
-    caught: every put-in-drawer delta was 0 — the object disappears
-    inside, so box overlap cannot see the end state):
-      IoA change   — X's box overlap with Y rises (put ON / open
-                     container where X stays visible)
-      presence     — X stops being detected while Y persists (put IN),
-        transition   or starts being detected (take OUT)
-    The margin is the mean of whichever signals are defined; NaN only
-    when neither is."""
-    import pyarrow.compute as pc
-    from PIL import Image
-
-    from .video import FrameSet
-    frames_tbl = store.table("frames").scan()
-    sel = frames_tbl.filter(pc.and_(
-        pc.equal(frames_tbl.column("stream"), stream),
-        pc.and_(pc.greater_equal(frames_tbl.column("ts"), t0),
-                pc.less_equal(frames_tbl.column("ts"), t1))))
-    if len(sel) < n_frames:
+    caught: every put-in-drawer IoA delta was 0 — the object disappears
+    inside):
+      IoA change   — X's mask/box overlap with Y rises (put ON, or
+                     open container where X stays visible)
+      presence     — the tracker loses X while Y persists (put IN), or
+        transition   acquires X late (take OUT); tracker probabilities,
+                     not thresholded detections
+    """
+    from .sam3x import track_concepts
+    tr = track_concepts(store, stream, t0, t1, [x_phrase, y_phrase],
+                        n_frames=n_frames)
+    if tr is None:
         return float("nan")
-    pick = np.linspace(0, len(sel) - 1, n_frames).round().astype(int)
-    dec = FrameSet(store, "frames", sel.take(pick)).decode(width=448)
-    if len(dec) < n_frames:
-        return float("nan")
-    imgs = [Image.fromarray(d[1]) for d in sorted(dec)]
-    per = _detector()(imgs, [x_phrase, y_phrase])
-    k = max(1, len(per) // 3)
+    X, Y = tr[x_phrase], tr[y_phrase]
+    if max(Y["presence"]) <= 0:
+        return float("nan")          # scene lacks the landmark: abstain
+    n = len(X["presence"])
+    k = max(1, n // 3)
 
     sigs = []
-    # signal 1: IoA change where both visible
-    traj = [(i, _ioa(d[x_phrase][0], d[y_phrase][0]))
-            for i, d in enumerate(per)
-            if d[x_phrase] and d[y_phrase]]
+    traj = []
+    for i in range(n):
+        if X["masks"][i] is not None and Y["masks"][i] is not None:
+            inter = float((X["masks"][i] & Y["masks"][i]).sum())
+            traj.append((i, inter / max(1.0,
+                                        float(X["masks"][i].sum()))))
+        elif X["boxes"][i] is not None and Y["boxes"][i] is not None:
+            traj.append((i, _ioa(X["boxes"][i], Y["boxes"][i])))
     if len(traj) >= 2:
         kk = max(1, len(traj) // 3)
         sigs.append(float(np.mean([v for _, v in traj[-kk:]])
                           - np.mean([v for _, v in traj[:kk]])))
-    # signal 2: presence transition of X (Y must be seen at all —
-    # otherwise the scene itself is off and we abstain)
-    if any(d[y_phrase] for d in per):
-        pres = [1.0 if d[x_phrase] else 0.0 for d in per]
-        early, late = float(np.mean(pres[:k])), float(np.mean(pres[-k:]))
-        if early != late:
-            # disappearing INTO the container is inward-positive
-            sigs.append(early - late)
+    pres = X["presence"]
+    early, late = float(np.mean(pres[:k])), float(np.mean(pres[-k:]))
+    if abs(early - late) > 0.2:
+        # disappearing INTO the container is inward-positive
+        sigs.append(early - late)
     if not sigs:
         return float("nan")
     delta = float(np.mean(sigs))
