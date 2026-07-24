@@ -339,12 +339,12 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # says the verb is the strongest index evidence this store has for an
     # action query, and dropping its score buried caption hits at the
     # bottom of the unverified ordering (measured on the verb battery).
+    # CAPTIONING IS DEPRECATED (user directive: video-native only). The
+    # caption channel is fully disconnected — no recall, no ranking —
+    # even where legacy caption tables exist. `met` below is different
+    # machinery: uploader-provided labels, search-time only, only on
+    # stores that carry them.
     lex_of = {}
-    for w, sc in _caption_candidates(store, text, per):
-        if streams and w[0] not in streams:
-            continue
-        cand.setdefault(w, 0.0)
-        lex_of[w] = max(lex_of.get(w, 0.0), sc)
     # UPLOADER METADATA channel — search-time only, and only for stores
     # that carry a `meta_text` table by the uploader's choice. The
     # no-metadata rule still binds training and indexing; refusing

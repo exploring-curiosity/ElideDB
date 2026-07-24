@@ -85,8 +85,14 @@ def main():
     # property, not a point trade.
     GRIDS = {c: grid for c in CH}
     GRIDS["mot"] = [1.0, 1.6, 2.5, 4.0, 6.0]
+    # captioning is DEPRECATED (user directive: video-native only — no
+    # video->text->text-match detour). The caption channel is pinned to 0
+    # in every fit; `met` (uploader labels at search time) is separate
+    # machinery and only exists on stores the uploader gave labels to.
+    GRIDS["lex"] = [0.0]
     w = {c: 1.0 for c in CH}
     w["mot"] = 2.5
+    w["lex"] = 0.0
     best = score(w)
     print(f"baseline {best}/100  ceiling "
           f"{sum(min(int(c['rel'].sum()), 10) for c in cases)}/100")
