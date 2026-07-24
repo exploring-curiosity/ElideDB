@@ -25,7 +25,7 @@ from regress10 import QUERIES                                # noqa: E402
 V._verdict_map = lambda s: {}
 V._verify_segments = lambda *a, **k: {}
 
-CH = ["app", "ctx", "lex", "met", "mot", "anc", "obj"]
+CH = ["app", "ctx", "lex", "met", "mot", "anc", "obj", "vid"]
 
 
 def main():
@@ -66,9 +66,9 @@ def main():
                       "dir": directional_swap(q) is not None})
         print(f"captured {int(rel.sum())} relevant of {len(rel)} segs  {q}")
 
-    def score(w):
+    def score(w, subset):
         tot = 0
-        for c in cases:
+        for c in subset:
             f = np.zeros(len(c["rel"]))
             for ch in CH:
                 wt = 0.0 if (ch == "mot" and not c["dir"]) else w[ch]
@@ -78,35 +78,46 @@ def main():
         return tot
 
     grid = [0.0, 0.3, 0.7, 1.0, 1.6, 2.5, 4.0, 6.0]
-    # mot may never be zeroed: it only fires on directional queries, where
-    # it is the ONLY direction-aware channel — the unconstrained fit set
-    # it to 0 to win two aggregate points and put OPPOSITE-direction clips
-    # back at rank 1 (user-caught live). Direction correctness is a
-    # property, not a point trade.
+    # TWO weight sets, fitted separately and routed per query: directional
+    # queries and content queries have different physics — every strong
+    # content channel added (met, obj, vid) won its class and TAXED
+    # direction under a single shared vector (measured three times).
+    # mot floor stays on the directional set (only direction-aware
+    # channel); lex pinned 0 everywhere (captioning deprecated).
     GRIDS = {c: grid for c in CH}
-    GRIDS["mot"] = [1.0, 1.6, 2.5, 4.0, 6.0]
-    # captioning is DEPRECATED (user directive: video-native only — no
-    # video->text->text-match detour). The caption channel is pinned to 0
-    # in every fit; `met` (uploader labels at search time) is separate
-    # machinery and only exists on stores the uploader gave labels to.
     GRIDS["lex"] = [0.0]
-    w = {c: 1.0 for c in CH}
-    w["mot"] = 2.5
-    w["lex"] = 0.0
-    best = score(w)
-    print(f"baseline {best}/100  ceiling "
-          f"{sum(min(int(c['rel'].sum()), 10) for c in cases)}/100")
-    for _ in range(5):
-        improved = False
-        for ch in CH:
-            for g in GRIDS[ch]:
-                w2 = dict(w); w2[ch] = g
-                s = score(w2)
-                if s > best:
-                    best, w, improved = s, w2, True
-        if not improved:
-            break
-    print(f"fitted {best}/100  weights={json.dumps(w)}")
+
+    def fit(subset, floor_mot):
+        gr = dict(GRIDS)
+        if floor_mot:
+            gr["mot"] = [1.0, 1.6, 2.5, 4.0, 6.0]
+        w = {c: 1.0 for c in CH}
+        w["mot"] = 2.5
+        w["lex"] = 0.0
+        best = score(w, subset)
+        for _ in range(5):
+            improved = False
+            for ch in CH:
+                for g in gr[ch]:
+                    w2 = dict(w); w2[ch] = g
+                    s = score(w2, subset)
+                    if s > best:
+                        best, w, improved = s, w2, True
+            if not improved:
+                break
+        return w, best
+
+    dir_cases = [c for c in cases if c["dir"]]
+    con_cases = [c for c in cases if not c["dir"]]
+    w_dir, s_dir = fit(dir_cases, floor_mot=True)
+    w_con, s_con = fit(con_cases, floor_mot=False)
+    best = s_dir + s_con
+    w = w_con
+    print(f"fitted dir {s_dir}/{10 * len(dir_cases)} "
+          f"{json.dumps(w_dir)}")
+    print(f"fitted con {s_con}/{10 * len(con_cases)} "
+          f"{json.dumps(w_con)}")
+    print(f"total {best}/{10 * len(cases)}")
     # ---- learned LINEAR scorer over channel z-scores: rank fusion threw
     # away magnitudes and plateaued; logistic regression on the captured
     # (segment, relevant) pairs keeps them. Query-time cost: one dot
@@ -142,11 +153,7 @@ def main():
                       zip(CH, lr.coef_[0])}))
     out = Path(f"lake/{store}/_channel_weights.json")
     payload = {"fitted_on": "scripts/regress10.py", "score_top10": best,
-               "weights": w}
-    if tot > best:
-        payload["linear"] = {"channels": CH,
-                             "coef": [float(v) for v in lr.coef_[0]],
-                             "score_top10": tot}
+               "weights": w_con, "weights_dir": w_dir}
     out.write_text(json.dumps(payload, indent=1))
     print(f"wrote {out}")
 

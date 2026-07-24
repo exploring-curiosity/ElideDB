@@ -31,14 +31,20 @@ from regress10 import QUERIES                                # noqa: E402
 def main():
     import torch
     from languagebind import (LanguageBind, to_device,
-                              transform_dict, LanguageBindImageTokenizer)
+                              LanguageBindVideoProcessor,
+                              LanguageBindImageTokenizer)
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     clip_type = {"video": "LanguageBind_Video_FT"}
     model = LanguageBind(clip_type=clip_type, cache_dir="./.cache_lb")
     model = model.to(device).eval()
     tokenizer = LanguageBindImageTokenizer.from_pretrained(
         "LanguageBind/LanguageBind_Image", cache_dir="./.cache_lb")
-    video_transform = transform_dict["video"](model.modality_config["video"])
+    vcfg = model.modality_config["video"]
+    # the lib reads the backend from BOTH places; opencv avoids the
+    # decord/cv2 dylib clash on macOS
+    vcfg.vision_config.video_decode_backend = "opencv"
+    vcfg.video_decode_backend = "opencv"
+    processor = LanguageBindVideoProcessor(vcfg, tokenizer)
 
     db = Store.open("lake/bridge4h")
     t = pq.read_table("eval/bridge4h_truth.parquet").to_pydict()
@@ -93,13 +99,13 @@ def main():
         iio.imwrite(fp, np.stack([d[1] for d in sorted(dec)]), fps=2,
                     codec="libx264")
         try:
-            vt = video_transform([str(fp)])
+            vt = processor(images=[str(fp)], return_tensors="pt")
             inp = {"video": to_device(vt, device)}
             with torch.no_grad():
                 out = model(inp)
             v = out["video"][0].float().cpu().numpy()
         except Exception as e:
-            print("skip:", type(e).__name__, str(e)[:80])
+            print("skip:", type(e).__name__, str(e)[:120])
             continue
         vecs.append(v / (np.linalg.norm(v) + 1e-8))
         labels.append(lab)

@@ -403,6 +403,27 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # (nothing predefined, nested sub-subjects, per-region motion). Score
     # of a span = best region cosine in its recording, nudged by that
     # region's motion energy: the moving subject is the one acting.
+    # VID channel — the adopted natively co-trained video-text encoder
+    # (X-CLIP-large; relational block 1/40 -> 10/40 vs the appearance
+    # incumbent on the balanced-sample evaluation). Its OWN text tower
+    # (channel-local space; rank fusion makes cross-space fusion legal),
+    # one cached forward per query text.
+    vid_look = None
+    vid_of = {}
+    try:
+        from .vid import vid_lookup
+        vid_look, vid_cands = vid_lookup(store, text)
+        for s_, a, b, sc in vid_cands[:per]:
+            if streams and s_ not in streams:
+                continue
+            if t0 is not None and b < t0:
+                continue
+            if t1 is not None and a > t1:
+                continue
+            cand.setdefault((s_, a, b), 0.0)
+    except Exception:
+        pass
+
     obj_lookup = None
     try:
         from .objects import object_candidates, object_lookup
@@ -502,7 +523,7 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # NaN = the ctx ranker ABSTAINS on that segment; RRF gives it the
     # median rank rather than the bottom (see fusion.py on why).
     seg_score, seg_ctx, seg_lex, seg_mot, seg_anc = {}, {}, {}, {}, {}
-    seg_obj, seg_met = {}, {}
+    seg_obj, seg_met, seg_vid = {}, {}, {}
     # candidate -> containing segment by per-stream binary search: the
     # nested scan was O(candidates x segments) Python and went to ~700 ms
     # when the recall floor raised both (measured); this is O(n log n)
@@ -551,6 +572,8 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                             else float("nan"))
         else:
             seg_obj[seg] = float("nan")
+        seg_vid[seg] = (vid_look(*seg) if vid_look is not None
+                        else float("nan"))
 
     # directional queries hash differently: their margins are swap-CONTRASTS
     # (query minus inverted query), a different quantity than the absolute
@@ -620,7 +643,13 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
         learned = {}
         try:
             if wfile.exists():
-                learned = json.loads(wfile.read_text()).get("weights", {})
+                _cfg = json.loads(wfile.read_text())
+                # per-query-type routing: directional and content queries
+                # have different physics; a single shared vector let every
+                # new content channel tax direction (measured three times)
+                learned = (_cfg.get("weights_dir", _cfg.get("weights", {}))
+                           if qv_swap is not None
+                           else _cfg.get("weights", {}))
         except Exception:
             pass
         # For directional queries, motion is the ONLY channel measuring the
@@ -633,11 +662,12 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                      "anc": np.array([seg_anc[g] for g in fresh]),
                      "obj": np.array([seg_obj[g] for g in fresh]),
                      "met": np.array([seg_met[g] for g in fresh]),
+                     "vid": np.array([seg_vid[g] for g in fresh]),
                      "scr": np.array([scr_m.get(g, float("nan"))
                                       for g in fresh])},
                     weights={**{c: learned.get(c, 1.0) for c in
                                 ("app", "ctx", "lex", "met", "anc",
-                                 "obj", "scr")},
+                                 "obj", "scr", "vid")},
                              "mot": (learned.get("mot", 2.5)
                                      if qv_swap is not None else 0.0)})
         # displayed score = the fused score that actually ordered the hit;
@@ -652,7 +682,8 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
                                    "met": [seg_met[g] for g in fresh],
                                    "mot": [seg_mot[g] for g in fresh],
                                    "anc": [seg_anc[g] for g in fresh],
-                                   "obj": [seg_obj[g] for g in fresh]}}
+                                   "obj": [seg_obj[g] for g in fresh],
+                                   "vid": [seg_vid[g] for g in fresh]}}
         fused_of = dict(zip(fresh, fused))
         seg_score.update(fused_of)
         fresh = [g for _, g in sorted(zip(-fused, fresh))]
