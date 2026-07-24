@@ -1007,6 +1007,41 @@ def _embed_frames_fdnnv(store, frame_table, incremental, verbose, streams):
         if verbose:
             print(f"  adopted encoder from {donors[0].parent}", flush=True)
     model, meta = load_encoder(mdir)
+    # FRESH-DATA FIDELITY GATE: the fast student was distilled on one
+    # style of footage; on an arbitrary upload its fidelity to the teacher
+    # is unknown. 32 of THIS store's frames go through both encoders; if
+    # mean cosine < 0.90 the store gets the TEACHER (slower ingest, right
+    # space) instead of a fast-but-wrong index. Automatic — a fresh
+    # customer never has to know this exists.
+    try:
+        from PIL import Image
+        from .embeddings import DEFAULT_MODEL, _embed_images
+        from .video import FrameSet
+        frames_all = store.table(frame_table).scan()
+        pick = np.linspace(0, len(frames_all) - 1,
+                           min(32, len(frames_all))).round().astype(int)
+        rows = frames_all.take(pick)
+        ts_s, sv, _, _ = embed_stream(store, model, rows)
+        dec = FrameSet(store, frame_table, rows).decode(width=448)
+        imgs = [Image.fromarray(d[1]) for d in sorted(dec)]
+        tv = _embed_images(imgs, DEFAULT_MODEL)
+        n = min(len(sv), len(tv))
+        svn = sv[:n] / (np.linalg.norm(sv[:n], axis=1,
+                                       keepdims=True) + 1e-8)
+        fid = float((svn * tv[:n]).sum(1).mean())
+        if verbose:
+            print(f"  student fidelity on this corpus: {fid:.3f}",
+                  flush=True)
+        if fid < 0.90:
+            print(f"  fidelity {fid:.3f} < 0.90 — falling back to the "
+                  f"TEACHER encoder for this store", flush=True)
+            return embed_frames(store, frame_table, model="fast",
+                                incremental=incremental, verbose=verbose,
+                                streams=streams, engine="siglip")
+    except Exception as e:
+        if verbose:
+            print(f"  fidelity gate skipped ({type(e).__name__})",
+                  flush=True)
     frames = store.table(frame_table).scan()
     allst = sorted(set(frames.column("stream").to_pylist()))
     use = [s for s in allst if s in streams] if streams else allst
