@@ -386,24 +386,16 @@ def _binding_audit(store, rel, clip_keys):
             keep[i] = False
             killed_absent += 1
             continue
-        # THE MANIPULATED-OBJECT TEST: the queried X must MOVE. "a
-        # green object" grounds on any green thing in the scene
-        # (audit-bench-caught: zero kills on the green/yellow sets);
-        # the query is about the object being ACTED ON, and that one
-        # travels. Static X = wrong clip.
-        if x is not None:
-            centers = [((b_[0] + b_[2]) / 2, (b_[1] + b_[3]) / 2)
-                       for b_ in tr[x]["boxes"] if b_ is not None]
-            sizes = [max(b_[2] - b_[0], b_[3] - b_[1])
-                     for b_ in tr[x]["boxes"] if b_ is not None]
-            if len(centers) >= 2:
-                cs = np.asarray(centers)
-                disp = float(np.max(np.linalg.norm(
-                    cs - cs.mean(0), axis=1))) * 2.0
-                if disp < 0.7 * float(np.median(sizes)):
-                    keep[i] = False
-                    killed_static += 1
-                    continue
+        # THE MANIPULATED-OBJECT TEST: SOME instance of the queried X
+        # must MOVE. "a green object" grounds on any green thing in
+        # the scene (audit-bench-caught: zero kills on the green/
+        # yellow sets); the query is about the object being ACTED ON,
+        # and that one travels. any_moved spans ALL tracked identities
+        # so a second, static instance never executes a true clip.
+        if x is not None and not tr[x].get("any_moved", True):
+            keep[i] = False
+            killed_static += 1
+            continue
         if x is not None and y is not None \
                 and max(tr[y]["presence"]) >= 0.5:
             near = False

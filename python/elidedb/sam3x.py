@@ -206,26 +206,65 @@ def track_concepts(store, stream, t0, t1, phrases, n_frames=12,
 
 
 def _masklets(per_frame, n):
-    """Collapse the tracker's per-frame outputs (schema observed on the
-    smoke run: out_obj_ids / out_probs / out_boxes_xywh /
-    out_binary_masks, parallel arrays) into presence/box/mask series
-    for the highest-probability tracked instance."""
-    presence = [0.0] * n
-    boxes = [None] * n
-    masks = [None] * n
+    """Collapse the tracker's per-frame outputs (out_obj_ids /
+    out_probs / out_boxes_xywh / out_binary_masks) into presence/box/
+    mask series for ONE persistent identity — the obj_id with the
+    highest total probability across the clip. Per-frame argmax let
+    the series hop between same-concept instances (two green toys),
+    faking movement and defeating the manipulated-object test
+    (audit-bench-caught: zero static kills on attribute queries)."""
+    # first pass: total evidence per identity
+    totals = {}
     for i in range(n):
         o = per_frame.get(i)
         if not isinstance(o, dict):
             continue
+        ids = np.asarray(o.get("out_obj_ids", [])).reshape(-1)
         probs = np.asarray(o.get("out_probs", []), float).reshape(-1)
-        if probs.size == 0:
+        for oid, p in zip(ids, probs):
+            totals[int(oid)] = totals.get(int(oid), 0.0) + float(p)
+    presence = [0.0] * n
+    boxes = [None] * n
+    masks = [None] * n
+    if not totals:
+        return {"presence": presence, "boxes": boxes, "masks": masks,
+                "any_moved": False}
+    best_id = max(totals, key=totals.get)
+    per_id_centers = {}
+    for i in range(n):
+        o = per_frame.get(i)
+        if not isinstance(o, dict):
             continue
-        j = int(np.argmax(probs))
-        presence[i] = float(probs[j])
-        bx = np.asarray(o["out_boxes_xywh"], float).reshape(-1, 4)[j]
-        boxes[i] = np.array([bx[0], bx[1],
-                             bx[0] + bx[2], bx[1] + bx[3]])
-        m = o.get("out_binary_masks")
-        if m is not None and len(m) > j:
-            masks[i] = np.squeeze(np.asarray(m[j])) > 0.5
-    return {"presence": presence, "boxes": boxes, "masks": masks}
+        ids = np.asarray(o.get("out_obj_ids", [])).reshape(-1)
+        probs = np.asarray(o.get("out_probs", []), float).reshape(-1)
+        bxs = np.asarray(o.get("out_boxes_xywh", []),
+                         float).reshape(-1, 4)
+        for j, oid in enumerate(int(v) for v in ids):
+            bx = bxs[j]
+            per_id_centers.setdefault(oid, []).append(
+                (bx[0] + bx[2] / 2, bx[1] + bx[3] / 2,
+                 max(bx[2], bx[3])))
+            if oid != best_id:
+                continue
+            presence[i] = float(probs[j])
+            boxes[i] = np.array([bx[0], bx[1],
+                                 bx[0] + bx[2], bx[1] + bx[3]])
+            m = o.get("out_binary_masks")
+            if m is not None and len(m) > j:
+                masks[i] = np.squeeze(np.asarray(m[j])) > 0.5
+    # "does ANY instance of this concept move" — the manipulated object
+    # may be a different identity than the most-visible one (a second
+    # green toy); the static-kill must not execute true clips for that
+    any_moved = False
+    for pts in per_id_centers.values():
+        if len(pts) < 2:
+            continue
+        cs = np.asarray([(x, y) for x, y, _ in pts])
+        size = float(np.median([s for _, _, s in pts]))
+        exc = float(np.max(np.linalg.norm(cs - cs.mean(0),
+                                          axis=1))) * 2.0
+        if exc >= 0.7 * size:
+            any_moved = True
+            break
+    return {"presence": presence, "boxes": boxes, "masks": masks,
+            "any_moved": any_moved}
