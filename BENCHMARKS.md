@@ -305,3 +305,14 @@ shortlist and shortlisting from the RRF union once captions exist.
 ./build/sdx bench --store store --windows 20 --dur 2 --naive 2
 ./build/sdx query --store store --text "..." --eval-recall
 ```
+
+## Truthset ledger (lake/bench, k=10, strict: ungraded=false)
+
+| when | commit | true/returned | mean prec | mean yield | per-query |
+|---|---|---|---|---|---|
+| 2026-07-25 23:29 | a989306 | 18/50 returned true | mean prec 0.32 | mean yield 0.18 | q00:1/3 q01:1/4 q02:4/4 q03:1/4 q04:9/10 q05:1/8 q07:1/3 q08:0/6 q09:0/4 q10:0/4 |
+| 2026-07-25 23:30 | a989306 | 10/46 returned true | mean prec 0.25 | mean yield 0.10 | q00:1/3 q01:1/4 q02:4/4 q03:1/4 q04:1/10 q05:1/4 q07:1/3 q08:0/6 q09:0/4 q10:0/4 |
+| 2026-07-25 23:31 | a989306 | 18/52 returned true | mean prec 0.32 | mean yield 0.18 | q00:1/3 q01:1/4 q02:4/4 q03:1/4 q04:9/10 q05:1/10 q07:1/3 q08:0/6 q09:0/4 q10:0/4 |
+| 2026-07-25 23:33 | a989306 | 18/52 returned true | mean prec 0.32 | mean yield 0.18 | q00:1/3 q01:1/4 q02:4/4 q03:1/4 q04:9/10 q05:1/10 q07:1/3 q08:0/6 q09:0/4 q10:0/4 |
+| 2026-07-25 23:35 | a989306 | 18/48 returned true | mean prec 0.32 | mean yield 0.18 | q00:1/3 q01:1/4 q02:4/4 q03:1/4 q04:10/10 q05:0/6 q07:1/3 q08:0/6 q09:0/4 q10:0/4 |
+| 2026-07-25 23:36 | a989306 | 20/47 returned true | mean prec 0.37 | mean yield 0.20 | q00:1/3 q01:1/4 q02:4/4 q03:1/4 q04:8/9 q05:4/6 q07:1/3 q08:0/6 q09:0/4 q10:0/4 |

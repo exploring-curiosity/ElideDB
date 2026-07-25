@@ -263,7 +263,12 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     except Exception:
         pass
     if verb_dir is not None and "mot" in ch:
-        weights["mot"] = max(weights.get("mot", 1.0), 8.0)
+        # motion FILTERS articulation queries but must not ORDER them:
+        # its contrast prefers episodes outside the true-open pool
+        # (AUC 0.603 outside vs 0.374 inside, ledger-diagnosed) —
+        # ordering falls to pe (pool affinity 0.895) + act (in-pool
+        # separation 0.660 after containment demotion)
+        weights["mot"] = 0.0
     elif directional and "mot" in weights:
         weights["mot"] = max(weights["mot"], 1.0)
 
@@ -308,6 +313,12 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
         # mid-distribution and a half-cut executed them (bench-caught,
         # close 4/6 -> 2/7)
         bad = _rankfrac(mot) < 1 / 3
+        # the act contrast (articulation minus the whole containment
+        # family) ranks put-in/take-out junk BOTTOM — ledger-diagnosed:
+        # act-only top-10 for 'open' had zero false while the fusion
+        # kept resurfacing containment clips. Bottom half by act dies.
+        if act is not None:
+            bad |= _rankfrac(act) < 0.5
         alive &= ~bad
         dropped = int(bad.sum())
     elif containment is not None and act is not None:

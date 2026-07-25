@@ -33,10 +33,28 @@ CANON = {
                ("Taking something out of something",
                 "Pulling something out of something",
                 "Taking something from somewhere")),
+    # articulation = own class MINUS opposite articulation AND the
+    # whole containment family: the junk that outranks true opens is
+    # put-in/take-out clips (ledger-diagnosed: every channel preferred
+    # them — they were selected INTO the pool by being the encoders'
+    # favorite mistakes). A true open scores low on containment; the
+    # junk scores high on exactly those classes.
     "close": (("Closing something",
                "Pushing something with something"),
               ("Opening something",
-               "Pulling something out of something")),
+               "Putting something into something",
+               "Stuffing something into something",
+               "Taking something out of something",
+               "Pulling something out of something",
+               "Taking something from somewhere")),
+    "open": (("Opening something",),
+             ("Closing something",
+              "Pushing something with something",
+              "Putting something into something",
+              "Stuffing something into something",
+              "Taking something out of something",
+              "Pulling something out of something",
+              "Taking something from somewhere")),
 }
 
 
@@ -44,11 +62,10 @@ def canonical_contrast(direction):
     """direction in {inward, outward, close, open} -> 174-d contrast
     vector over literal class indices."""
     from .action_probe import ssv2_classes
-    flip = direction in ("outward", "open")
-    pos, neg = CANON["close" if direction in ("close", "open")
-                     else "inward"]
-    if flip:
-        pos, neg = neg, pos
+    if direction in CANON:
+        pos, neg = CANON[direction]
+    else:                                   # outward = flipped inward
+        neg, pos = CANON["inward"]
     ci = {c: i for i, c in enumerate(ssv2_classes())}
     w = np.zeros(len(ci))
     for c in pos:
