@@ -35,6 +35,15 @@ import numpy as np
 
 _CELLS = {}
 
+# CATEGORY-WORD EXPANSION: "vessel" starves SigLIP/PE (ledger: sup
+# 247, prec 0.25) and SAM 3 cannot ground it at all (UNGROUNDABLE,
+# measured). Generic English hyponyms — no metadata, any corpus. Text
+# channels take max over variants; the binding audit tries variants
+# until one grounds.
+_HYPONYMS = {"vessel": ("pot", "pan", "bowl"),
+             "container": ("box", "drawer", "bin"),
+             "utensil": ("spoon", "fork", "knife")}
+
 
 def _pool_recordings(store):
     """(keys, matrix) — one pooled PE vector per recording."""
@@ -191,11 +200,20 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     if rel is not None and verb_dir is None:
         containment = "inward" if rel[1] in _INWARD else "outward"
 
+    variants = [text]
+    for w, syns in _HYPONYMS.items():
+        if w in tl:
+            variants = [text] + [tl.replace(w, s) for s in syns]
+            break
+
     ch = {}
     try:
         from .pe import pe_lookup
-        look, _ = pe_lookup(store, text)
-        ch["pe"] = np.array([look(*k) for k in keys])
+        vs = []
+        for vtext in variants:
+            look, _ = pe_lookup(store, vtext)
+            vs.append(np.array([look(*k) for k in keys]))
+        ch["pe"] = np.nanmax(np.stack(vs), 0) if len(vs) > 1 else vs[0]
     except Exception:
         pass
     try:
@@ -208,8 +226,11 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
         pass
     try:
         from .vid import vid_lookup
-        look, _ = vid_lookup(store, text)
-        ch["vid"] = np.array([look(*k) for k in keys])
+        vs = []
+        for vtext in variants:
+            look, _ = vid_lookup(store, vtext)
+            vs.append(np.array([look(*k) for k in keys]))
+        ch["vid"] = np.nanmax(np.stack(vs), 0) if len(vs) > 1 else vs[0]
     except Exception:
         pass
     # OBJ channel — FastSAM crops matched against the query's noun
@@ -447,20 +468,44 @@ def _binding_audit(store, rel, clip_keys):
     x, y = _concrete(x), _concrete(y)
     if x is None and y is None:
         return None, None
-    phrases = [p for p in (x, y) if p]
+    def _variants(p):
+        if p is None:
+            return [None]
+        for w, syns in _HYPONYMS.items():
+            if w in p:
+                return [p] + [p.replace(w, s) for s in syns]
+        return [p]
+
     keep = np.ones(len(clip_keys), bool)
     checked = killed_absent = killed_disjoint = abstained = 0
     killed_static = killed_wrong_color = 0
     for i, (s, a, b) in enumerate(clip_keys):
-        try:
-            tr = track_concepts(store, s, a, b, phrases, n_frames=8)
-        except Exception:
-            tr = None
+        # try phrase variants until X grounds (category words like
+        # "vessel" ground as pot/pan/bowl); first grounding wins
+        tr = None
+        for xv in _variants(x):
+            phrases = [p for p in (xv, y) if p]
+            try:
+                trv = track_concepts(store, s, a, b, phrases,
+                                     n_frames=8)
+            except Exception:
+                trv = None
+            if trv is None:
+                continue
+            if tr is None:
+                tr, xg = trv, xv
+            if xv is None or max(trv[xv]["presence"]) >= 0.5:
+                tr, xg = trv, xv
+                break
         if tr is None:
             abstained += 1
             continue
+        # xk = the phrase key that grounded for THIS clip (x itself
+        # stays loop-invariant — an earlier version mutated it and
+        # corrupted later iterations' variant lists)
+        xk = xg if x is not None else None
         checked += 1
-        if x is not None and max(tr[x]["presence"]) < 0.5:
+        if xk is not None and max(tr[xk]["presence"]) < 0.5:
             keep[i] = False
             killed_absent += 1
             continue
@@ -470,7 +515,7 @@ def _binding_audit(store, rel, clip_keys):
         # yellow sets); the query is about the object being ACTED ON,
         # and that one travels. any_moved spans ALL tracked identities
         # so a second, static instance never executes a true clip.
-        if x is not None and not tr[x].get("any_moved", True):
+        if xk is not None and not tr[xk].get("any_moved", True):
             keep[i] = False
             killed_static += 1
             continue
@@ -479,18 +524,18 @@ def _binding_audit(store, rel, clip_keys):
         # zero kills on attribute queries) — but the masklet hands us
         # the object's PIXELS, and color words are closed-class. The
         # object claimed as <color> must actually be <color>.
-        color = next((c for c in _HUE if x and c in x), None)
+        color = next((c for c in _HUE if xk and c in xk), None)
         if color is not None:
-            frac = _mask_color_frac(store, s, a, b, tr[x], color)
+            frac = _mask_color_frac(store, s, a, b, tr[xk], color)
             if frac is not None and frac < 0.25:
                 keep[i] = False
                 killed_wrong_color += 1
                 continue
-        if x is not None and y is not None \
+        if xk is not None and y is not None \
                 and max(tr[y]["presence"]) >= 0.5:
             near = False
-            for f in range(len(tr[x]["boxes"])):
-                bx, by = tr[x]["boxes"][f], tr[y]["boxes"][f]
+            for f in range(len(tr[xk]["boxes"])):
+                bx, by = tr[xk]["boxes"][f], tr[y]["boxes"][f]
                 if bx is None or by is None:
                     continue
                 # engagement: overlap, or gap under half of X's size
