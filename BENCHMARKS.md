@@ -318,3 +318,9 @@ shortlist and shortlisting from the RRF union once captions exist.
 | 2026-07-25 23:36 | a989306 | 20/47 returned true | mean prec 0.37 | mean yield 0.20 | q00:1/3 q01:1/4 q02:4/4 q03:1/4 q04:8/9 q05:4/6 q07:1/3 q08:0/6 q09:0/4 q10:0/4 |
 | 2026-07-25 23:37 | e5104f7 | 21/48 returned true | mean prec 0.39 | mean yield 0.21 | q00:1/3 q01:1/4 q02:4/4 q03:2/5 q04:8/9 q05:4/6 q07:1/3 q08:0/6 q09:0/4 q10:0/4 |
 | 2026-07-26 00:10 | 64d38bd | 25/56 returned true | mean prec 0.41 | mean yield 0.25 | q00:1/3 q01:1/4 q02:4/4 q03:3/10 q04:8/9 q05:4/6 q07:1/3 q08:3/10 q09:0/3 q10:0/4 |
+| 2026-07-26 00:35 | cc794dd | 16/51 returned true | mean prec 0.27 | mean yield 0.17 | q00:2/10 q01:0/3 q02:4/5 q03:3/10 q04:5/10 q05:1/3 q07:1/3 q08:0/0 q09:0/4 q10:0/3 |
+| 2026-07-26 00:37 | cc794dd | 15/63 returned true | mean prec 0.25 | mean yield 0.16 | q00:2/7 q01:1/10 q02:4/5 q03:3/10 q04:1/3 q05:3/9 q07:1/3 q08:0/3 q09:0/10 q10:0/3 |
+| 2026-07-26 00:40 | cc794dd | 8/40 returned true | mean prec 0.18 | mean yield 0.08 | q00:0/3 q01:0/4 q02:0/0 q03:3/10 q04:4/4 q05:0/4 q07:1/3 q08:0/3 q09:0/6 q10:0/3 |
+| 2026-07-26 00:42 | cc794dd | 8/45 returned true | mean prec 0.16 | mean yield 0.08 | q00:1/3 q01:0/3 q02:0/0 q03:3/10 q04:0/3 q05:3/7 q07:1/3 q08:0/3 q09:0/10 q10:0/3 |
+| 2026-07-26 00:44 | cc794dd | 9/46 returned true | mean prec 0.16 | mean yield 0.10 | q00:2/10 q01:0/3 q02:0/0 q03:3/7 q04:3/6 q05:1/3 q07:0/3 q08:0/4 q09:0/4 q10:0/6 |
+| 2026-07-26 00:45 | cc794dd | 19/90 returned true | mean prec 0.21 | mean yield 0.20 | q00:2/10 q01:1/10 q02:0/0 q03:5/10 q04:6/10 q05:3/10 q07:2/10 q08:0/10 q09:0/10 q10:0/10 |

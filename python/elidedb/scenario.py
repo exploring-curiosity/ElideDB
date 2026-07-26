@@ -119,35 +119,38 @@ def _episodes(store):
                     (int(v) for v in ep.column("t1").to_pylist())))
 
 
-# generic English verb -> SSv2 class family (model vocabulary, nothing
-# per-dataset). Only verbs with an unambiguous class mapping gate.
-_VERB_CLASSES = {
-    "fold": ("Folding something",),
-    "unfold": ("Unfolding something",),
-    "tear": ("Tearing something into two pieces",
-             "Tearing something just a little bit"),
-    "throw": ("Throwing something",),
-    "pour": ("Pouring something into something",),
-    "squeeze": ("Squeezing something",),
-    "stack": ("Stacking number of something",),
-}
-
-
-def _action_support(store, text_lower):
-    """{verb, classes, max_p} when the query names a gateable action;
-    None otherwise. max_p = the corpus's best SSv2 posterior for the
-    family — an index-only 'does this action happen here at all'."""
-    hit = next((v for v in _VERB_CLASSES if v in text_lower), None)
-    if hit is None:
-        return None
-    from .action_probe import ssv2_classes
+def _auto_action_support(store, text):
+    """Self-recognized no-match signal: map the query onto the action
+    probe's OWN class vocabulary by embedding similarity (no coded
+    verb list — the vocabulary is a model property, the mapping is
+    computed) and report the corpus's best posterior for the top
+    matched classes. Only gates when the mapping is confident: a
+    query far from every class name (a domain this probe does not
+    cover) must never be silenced by it."""
+    from .action_probe import query_class_weights, ssv2_classes
     from .embeddings import _vec_table
+    from .pe import _text_vec
+    names = ssv2_classes()
+    qv = _text_vec(text)
+    sims = np.array([float(_text_vec(c.lower()) @ qv) for c in names])
+    top = np.argsort(-sims)[:3]
+    # SCALE-FREE mapping confidence: is the best class an outlier of
+    # the similarity distribution, or just the least-bad of a flat
+    # field? (An absolute cosine threshold silently disabled the gate
+    # — ledger-caught: fold gate FAIL.)
+    z = float((sims[top[0]] - sims.mean()) / (sims.std() + 1e-9))
+    if z < 3.0:
+        return None                    # vocabulary doesn't cover this
+    # gate on the similarity OUTLIER classes only: an unweighted top-3
+    # dragged in a merely-adjacent class that exists in the corpus and
+    # silenced the gate (ledger-caught on fold: 'putting on a flat
+    # surface' rode along at max_p 0.13)
+    zs = (sims - sims.mean()) / (sims.std() + 1e-9)
+    top = np.where(zs >= 3.0)[0]
     _, probs = _vec_table(store, "action_probs")
-    ci = {c: i for i, c in enumerate(ssv2_classes())}
-    cols = [ci[c] for c in _VERB_CLASSES[hit] if c in ci]
-    mp = float(np.asarray(probs)[:, cols].max()) if cols else 1.0
-    return {"verb": hit, "classes": list(_VERB_CLASSES[hit]),
-            "max_p": round(mp, 4)}
+    mp = float(np.asarray(probs)[:, top].max())
+    return {"classes": [names[int(i)] for i in top],
+            "z": round(z, 2), "max_p": round(mp, 4)}
 
 
 def _knee(sorted_desc):
@@ -179,31 +182,17 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
                      the query parses as a relation; abstains otherwise.
     """
     from .fusion import rrf
-    from .grounding import _INWARD, parse_relation
+    from .grounding import parse_relation
     from .rerank import directional_swap
     t0 = time.perf_counter()
     keys = _episodes(store)
+    # LEXICON ONLY beyond this point (no-hardwire rule): the antonym
+    # swap and the parsed relation are dictionary knowledge; every
+    # dataset-facing decision below is derived from the corpus at
+    # query time.
     sq = directional_swap(text)
-
-    # QUERY UNDERSTANDING, all mechanical: the parsed relation names
-    # the containment direction relative to the landmark; open/close
-    # verbs name the articulation direction. These select CANONICAL
-    # literal-class contrasts for the act channel — the text-mapped
-    # weights sent "open" onto the pulling-out family, which fires on
-    # take-out clips (product-bench-caught).
     rel = parse_relation(text)
     tl = text.lower()
-    verb_dir = ("close" if any(w in tl for w in
-                               ("close", "closes", "closing", "shut"))
-                else "open" if "open" in tl else None)
-    containment = None
-    if rel is not None and verb_dir is None:
-        if rel[1] in ("on", "onto", "on top of", "over"):
-            containment = "onto"       # surface placement ≠ containment
-        elif rel[1] in _INWARD:
-            containment = "inward"
-        else:
-            containment = "outward"
 
     variants = [text]
     for w, syns in _HYPONYMS.items():
@@ -222,10 +211,11 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     except Exception:
         pass
     try:
-        from .action_channel import act_lookup, canonical_contrast
-        contrast = (canonical_contrast(containment or verb_dir)
-                    if (containment or verb_dir) else None)
-        look, _ = act_lookup(store, text, contrast=contrast)
+        # act: text-mapped class weights onto the probe's own
+        # vocabulary (contrast against the swap when one exists) —
+        # embedding-derived, no coded class lists
+        from .action_channel import act_lookup
+        look, _ = act_lookup(store, text)
         ch["act"] = np.array([look(*k) for k in keys])
     except Exception:
         pass
@@ -258,66 +248,77 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
             ch["obj"] = np.array([_obj(k) for k in keys])
     except Exception:
         pass
-    mot = None
-    if sq is not None or verb_dir is not None:
+    # CONTRAST channels — direction EVIDENCE, computed only when the
+    # lexicon yields a swap. Architectural principle replacing every
+    # hand routing rule (ledger-derived, now task-free): contrast
+    # channels FILTER, content channels ORDER — a contrast score says
+    # "more like the query than its opposite", never "relevant".
+    contrast_ch = {}
+    if sq is not None:
+        if "act" in ch:
+            contrast_ch["act"] = ch["act"]
         try:
             from .context import embed_texts
             from .motion import motion_lookup
-            msq = sq or directional_swap(
-                "opening the drawer" if verb_dir == "open"
-                else "closing the drawer")
-            if msq:
-                qv2 = embed_texts([text, msq])
-                mlook = motion_lookup(store, qv2[0], qv2[1])
-                mot = np.array([mlook(*k) for k in keys])
-                ch["mot"] = mot
+            qv2 = embed_texts([text, sq])
+            mlook = motion_lookup(store, qv2[0], qv2[1])
+            contrast_ch["mot"] = np.array([mlook(*k) for k in keys])
+            ch["mot"] = contrast_ch["mot"]
+        except Exception:
+            pass
+        try:
+            # SELF-RECOGNIZED contrast: Rocchio anchors in the
+            # domain-general video-native space — the corpus itself
+            # defines what this direction looks like here. No class
+            # names, works unchanged on any domain.
+            from .pe import pe_lookup
+            from .prf import prf_contrast
+            look, _ = pe_lookup(store, sq)
+            pe_swap = np.array([look(*k) for k in keys])
+            contrast_ch["prf"] = prf_contrast(
+                store, keys, ch.get("pe"), pe_swap)
+            ch["prf"] = contrast_ch["prf"]
         except Exception:
             pass
 
-    # weights: learned per-store artifact, routed; for OPEN/CLOSE the
-    # motion channel is the AUTHORITY (0.98 AUC, measured — the weight
-    # fit diluted it chasing containment gains, breaking open 0/4)
-    directional = sq is not None or verb_dir is not None
+    directional = sq is not None
     weights = {c: 1.0 for c in ch}
+    filter_q = 1 / 3
+    from pathlib import Path
+    sw = Path(store.dir) / "_set_weights.json"
     try:
-        from pathlib import Path
-        cfg = json.loads((Path(store.dir) / "_channel_weights.json")
-                         .read_text())
-        learned = (cfg.get("weights_dir", cfg.get("weights", {}))
-                   if directional else cfg.get("weights", {}))
-        weights = {c: float(learned.get(c, 1.0)) for c in ch}
+        if sw.exists():
+            # FITTED roles (scripts/fit_set_weights.py): ordering
+            # weights for every channel INCLUDING contrasts, plus the
+            # filter quantile — coordinate ascent on the truthset,
+            # LOQO-validated. Data-derived per store; the no-hardwire
+            # rule's answer to hand role rules (the fit independently
+            # rediscovered mot=0-in-ordering).
+            cfg = json.loads(sw.read_text())
+            wk = ("set_weights_dir" if directional and
+                  "set_weights_dir" in cfg else "set_weights")
+            fk = ("filter_quantile_dir" if directional and
+                  "filter_quantile_dir" in cfg else "filter_quantile")
+            weights = {c: float(cfg[wk].get(c, 1.0)) for c in ch}
+            filter_q = float(cfg.get(fk, 1 / 3))
+        else:
+            cfg = json.loads((Path(store.dir)
+                              / "_channel_weights.json").read_text())
+            learned = (cfg.get("weights_dir", cfg.get("weights", {}))
+                       if directional else cfg.get("weights", {}))
+            weights = {c: float(learned.get(c, 1.0)) for c in ch}
     except Exception:
         pass
-    if verb_dir is not None and "mot" in ch:
-        # motion FILTERS articulation queries but must not ORDER them:
-        # its contrast prefers episodes outside the true-open pool
-        # (AUC 0.603 outside vs 0.374 inside, ledger-diagnosed) —
-        # ordering falls to pe (pool affinity 0.895) + act (in-pool
-        # separation 0.660 after containment demotion)
-        weights["mot"] = 0.0
-    elif directional and "mot" in weights:
-        weights["mot"] = max(weights["mot"], 1.0)
-    if containment is not None and "obj" in ch and rel is not None \
-            and all("object" not in (p or "") for p in (rel[0], rel[2])):
-        # concrete X-rel-Y: the obj channel (crop conjunction) is the
-        # only channel whose top-10 contained TRUE spoon-on-cloth clips
-        # (ledger-diagnosed; pe was 0.222 anti-correlated) — binding
-        # queries order by binding evidence
-        weights["obj"] = max(weights.get("obj", 1.0), 5.0)
-        weights["pe"] = min(weights.get("pe", 1.0), 2.0)
-
     fused = rrf(ch, weights=weights)
 
-    # NO-MATCH GATE, video-native: when the query names an ACTION and
-    # the corpus's maximum SSv2 posterior for that action family is at
-    # noise level, the action does not happen anywhere in this store —
-    # the honest answer is the EMPTY set. Measured separation on
-    # bridge4h: absent actions max 0.008-0.021 (fold/tear/throw) vs
-    # present ones 0.12-0.93 (close/open/put-in); threshold 0.05 sits
-    # in the gap. (A PE-cosine z-gate was tried first and could not
-    # separate — fold z 2.2 ranked ABOVE lid z 1.9; cosine spread
-    # compresses on compositional phrasings.)
-    gate = _action_support(store, tl)
+    # NO-MATCH GATE, self-recognized: map the query onto the action
+    # probe's OWN vocabulary by embedding similarity (no hand verb
+    # list) and ask whether ANY episode in this corpus expresses those
+    # classes above noise. Measured separation on bridge4h: absent
+    # actions max 0.008-0.021 (fold/tear/throw) vs present 0.12-0.93;
+    # threshold 0.05 sits in the gap. (A PE-cosine z-gate could not
+    # separate — fold z 2.2 ranked ABOVE lid z 1.9.)
+    gate = _auto_action_support(store, text)
     if gate is not None and gate["max_p"] < 0.05:
         ms = (time.perf_counter() - t0) * 1e3
         return {"clips": [], "borderline": [], "audit": None,
@@ -340,33 +341,26 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
 
     dropped = 0
     alive = np.ones(len(keys), bool)
-    act = ch.get("act")
-    if verb_dir is not None and mot is not None:
-        # bottom THIRD only: motion's 0.98 AUC is close-vs-OPEN
-        # (pairwise); against the whole corpus true closes sit
-        # mid-distribution and a half-cut executed them (bench-caught,
-        # close 4/6 -> 2/7)
-        bad = _rankfrac(mot) < 1 / 3
-        # the act contrast (articulation minus the whole containment
-        # family) ranks put-in/take-out junk BOTTOM — ledger-diagnosed:
-        # act-only top-10 for 'open' had zero false while the fusion
-        # kept resurfacing containment clips. Bottom half by act dies.
-        if act is not None:
-            bad |= _rankfrac(act) < 0.5
-        alive &= ~bad
-        dropped = int(bad.sum())
-    elif containment is not None and act is not None:
-        af = _rankfrac(act)
-        if mot is not None:
-            bad = (af < 1 / 3) & (_rankfrac(mot) < 1 / 3)
-        else:
-            bad = af < 1 / 4
+    if contrast_ch:
+        # unified contrast filter: mean rank fraction over EVERY
+        # available contrast channel (motion delta, action-class
+        # contrast, corpus-derived PRF anchors), bottom third dies.
+        # Quantile not sign (uncalibrated zeros execute true clips —
+        # 130/183 measured); abstaining channels vote neutral 0.5.
+        cf = np.median(np.stack([_rankfrac(v) for v in
+                                 contrast_ch.values()]), 0)
+        bad = cf < filter_q
         alive &= ~bad
         dropped = int(bad.sum())
 
     idx = np.where(alive)[0]
     order = idx[np.argsort(-fused[idx])]
-    cut = min(_knee(fused[order]), k_max)
+    # when roles are FITTED, the boundary is part of the fitted
+    # configuration (the fit optimized plain top-K + filter; the knee
+    # is a hand heuristic that reshaped what was fitted — measured
+    # divergence: fit LOQO 0.21 vs live 0.16, q02 zeroed)
+    cut = (min(len(order), k_max) if sw.exists()
+           else min(_knee(fused[order]), k_max))
     chosen = order[:cut]
     borderline = order[cut:cut + 20]
 
