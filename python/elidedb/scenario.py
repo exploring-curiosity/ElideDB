@@ -198,7 +198,12 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
                 else "open" if "open" in tl else None)
     containment = None
     if rel is not None and verb_dir is None:
-        containment = "inward" if rel[1] in _INWARD else "outward"
+        if rel[1] in ("on", "onto", "on top of", "over"):
+            containment = "onto"       # surface placement ≠ containment
+        elif rel[1] in _INWARD:
+            containment = "inward"
+        else:
+            containment = "outward"
 
     variants = [text]
     for w, syns in _HYPONYMS.items():
@@ -292,6 +297,14 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
         weights["mot"] = 0.0
     elif directional and "mot" in weights:
         weights["mot"] = max(weights["mot"], 1.0)
+    if containment is not None and "obj" in ch and rel is not None \
+            and all("object" not in (p or "") for p in (rel[0], rel[2])):
+        # concrete X-rel-Y: the obj channel (crop conjunction) is the
+        # only channel whose top-10 contained TRUE spoon-on-cloth clips
+        # (ledger-diagnosed; pe was 0.222 anti-correlated) — binding
+        # queries order by binding evidence
+        weights["obj"] = max(weights.get("obj", 1.0), 5.0)
+        weights["pe"] = min(weights.get("pe", 1.0), 2.0)
 
     fused = rrf(ch, weights=weights)
 

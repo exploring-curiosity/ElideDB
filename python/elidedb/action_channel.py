@@ -33,6 +33,17 @@ CANON = {
                ("Taking something out of something",
                 "Pulling something out of something",
                 "Taking something from somewhere")),
+    # SURFACE placement is not containment: "on top of the cloth"
+    # routed through the inward contrast pulled put-INTO clips
+    # (ledger-diagnosed: act top-10 for spoon-on-cloth was 100%
+    # out-of-pool put-ins). SSv2 has literal onto classes.
+    "onto": (("Putting something onto something",
+              "Putting something on a surface",
+              "Putting number of something onto something"),
+             ("Putting something into something",
+              "Stuffing something into something",
+              "Taking something out of something",
+              "Pulling something out of something")),
     # articulation = own class MINUS opposite articulation AND the
     # whole containment family: the junk that outranks true opens is
     # put-in/take-out clips (ledger-diagnosed: every channel preferred
