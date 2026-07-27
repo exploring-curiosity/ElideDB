@@ -141,16 +141,30 @@ def _auto_action_support(store, text):
     z = float((sims[top[0]] - sims.mean()) / (sims.std() + 1e-9))
     if z < 3.0:
         return None                    # vocabulary doesn't cover this
-    # gate on the similarity OUTLIER classes only: an unweighted top-3
-    # dragged in a merely-adjacent class that exists in the corpus and
-    # silenced the gate (ledger-caught on fold: 'putting on a flat
-    # surface' rode along at max_p 0.13)
+    # CONJUNCTIVE gate, every term scale-free (single-class posterior
+    # could not separate 'fold' 0.008 from 'red-out' 0.010 — measured;
+    # half the vocabulary is below 0.05 on this corpus):
+    #   1. an outlier class exists (z >= 3, above)
+    #   2. those outlier classes are posterior-DEAD here (bottom third
+    #      of the class-max distribution)
+    #   3. EXPECTED support under the full similarity distribution is
+    #      below the corpus mean — a query whose sim mass spreads over
+    #      living classes (red-out: picking/putting) never gates; one
+    #      whose mass concentrates on a dead class (fold) does
     zs = (sims - sims.mean()) / (sims.std() + 1e-9)
     top = np.where(zs >= 3.0)[0]
     _, probs = _vec_table(store, "action_probs")
-    mp = float(np.asarray(probs)[:, top].max())
+    cmax = np.asarray(probs).max(0)
+    mp = float(cmax[top].max())
+    dead = mp < float(np.percentile(cmax, 33))
+    w = np.exp((sims - sims.max()) / 0.05)
+    w /= w.sum()
+    ratio = float(w @ cmax) / (float(cmax.mean()) + 1e-9)
+    if not (dead and ratio < 1.0):
+        return None
     return {"classes": [names[int(i)] for i in top],
-            "z": round(z, 2), "max_p": round(mp, 4)}
+            "z": round(z, 2), "max_p": round(mp, 4),
+            "support_ratio": round(ratio, 2)}
 
 
 def _knee(sorted_desc):
@@ -217,6 +231,19 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
         from .action_channel import act_lookup
         look, _ = act_lookup(store, text)
         ch["act"] = np.array([look(*k) for k in keys])
+    except Exception:
+        pass
+    try:
+        from .sig2 import conj_lookup, sig2_lookup
+        vs = []
+        for vtext in variants:
+            look, _ = sig2_lookup(store, vtext)
+            vs.append(np.array([look(*k) for k in keys]))
+        ch["sig2"] = (np.nanmax(np.stack(vs), 0)
+                      if len(vs) > 1 else vs[0])
+        cl = conj_lookup(store, text)
+        if cl is not None:
+            ch["conj"] = np.array([cl(*k) for k in keys])
     except Exception:
         pass
     try:

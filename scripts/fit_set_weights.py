@@ -25,7 +25,7 @@ from bench_product import QUERIES                            # noqa: E402
 from elidedb import Store                                    # noqa: E402
 from elidedb.fusion import rrf                               # noqa: E402
 
-CH = ["pe", "act", "vid", "obj", "mot", "prf"]
+CH = ["pe", "act", "vid", "obj", "mot", "prf", "sig2", "conj"]
 K = 10
 
 
@@ -39,13 +39,35 @@ def capture(db, keys, text):
     from elidedb.prf import prf_contrast
     from elidedb.rerank import directional_swap
     from elidedb.vid import vid_lookup
+    from elidedb.scenario import _HYPONYMS
+    variants = [text]
+    for w_, syns in _HYPONYMS.items():
+        if w_ in text.lower():
+            variants = [text] + [text.lower().replace(w_, s_)
+                                 for s_ in syns]
+            break
     out = {}
-    look, _ = pe_lookup(db, text)
-    out["pe"] = np.array([look(*k) for k in keys])
+    vs = []
+    for vt in variants:
+        look, _ = pe_lookup(db, vt)
+        vs.append(np.array([look(*k) for k in keys]))
+    out["pe"] = np.nanmax(np.stack(vs), 0) if len(vs) > 1 else vs[0]
     look, _ = act_lookup(db, text)
     out["act"] = np.array([look(*k) for k in keys])
-    look, _ = vid_lookup(db, text)
-    out["vid"] = np.array([look(*k) for k in keys])
+    vs = []
+    for vt in variants:
+        look, _ = vid_lookup(db, vt)
+        vs.append(np.array([look(*k) for k in keys]))
+    out["vid"] = np.nanmax(np.stack(vs), 0) if len(vs) > 1 else vs[0]
+    from elidedb.sig2 import conj_lookup, sig2_lookup
+    vs = []
+    for vt in variants:
+        look, _ = sig2_lookup(db, vt)
+        vs.append(np.array([look(*k) for k in keys]))
+    out["sig2"] = np.nanmax(np.stack(vs), 0) if len(vs) > 1 else vs[0]
+    cl = conj_lookup(db, text)
+    out["conj"] = (np.array([cl(*k) for k in keys]) if cl is not None
+                   else np.full(len(keys), np.nan))
     rel = parse_relation(text)
     nps = [p for p in ((rel[0], rel[2]) if rel else ())
            if p and "object" not in p]
