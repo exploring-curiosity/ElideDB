@@ -9,10 +9,17 @@ push. No code changes are needed at deploy time.
 The real product surface, read only: the Desk console serving the
 standalone demo store (1,122 robot manipulation episodes, 1.0 GB,
 media materialized inside the store). Search runs the full fitted
-channel stack on CPU. Measured on 2 CPU cores: about 27 s cold start
-for model loads, then under a second per warm query. Quality is
-identical to the benchmarked configuration; the fitted weights ship
-with the store. Maintenance and index mutations return 403.
+channel stack on CPU.
+
+Measured in the container end to end: first boot warms every text
+tower before serving (about 15 minutes of downloads and loads, once
+per container); the first query on a store pays a few minutes of
+one-time index touches; warm queries then run in about 5 seconds
+with all channels live. The demo-environment benchmark measured
+0.36 precision / 0.33 yield against the 0.38 / 0.36 reference row
+(two borderline clips flip under bfloat16 arithmetic; hosts with
+memory to spare can set ELIDEDB_DTYPE=float32). Maintenance and
+index mutations return 403.
 
 ## Option A: Hugging Face Spaces (free)
 

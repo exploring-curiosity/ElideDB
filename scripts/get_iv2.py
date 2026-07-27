@@ -31,8 +31,8 @@ DIR = Path("models/iv2_stage2_1b")
 
 
 def patch(src):
-    if "MPS port" in src:
-        return src          # already patched
+    if "_bc_cands" in src:
+        return src          # already at the current patch level
     src = src.replace(
         "from flash_attn.flash_attn_interface import "
         "flash_attn_varlen_qkvpacked_func\n"
@@ -60,21 +60,31 @@ def patch(src):
     src = src.replace(
         '    bert_config = BertConfig.from_json_file("./src/model/'
         'vlm_backbone/internvideo2/config_bert_large.json")',
-        "    # MPS port: resolve the bert config next to this file\n"
-        "    _bc = os.path.join(os.path.dirname(os.path.abspath("
+        "    # MPS port: resolve the bert config next to this file,\n"
+        "    # falling back to the assembled model dir (transformers\n"
+        "    # caches this .py WITHOUT sibling json files)\n"
+        "    _bc_cands = [\n"
+        "        os.path.join(os.path.dirname(os.path.abspath("
         "__file__)),\n"
-        '                       "config_bert_large.json")\n'
+        '                     "config_bert_large.json"),\n'
+        "        os.path.join(os.getcwd(),\n"
+        '                     "models/iv2_stage2_1b/'
+        'config_bert_large.json"),\n'
+        "    ]\n"
+        "    _bc = next(p for p in _bc_cands if os.path.exists(p))\n"
         "    bert_config = BertConfig.from_json_file(_bc)")
     return src
 
 
 def main():
     DIR.mkdir(parents=True, exist_ok=True)
+    mp = DIR / "modeling_internvideo2.py"
+    if mp.exists() and "_bc_cands" not in mp.read_text():
+        mp.unlink()          # stale patch level: refetch and repatch
     for f in FILES:
         p = DIR / f
         if not p.exists():
             urllib.request.urlretrieve(RAW + f, p)
-    mp = DIR / "modeling_internvideo2.py"
     mp.write_text(patch(mp.read_text()))
     from huggingface_hub import hf_hub_download
     w = hf_hub_download("ziyjiang/InternVideo2-1B",

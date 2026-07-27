@@ -371,7 +371,12 @@ def caption_windows(store, windows, frames_per_window=3, model_id=None,
 
 def embed_texts(texts, model_id=DEFAULT_MODEL, batch=32):
     """Batched SigLIP text tower. Same normalisation as image vectors so the
-    two are directly comparable by dot product."""
+    two are directly comparable by dot product. Delegates to the
+    portable single-text path when mlx is not on this machine."""
+    from .embeddings import _backend, embed_text
+    if _backend() != "mlx":
+        return np.stack([embed_text(t if t.strip() else "a scene",
+                                    model_id) for t in texts])
     import mlx.core as mx
     model, processor = _load_model(model_id)
     out = []

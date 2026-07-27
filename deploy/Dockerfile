@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir -r deploy/requirements.txt
 COPY python /app/python
 COPY scripts/get_iv2.py /app/scripts/get_iv2.py
 COPY deploy/entrypoint.sh /app/deploy/entrypoint.sh
+COPY deploy/warm.py /app/deploy/warm.py
 COPY deploy/demo/lake /app/lake
 RUN chmod +x /app/deploy/entrypoint.sh
 
