@@ -57,6 +57,10 @@ def test_filter_all_nan_channel_excluded_from_median():
     assert list(alive) == [True, False, True, True]
 
 
+def test_filter_empty_channels_no_crash():
+    assert filter_mask({}, ["mot"], 0.5).shape == (0,)
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

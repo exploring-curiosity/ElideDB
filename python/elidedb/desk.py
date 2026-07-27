@@ -607,9 +607,22 @@ def api_query(key: str, body: dict):
         # directive — the old captioned search_context served here
         # while acceptance was measured elsewhere; never again).
         from elidedb.scenario import search_set
+        want = int(body.get("k", 10))
+        scoped = bool(body.get("streams") or body.get("t0") is not None
+                      or body.get("t1") is not None)
+        # scoped queries must rank a large pool BEFORE the scope
+        # filters below — filtering the unscoped top-k starves the
+        # result. Cap sizing differs by tier: audit_n (search_set's
+        # "stratified sample" doc) is DEAD — never passed to
+        # _binding_audit, which loops the SAM-3.1 tracker over every
+        # element of `chosen` (scenario.py:390-392, 509-512), so audit
+        # cost grows with k_max, not a fixed sample. A scoped+audited
+        # query therefore gets a small pool; scoped+fast can afford 400.
+        pool = (400 if not body.get("rerank") else max(4 * want, 40)) \
+            if scoped else want
         r = search_set(db, body["text"],
                        purity="audited" if body.get("rerank") else "fast",
-                       k_max=int(body.get("k", 10)))
+                       k_max=pool)
         hits = [{"stream": c["stream"], "t0": c["t0"], "t1": c["t1"],
                  "score": c["score"]} for c in r["clips"]]
         if body.get("streams"):
@@ -619,6 +632,7 @@ def api_query(key: str, body: dict):
             hits = [h for h in hits if h["t1"] >= int(lo)]
         if hi is not None:
             hits = [h for h in hits if h["t0"] <= int(hi)]
+        hits = hits[:want]
         stats = {"channels": r.get("channels", []),
                  "scored": r.get("scored", 0),
                  "direction_filtered": r.get("direction_filtered", 0),

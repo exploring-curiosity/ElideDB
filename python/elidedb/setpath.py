@@ -29,7 +29,7 @@ def filter_mask(ch, names, q):
     q is 0."""
     con = [rankfrac(ch[c]) for c in names
            if c in ch and np.isfinite(ch[c]).any()]
-    size = len(next(iter(ch.values())))
+    size = len(next(iter(ch.values()))) if ch else 0
     if not con or q <= 0:
         return np.ones(size, bool)
     return ~(np.median(np.stack(con), 0) < q)
