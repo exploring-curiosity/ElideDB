@@ -340,8 +340,8 @@
           <div class="ctrlgrid">
             <label>Max results
               <input type="number" id="ctx-k" value="8" min="1" max="24"></label>
-            <label title="Re-judge the top finalists with the larger vision model over four ordered frames. Slower on first run; cached afterwards.">
-              <input type="checkbox" id="ctx-rerank"> Deep verify (7B)</label>
+            <label title="Run the SAM-3 geometric binding audit over the set (deterministic, VLM-free). Slower; prunes clips whose objects don't satisfy the query's spatial relation.">
+              <input type="checkbox" id="ctx-rerank"> Deep verify (geometry)</label>
           </div>
           <div class="ctrlgrid">
             <label>Stream <select id="ctx-stream"><option value="">any</option></select></label>
@@ -870,8 +870,10 @@ async function runQuery() {
       const scanned = S.scanned != null ? `scanned ${S.scanned}/${S.total} · ` :
         (S.candidates != null ? `${S.candidates} candidates · ` : "");
       const fresh = S.verified_fresh ? `${S.verified_fresh} newly verified · ` : "";
+      const tierline = S.method ? `tier <b>${esc(S.method)}</b> · ` :
+        (S.channels && S.channels.length ? `channels <b>${esc(S.channels.join(" · "))}</b> · ` : "");
       stat.innerHTML = `${terms} ${rr}&nbsp; ${seg}${floor}${scanned}${fresh}`
-        + `tier <b>${esc(S.method)}</b> · ${r.ms} ms · click a hit to play`;
+        + `${tierline}${r.ms} ms · click a hit to play`;
       const why = (S.why || []);
       out.innerHTML = `<div class="hitgrid">` + r.hits.map((h, hi) => {
         const dur = (h.t1 - h.t0) / 1e9;

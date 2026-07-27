@@ -607,10 +607,13 @@ def api_query(key: str, body: dict):
         # directive — the old captioned search_context served here
         # while acceptance was measured elsewhere; never again).
         from elidedb.scenario import search_set
-        r = search_set(db, body["text"], purity="fast",
+        r = search_set(db, body["text"],
+                       purity="audited" if body.get("rerank") else "fast",
                        k_max=int(body.get("k", 10)))
         hits = [{"stream": c["stream"], "t0": c["t0"], "t1": c["t1"],
                  "score": c["score"]} for c in r["clips"]]
+        if body.get("streams"):
+            hits = [h for h in hits if h["stream"] in body["streams"]]
         lo, hi = body.get("t0"), body.get("t1")
         if lo is not None:
             hits = [h for h in hits if h["t1"] >= int(lo)]
