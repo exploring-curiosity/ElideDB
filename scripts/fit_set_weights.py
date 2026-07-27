@@ -72,6 +72,14 @@ def capture(db, keys, text):
     rel = parse_relation(text)
     nps = [p for p in ((rel[0], rel[2]) if rel else ())
            if p and "object" not in p]
+    if not nps:
+        # mirror the live path's fallback (scenario.search_set): fit
+        # must see the same obj arrays the query executes, or the
+        # toggle search could grant filter authority on arrays that
+        # do not exist live
+        import re as _re
+        nps = [m.group(0) for m in _re.finditer(
+            r"\b(?:a|an|the)\s+(?:\w+\s+){0,2}\w+", text.lower())][:2]
     if nps:
         ol = object_lookup(db, embed_texts(nps))
         out["obj"] = np.array(
@@ -156,6 +164,9 @@ def main():
             # membership toggle: any channel may join or leave the
             # filter set — the fitter, not code, decides which
             # channels have veto authority for this query type
+            # NOTE: greedy, fixed visitation order, 4-round budget —
+            # a rejection here means "no marginal gain from this
+            # start", not a categorical falsification of the channel
             for c in CH:
                 fc2 = ([x for x in fc if x != c] if c in fc
                        else fc + [c])
