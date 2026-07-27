@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from bench_product import QUERIES                            # noqa: E402
 from elidedb import Store                                    # noqa: E402
-from elidedb.fusion import rrf                               # noqa: E402
+from elidedb.fusion import rrf, variant_max                  # noqa: E402
 
 CH = ["pe", "act", "vid", "obj", "mot", "prf", "sig2", "conj"]
 K = 10
@@ -51,20 +51,20 @@ def capture(db, keys, text):
     for vt in variants:
         look, _ = pe_lookup(db, vt)
         vs.append(np.array([look(*k) for k in keys]))
-    out["pe"] = np.nanmax(np.stack(vs), 0) if len(vs) > 1 else vs[0]
+    out["pe"] = variant_max(vs)
     look, _ = act_lookup(db, text)
     out["act"] = np.array([look(*k) for k in keys])
     vs = []
     for vt in variants:
         look, _ = vid_lookup(db, vt)
         vs.append(np.array([look(*k) for k in keys]))
-    out["vid"] = np.nanmax(np.stack(vs), 0) if len(vs) > 1 else vs[0]
+    out["vid"] = variant_max(vs)
     from elidedb.sig2 import conj_lookup, sig2_lookup
     vs = []
     for vt in variants:
         look, _ = sig2_lookup(db, vt)
         vs.append(np.array([look(*k) for k in keys]))
-    out["sig2"] = np.nanmax(np.stack(vs), 0) if len(vs) > 1 else vs[0]
+    out["sig2"] = variant_max(vs)
     cl = conj_lookup(db, text)
     out["conj"] = (np.array([cl(*k) for k in keys]) if cl is not None
                    else np.full(len(keys), np.nan))

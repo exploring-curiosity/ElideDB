@@ -195,7 +195,7 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
                      the last geometry-positive sample. Only fires when
                      the query parses as a relation; abstains otherwise.
     """
-    from .fusion import rrf
+    from .fusion import rrf, variant_max
     from .grounding import parse_relation
     from .rerank import directional_swap
     t0 = time.perf_counter()
@@ -221,7 +221,7 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
         for vtext in variants:
             look, _ = pe_lookup(store, vtext)
             vs.append(np.array([look(*k) for k in keys]))
-        ch["pe"] = np.nanmax(np.stack(vs), 0) if len(vs) > 1 else vs[0]
+        ch["pe"] = variant_max(vs)
     except Exception:
         pass
     try:
@@ -239,8 +239,7 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
         for vtext in variants:
             look, _ = sig2_lookup(store, vtext)
             vs.append(np.array([look(*k) for k in keys]))
-        ch["sig2"] = (np.nanmax(np.stack(vs), 0)
-                      if len(vs) > 1 else vs[0])
+        ch["sig2"] = variant_max(vs)
         cl = conj_lookup(store, text)
         if cl is not None:
             ch["conj"] = np.array([cl(*k) for k in keys])
@@ -252,7 +251,7 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
         for vtext in variants:
             look, _ = vid_lookup(store, vtext)
             vs.append(np.array([look(*k) for k in keys]))
-        ch["vid"] = np.nanmax(np.stack(vs), 0) if len(vs) > 1 else vs[0]
+        ch["vid"] = variant_max(vs)
     except Exception:
         pass
     # OBJ channel — FastSAM crops matched against the query's noun

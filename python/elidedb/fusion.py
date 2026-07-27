@@ -86,6 +86,19 @@ def rrf(rankings: dict[str, np.ndarray], weights: dict[str, float] | None = None
     return out
 
 
+def variant_max(vs):
+    """Row-wise max over query-variant score arrays. All-NaN rows
+    (episodes absent from a channel's table — they abstain, they are
+    not errors) stay NaN without numpy's All-NaN-slice RuntimeWarning,
+    which was leaking source lines into bench stdout."""
+    m = np.stack(vs)
+    out = np.full(m.shape[1], np.nan)
+    fin = np.isfinite(m).any(0)
+    if fin.any():
+        out[fin] = np.nanmax(m[:, fin], 0)
+    return out
+
+
 def explain_fusion(rankings, weights=None, k=DEFAULT_K, idx=None, top=5):
     """Per-ranker rank of each fused winner. Answers 'why is this here?' —
     which is the question a fused score alone can never answer."""
