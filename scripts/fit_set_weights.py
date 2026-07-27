@@ -40,13 +40,8 @@ def capture(db, keys, text):
     from elidedb.prf import prf_contrast
     from elidedb.rerank import directional_swap
     from elidedb.vid import vid_lookup
-    from elidedb.scenario import _HYPONYMS
-    variants = [text]
-    for w_, syns in _HYPONYMS.items():
-        if w_ in text.lower():
-            variants = [text] + [text.lower().replace(w_, s_)
-                                 for s_ in syns]
-            break
+    from elidedb.vocab import corpus_variants
+    variants = corpus_variants(db, text)
     out = {}
     vs = []
     for vt in variants:

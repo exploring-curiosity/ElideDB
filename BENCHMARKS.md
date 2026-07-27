@@ -358,3 +358,5 @@ re-attempting filter-membership search, since q08's fusion/filter finding is
 only actionable once the atoms feeding conj are the intended noun phrases.
 | 2026-07-27 06:07 | 04548bc | 23/100 returned true | mean prec 0.23 | mean yield 0.23 | q00:2/10 q01:2/10 q02:4/10 q03:5/10 q04:4/10 q05:3/10 q07:3/10 q08:0/10 q09:0/10 q10:0/10 |
 | 2026-07-27 06:24 | 0833cdf | 23/100 returned true | mean prec 0.23 | mean yield 0.23 | q00:2/10 q01:2/10 q02:4/10 q03:5/10 q04:4/10 q05:3/10 q07:3/10 q08:0/10 q09:0/10 q10:0/10 |
+| 2026-07-27 06:35 | 2cd631c | 24/100 returned true | mean prec 0.24 | mean yield 0.24 | q00:2/10 q01:2/10 q02:4/10 q03:5/10 q04:4/10 q05:3/10 q07:1/10 q08:3/10 q09:0/10 q10:0/10 |
+| 2026-07-27 06:38 | 2cd631c | 25/100 returned true | mean prec 0.25 | mean yield 0.26 | q00:2/10 q01:2/10 q02:5/10 q03:5/10 q04:6/10 q05:3/10 q07:2/10 q08:0/10 q09:0/10 q10:0/10 |

@@ -35,15 +35,6 @@ import numpy as np
 
 _CELLS = {}
 
-# CATEGORY-WORD EXPANSION: "vessel" starves SigLIP/PE (ledger: sup
-# 247, prec 0.25) and SAM 3 cannot ground it at all (UNGROUNDABLE,
-# measured). Generic English hyponyms — no metadata, any corpus. Text
-# channels take max over variants; the binding audit tries variants
-# until one grounds.
-_HYPONYMS = {"vessel": ("pot", "pan", "bowl"),
-             "container": ("box", "drawer", "bin"),
-             "utensil": ("spoon", "fork", "knife")}
-
 
 def _pool_recordings(store):
     """(keys, matrix) — one pooled PE vector per recording."""
@@ -208,11 +199,16 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     rel = parse_relation(text)
     tl = text.lower()
 
-    variants = [text]
-    for w, syns in _HYPONYMS.items():
-        if w in tl:
-            variants = [text] + [tl.replace(w, s) for s in syns]
-            break
+    # CATEGORY-WORD EXPANSION, corpus-attested: WordNet supplies the
+    # candidate hyponyms (dictionary), the store's SigLIP2 frame
+    # space decides which exist HERE (data) — "vessel" starves the
+    # text channels (measured: sup 247, prec 0.25) and SAM cannot
+    # ground it; the specific attested terms can.
+    try:
+        from .vocab import corpus_variants
+        variants = corpus_variants(store, text)
+    except Exception:
+        variants = [text]
 
     ch = {}
     try:
@@ -504,10 +500,11 @@ def _binding_audit(store, rel, clip_keys):
     def _variants(p):
         if p is None:
             return [None]
-        for w, syns in _HYPONYMS.items():
-            if w in p:
-                return [p] + [p.replace(w, s) for s in syns]
-        return [p]
+        try:
+            from .vocab import corpus_variants
+            return corpus_variants(store, p)
+        except Exception:
+            return [p]
 
     keep = np.ones(len(clip_keys), bool)
     checked = killed_absent = killed_disjoint = abstained = 0
