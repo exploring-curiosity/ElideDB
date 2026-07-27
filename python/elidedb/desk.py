@@ -602,21 +602,25 @@ def api_query(key: str, body: dict):
         return {"hits": hits, "stats": stats,
                 "ms": round((time.perf_counter() - t_start) * 1e3, 1)}
     if kind == "context":
-        hits, stats = db.search_context(
-            body["text"], k=int(body.get("k", 8)),
-            pool=int(body.get("pool", 48)),
-            deep=6 if body.get("rerank") else 0,
-            t0=body.get("t0"), t1=body.get("t1"),
-            streams=body.get("streams") or None)
-        # a result you can check: attach the clip's caption when the store
-        # has captions
-        try:
-            for h in hits:
-                ex = db.explain(h["t0"], h["t1"], h["stream"])
-                if ex:
-                    h["caption"] = ex[0]["caption"]
-        except Exception:
-            pass
+        # PRODUCT SURFACE = MEASURED SURFACE: this is the exact
+        # search_set the ledger benchmarks (stable-benchmark
+        # directive — the old captioned search_context served here
+        # while acceptance was measured elsewhere; never again).
+        from elidedb.scenario import search_set
+        r = search_set(db, body["text"], purity="fast",
+                       k_max=int(body.get("k", 10)))
+        hits = [{"stream": c["stream"], "t0": c["t0"], "t1": c["t1"],
+                 "score": c["score"]} for c in r["clips"]]
+        lo, hi = body.get("t0"), body.get("t1")
+        if lo is not None:
+            hits = [h for h in hits if h["t1"] >= int(lo)]
+        if hi is not None:
+            hits = [h for h in hits if h["t0"] <= int(hi)]
+        stats = {"channels": r.get("channels", []),
+                 "scored": r.get("scored", 0),
+                 "direction_filtered": r.get("direction_filtered", 0),
+                 "no_match": bool(r.get("no_match")),
+                 "set_ms": r.get("ms")}
         return {"hits": hits, "stats": stats,
                 "ms": round((time.perf_counter() - t_start) * 1e3, 1)}
     if kind == "predicate":
