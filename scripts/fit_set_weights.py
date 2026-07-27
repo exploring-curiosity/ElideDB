@@ -102,6 +102,11 @@ def capture(db, keys, text):
 
 
 def score_query(case, w, fq, fc):
+    if case.get("gated"):
+        # live returns empty for gated queries regardless of weights;
+        # a constant removes them from the ascent so weights are never
+        # tuned to please episodes the gate will kill
+        return 0.0
     ch = {c: case["ch"][c] for c in CH
           if np.isfinite(case["ch"][c]).any() and w.get(c, 0) > 0}
     if not ch:
@@ -130,16 +135,19 @@ def main():
              zip(t["query_id"], t["stream"], t["t0"], t["true"])}
     qids = sorted({int(q) for q in t["query_id"]})
     cases = []
+    from elidedb.scenario import _auto_action_support
     for qi in qids:
         text = QUERIES[qi]
         ch, isdir = capture(db, keys, text)
         lab = np.array([truth.get((qi, s, a), -1) for s, a, b in keys])
         # strict: ungraded counts false, matching the ledger
         lab = np.where(lab == 1, 1, 0) * (lab >= 0)
-        cases.append({"ch": ch, "lab": lab, "dir": isdir,
-                      "sup": int((lab == 1).sum()), "q": text})
-        print(f"captured q{qi:02d} sup={int((lab == 1).sum())}",
-              flush=True)
+        g = _auto_action_support(db, text)
+        gated = bool(g is not None and g["max_p"] < 0.05)
+        cases.append({"ch": ch, "lab": lab, "dir": isdir, "gated":
+                      gated, "sup": int((lab == 1).sum()), "q": text})
+        print(f"captured q{qi:02d} sup={int((lab == 1).sum())}"
+              f"{' GATED' if gated else ''}", flush=True)
 
     grid = [0.0, 0.5, 1.0, 2.0, 4.0, 6.0]
     fqs = [0.0, 0.25, 1 / 3, 0.5]

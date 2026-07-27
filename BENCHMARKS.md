@@ -357,3 +357,4 @@ conj does run. Next lever: fix the atom boundary (stop at prepositions) before
 re-attempting filter-membership search, since q08's fusion/filter finding is
 only actionable once the atoms feeding conj are the intended noun phrases.
 | 2026-07-27 06:07 | 04548bc | 23/100 returned true | mean prec 0.23 | mean yield 0.23 | q00:2/10 q01:2/10 q02:4/10 q03:5/10 q04:4/10 q05:3/10 q07:3/10 q08:0/10 q09:0/10 q10:0/10 |
+| 2026-07-27 06:24 | 0833cdf | 23/100 returned true | mean prec 0.23 | mean yield 0.23 | q00:2/10 q01:2/10 q02:4/10 q03:5/10 q04:4/10 q05:3/10 q07:3/10 q08:0/10 q09:0/10 q10:0/10 |
