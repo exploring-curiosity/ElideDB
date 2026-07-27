@@ -98,15 +98,25 @@ def sig2_lookup(store, text):
     return _lookup_from(idx, sc, pool), None
 
 
+# closed-class boundary words (English function words — dictionary
+# knowledge, corpus-independent): a phrase filler may not contain
+# them, and a trailing one is stripped. Without the boundary the
+# filler swallowed prepositions ("the eggplant into the") and a
+# two-object query collapsed to one corrupt atom — conj abstained.
+_STOP = ("a", "an", "the", "and", "then", "it", "of", "to", "on",
+         "in", "into", "onto", "from", "at")
+_ATOM_RE = re.compile(
+    r"\b(?:a|an|the)\s+(?:(?!(?:%s)\b)\w+\s+){0,2}\w+"
+    % "|".join(_STOP))
+
+
 def atoms_of(text):
-    """Mechanical atoms: every determiner phrase in the query."""
+    """Mechanical atoms: every determiner phrase in the query,
+    bounded at closed-class function words."""
     out = []
-    for m in re.finditer(
-            r"\b(?:a|an|the)\s+(?:\w+\s+){0,2}\w+", text.lower()):
+    for m in _ATOM_RE.finditer(text.lower()):
         w = m.group(0).split()
-        while len(w) > 1 and w[-1] in ("and", "then", "it", "of",
-                                       "to", "on", "in", "into",
-                                       "onto", "from", "at"):
+        while len(w) > 1 and w[-1] in _STOP:
             w.pop()
         if len(w) > 1 and w[1] not in ("table", "robot", "arm"):
             out.append(" ".join(w))

@@ -23,13 +23,25 @@ from elidedb.sig2 import atoms_of           # noqa: E402
 
 def test_atoms_two_atoms_spoon_cloth():
     a = atoms_of("place the spoon on top of the cloth")
-    assert len(a) == 2
-    assert a[0].startswith("the spoon") and a[1] == "the cloth"
+    assert a == ["the spoon", "the cloth"]
 
 
 def test_atoms_attribute_kept():
     a = atoms_of("put the green object into the drawer")
     assert "the green object" in a and "the drawer" in a
+
+
+def test_atoms_preposition_is_boundary():
+    """The q09 bug: 'into' swallowed as filler produced the single
+    corrupt atom 'the eggplant into the', so conj abstained on a
+    two-object binding query. Closed-class words end a phrase."""
+    a = atoms_of("put the eggplant into the drawer")
+    assert a == ["the eggplant", "the drawer"]
+
+
+def test_atoms_conjunction_is_boundary():
+    a = atoms_of("pick up a vessel and put it on the stove")
+    assert a == ["a vessel", "the stove"]
 
 
 def test_atoms_single_noun_means_abstain():
