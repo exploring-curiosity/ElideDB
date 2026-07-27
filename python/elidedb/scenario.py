@@ -420,6 +420,13 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     borderline = order[cut:cut + 20]
 
     audit = None
+    # The audit stays TIER-2 (opt-in): running it by default was
+    # measured 2026-07-27 — prec +0.01, yield -0.07, with the damage
+    # concentrated where X is a category word ("vessel") whose
+    # corpus-attested variants ground spurious objects and the
+    # geometry kills then execute true clips. With the quorum rule
+    # and clean relation phrases it is far safer than before, but the
+    # fast tier's fused index is the better default by the ledger.
     if purity == "audited" and len(chosen) > 0 and rel is not None:
         audit, keep_mask = _binding_audit(store, rel,
                                           [keys[i] for i in chosen])
@@ -542,6 +549,7 @@ def _binding_audit(store, rel, clip_keys):
     keep = np.ones(len(clip_keys), bool)
     checked = killed_absent = killed_disjoint = abstained = 0
     killed_static = killed_wrong_color = 0
+    absent_idx = []
     for i, (s, a, b) in enumerate(clip_keys):
         # try phrase variants until X grounds (category words like
         # "vessel" ground as pot/pan/bowl); first grounding wins
@@ -571,6 +579,7 @@ def _binding_audit(store, rel, clip_keys):
         if xk is not None and max(tr[xk]["presence"]) < 0.5:
             keep[i] = False
             killed_absent += 1
+            absent_idx.append(i)
             continue
         # THE MANIPULATED-OBJECT TEST: SOME instance of the queried X
         # must MOVE. "a green object" grounds on any green thing in
@@ -613,13 +622,19 @@ def _binding_audit(store, rel, clip_keys):
             if not near:
                 keep[i] = False
                 killed_disjoint += 1
-    # 100% absent = the PHRASE does not ground in this detector's
-    # vocabulary ("a vessel" — audit-bench-caught killing the two true
-    # pot-lifts along with everything else). Phrase failure is not clip
-    # evidence: keep everything, report it.
-    ungroundable = (checked > 0 and killed_absent == checked)
+    # GROUNDING-RELIABILITY QUORUM (generalizes the old 100%-absent
+    # rule): absence is only evidence when the phrase grounds in at
+    # least half the checked clips. A phrase the detector cannot find
+    # ("a vessel": grounded 1/10, one spurious static bottle — the
+    # single grounding defeated the 100% rule and the audit executed
+    # a 9/10-true set, measured) indicts the GROUNDING, not the
+    # clips: revert only the absent kills. Kills where grounding
+    # SUCCEEDED (static/color/disjoint) always stand.
+    grounded = checked - killed_absent
+    ungroundable = (checked > 0 and grounded < killed_absent)
     if ungroundable:
-        keep[:] = True
+        for j in absent_idx:
+            keep[j] = True
         killed_absent = 0
     return ({"checked": checked, "killed_absent": killed_absent,
              "killed_disjoint": killed_disjoint,

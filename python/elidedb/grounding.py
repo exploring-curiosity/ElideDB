@@ -101,16 +101,20 @@ def parse_relation(text):
     right = right.split(" and ")[0].split(" then ")[0]
 
     def np_of(seg, last):
-        # GREEDY middle words: non-greedy truncated "the stuffed toy"
-        # to "a stuffed" (bench-caught); the preposition split already
-        # bounds the segment so greed cannot swallow the landmark
+        # GREEDY middle words bounded at closed-class function words
+        # (same _STOP mechanism as sig2.atoms_of): without the
+        # boundary this produced "a vessel and put" as the audit's X
+        # phrase — it grounded nowhere and the audit executed a 9/10
+        # true set (audit-bench-caught)
+        from .sig2 import _STOP
         ms = list(re.finditer(
-            r"\b(?:a|an|the)\s+(?:\w+\s+){0,2}\w+(?=\s|$|\.)", seg))
+            r"\b(?:a|an|the)\s+(?:(?!(?:%s)\b)\w+\s+){0,2}\w+"
+            r"(?=\s|$|\.)" % "|".join(_STOP), seg))
         if not ms:
             return None
         m = ms[-1] if last else ms[0]
         w = m.group(0).split()
-        while len(w) > 1 and w[-1] in ("and", "then", "it", "of", "to"):
+        while len(w) > 1 and w[-1] in _STOP:
             w.pop()
         head = " ".join(w[1:])
         art = "an" if head[:1] in "aeiou" else "a"
