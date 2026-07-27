@@ -393,3 +393,43 @@ weight-fit or bench changes — `python/elidedb/scenario.py` and
 is committed as the scaffold; a future attempt only needs HF access granted
 (https://huggingface.co/OpenGVLab/InternVideo2-Stage2_1B-224p-f4 → Request
 access) before rerunning it.
+
+## Binding-filter sprint record (2026-07-27)
+
+Nine tasks, each committed with its ledger row; plan:
+docs/superpowers/plans/2026-07-27-conj-binding-filter-and-video-native-iteration.md.
+Thesis: rank-fusion consensus (RRF, Cormack et al. 2009) structurally drowns a
+decisive minority channel, and bag-of-concepts encoders cannot rank binding
+(Winoground CVPR 2022, ARO ICLR 2023) — so the conjunctive atom channel must
+be eligible to FILTER, with veto authority fitted per store, never coded.
+
+Ledger trajectory (mean prec/yield): 0.25/0.26 baseline (aa55b46) →
+0.25/0.26 through the behavior-preserving unification tasks (T1 variant_max,
+T2 setpath one-code-path, T3 fitted filter membership — the fitter REJECTED
+conj from the filter set, an honest negative) → 0.23/0.23 after the
+atoms_of preposition-boundary fix forced a refit into a worse local optimum
+(T4b; q02/q04 −1 each, LOQO 0.212→0.182) → 0.25/0.26 recovered by
+corpus-attested vocabulary (T6; q04 4→6, q02 4→5, q07 3→2; _HYPONYMS
+deleted). Net: flat on the headline number, structurally ahead: zero hand
+dictionaries, one fit-live selection code path (knee, filters, gate all
+modeled in fit), the Desk context tab now serves the measured search_set
+(fast + geometry-audit tiers, streams/t0/t1 honored), and a binding
+diagnostics instrument (scripts/diag_binding.py).
+
+Binding queries remain 0/10 on the ledger, and the diagnosis is now precise:
+q08 conj ALONE ranks 3/10 true in its top-10 (AUC +0.829 dirty, +0.800
+clean) while the fused pipeline returns 0 — the residual gap is FUSION
+AUTHORITY, not decomposition (atoms are clean post-T4b: q09 conj went from
+abstaining on one corrupt atom to AUC +0.981). q09/q10 have support 2; their
+positives sit near rank ~20 of 1122 (AUC 0.93–0.98), so the needed lift is
+rank-20 → rank-10, which reweighting alone did not find (greedy toggle,
+fixed order, 4-round budget — a local search, not a categorical no).
+
+Next levers, in order: (1) InternVideo2-Stage2 1B — BLOCKED on HF gated-repo
+access (user action: Request access at
+https://huggingface.co/OpenGVLab/InternVideo2-Stage2_1B-224p-f4), probe
+scaffold committed; (2) per-query channel authority for binding queries
+(the q08 conj-alone 3/10 vs fused 0/10 measurement is the case for it);
+(3) _STOP compound prepositions ("out of", "on top") before q11–q13 enter
+the graded set; (4) atomic _vocab.json writes (tmp+rename) if attestation
+ever runs concurrently.
