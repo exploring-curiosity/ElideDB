@@ -70,12 +70,10 @@ def capture(db, keys, text):
            if p and "object" not in p]
     if not nps:
         # mirror the live path's fallback (scenario.search_set): fit
-        # must see the same obj arrays the query executes, or the
-        # toggle search could grant filter authority on arrays that
-        # do not exist live
-        import re as _re
-        nps = [m.group(0) for m in _re.finditer(
-            r"\b(?:a|an|the)\s+(?:\w+\s+){0,2}\w+", text.lower())][:2]
+        # must see the same obj arrays the query executes — both now
+        # decompose via atoms_of's closed-class boundaries
+        from elidedb.sig2 import atoms_of
+        nps = atoms_of(text.lower())[:2]
     if nps:
         ol = object_lookup(db, embed_texts(nps))
         out["obj"] = np.array(
@@ -179,12 +177,7 @@ def main():
     als = [0.0, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95]
     rs = [0, 1, 2, 3]
 
-    def fit(subset, fc0):
-        w = {c: 1.0 for c in CH}
-        fq = 1 / 3
-        fc = list(fc0)
-        al = 0.0
-        r = 0
+    def ascend(subset, w, fq, fc, al, r):
         best = sum(score_query(c, w, fq, fc, al, r) for c in subset)
         for _ in range(4):
             improved = False
@@ -225,17 +218,56 @@ def main():
                     best, fc, improved = s, fc2, True
             if not improved:
                 break
-        return w, fq, fc, al, r
+        return best, w, fq, fc, al, r
+
+    def fit(subset, fc0, starts=()):
+        """Best of coordinate ascent from the neutral start AND any
+        warm starts (the previous fitted artifacts). Greedy ascent is
+        path-dependent: a single channel change once collapsed the
+        dir config (pe 6->0.5, cut and NMS discarded) purely by
+        landing in a different local optimum — warm starts make the
+        in-sample objective monotone across refits."""
+        cands = [({c: 1.0 for c in CH}, 1 / 3, list(fc0), 0.0, 0)]
+        cands += list(starts)
+        out = None
+        for w0, fq0, fcs, al0, r0 in cands:
+            got = ascend(subset, dict(w0), fq0, list(fcs), al0, r0)
+            if out is None or got[0] > out[0] + 1e-9:
+                out = got
+        return out[1:]
 
     # starts = today's live behavior, so the fitted result can only
     # move away from it by measured improvement
     DIR0 = ["mot", "act", "prf"]
     CON0 = []
 
-    # leave-one-query-out: the honest generalization estimate.
-    # Weights AND filter membership fitted PER QUERY TYPE (directional
-    # vs not) — routing is a lexicon property (swap exists?), roles
-    # are data.
+    def _starts(prefix):
+        """Warm starts from the current + previous fitted artifacts.
+        FINAL fits only — LOQO stays cold-start (an artifact fitted
+        on all queries has seen the holdout; warming folds with it
+        would leak)."""
+        outs = []
+        for pth in (Path("lake/bench/_set_weights.json"),
+                    Path("lake/bench/_set_weights.prev.json")):
+            try:
+                c = json.loads(pth.read_text())
+                wk = f"set_weights{prefix}"
+                if wk in c:
+                    outs.append((
+                        {x: float(c[wk].get(x, 1.0)) for x in CH},
+                        float(c.get(f"filter_quantile{prefix}",
+                                    1 / 3)),
+                        list(c.get(f"filter_channels{prefix}", [])),
+                        float(c.get(f"cut_alpha{prefix}", 0.0)),
+                        int(c.get(f"nms_r{prefix}", 0))))
+            except Exception:
+                pass
+        return outs
+
+    # leave-one-query-out: the honest generalization estimate of the
+    # COLD-START procedure. Weights AND filter membership fitted PER
+    # QUERY TYPE (directional vs not) — routing is a lexicon property
+    # (swap exists?), roles are data.
     loqo = []
     for i in range(len(cases)):
         train = [c for j, c in enumerate(cases) if j != i]
@@ -248,9 +280,11 @@ def main():
     print(f"LOQO mean objective: {np.mean(loqo):.3f}")
 
     w_dir, fq_dir, fc_dir, al_dir, r_dir = fit(
-        [c for c in cases if c["dir"]] or cases, DIR0)
+        [c for c in cases if c["dir"]] or cases, DIR0,
+        _starts("_dir"))
     w_con, fq_con, fc_con, al_con, r_con = fit(
-        [c for c in cases if not c["dir"]] or cases, CON0)
+        [c for c in cases if not c["dir"]] or cases, CON0,
+        _starts(""))
     out = {"set_weights_dir": w_dir, "filter_quantile_dir": fq_dir,
            "filter_channels_dir": fc_dir, "cut_alpha_dir": al_dir,
            "nms_r_dir": r_dir,

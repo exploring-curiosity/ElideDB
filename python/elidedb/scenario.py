@@ -271,9 +271,11 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
         nps = [p for p in ((rel[0], rel[2]) if rel else ())
                if p and "object" not in p]
         if not nps:
-            import re as _re
-            nps = [m.group(0) for m in _re.finditer(
-                r"\b(?:a|an|the)\s+(?:\w+\s+){0,2}\w+", tl)][:2]
+            # ONE decomposition for the whole system: atoms_of's
+            # closed-class boundaries (the raw regex here had the
+            # same swallowed-preposition bug atoms_of was fixed for)
+            from .sig2 import atoms_of
+            nps = atoms_of(tl)[:2]
         if nps:
             olook = object_lookup(store, embed_texts(nps))
             def _obj(k):
