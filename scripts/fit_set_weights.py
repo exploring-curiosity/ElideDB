@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from bench_product import QUERIES                            # noqa: E402
 from elidedb import Store                                    # noqa: E402
 from elidedb.fusion import rrf, variant_max                  # noqa: E402
-from elidedb.setpath import filter_mask                      # noqa: E402
+from elidedb.setpath import confidence_cut, filter_mask      # noqa: E402
 
 CH = ["pe", "act", "vid", "obj", "mot", "prf", "sig2", "conj"]
 K = 10
@@ -96,7 +96,7 @@ def capture(db, keys, text):
     return out, sq is not None
 
 
-def score_query(case, w, fq, fc):
+def score_query(case, w, fq, fc, al=0.0):
     if case.get("gated"):
         # live returns empty for gated queries regardless of weights;
         # a constant removes them from the ascent so weights are never
@@ -111,6 +111,9 @@ def score_query(case, w, fq, fc):
              else np.ones(len(fused), bool))
     idx = np.where(alive)[0]
     order = idx[np.argsort(-fused[idx])][:K]
+    # the returned set ends where confidence does (fitted alpha), not
+    # at a fixed K — the product ratio true/returned is the objective
+    order = order[:confidence_cut(fused[order], al, K)]
     lab = case["lab"][order]
     n = len(order)
     if n == 0:
@@ -146,24 +149,36 @@ def main():
 
     grid = [0.0, 0.5, 1.0, 2.0, 4.0, 6.0]
     fqs = [0.0, 0.25, 1 / 3, 0.5]
+    # confidence-cut alphas: 0 = always fill to K (pre-cut behavior);
+    # higher = the set ends where fused confidence falls below
+    # alpha x the query's own top mass. The product goal is
+    # true/returned -> 1 BEFORE growing toward full support, and the
+    # objective (prec + 0.5*yield) already prices that ordering.
+    als = [0.0, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95]
 
     def fit(subset, fc0):
         w = {c: 1.0 for c in CH}
         fq = 1 / 3
         fc = list(fc0)
-        best = sum(score_query(c, w, fq, fc) for c in subset)
+        al = 0.0
+        best = sum(score_query(c, w, fq, fc, al) for c in subset)
         for _ in range(4):
             improved = False
             for c in CH:
                 for g in grid:
                     w2 = dict(w); w2[c] = g
-                    s = sum(score_query(x, w2, fq, fc) for x in subset)
+                    s = sum(score_query(x, w2, fq, fc, al)
+                            for x in subset)
                     if s > best + 1e-9:
                         best, w, improved = s, w2, True
             for f2 in fqs:
-                s = sum(score_query(x, w, f2, fc) for x in subset)
+                s = sum(score_query(x, w, f2, fc, al) for x in subset)
                 if s > best + 1e-9:
                     best, fq, improved = s, f2, True
+            for a2 in als:
+                s = sum(score_query(x, w, fq, fc, a2) for x in subset)
+                if s > best + 1e-9:
+                    best, al, improved = s, a2, True
             # membership toggle: any channel may join or leave the
             # filter set — the fitter, not code, decides which
             # channels have veto authority for this query type
@@ -173,12 +188,12 @@ def main():
             for c in CH:
                 fc2 = ([x for x in fc if x != c] if c in fc
                        else fc + [c])
-                s = sum(score_query(x, w, fq, fc2) for x in subset)
+                s = sum(score_query(x, w, fq, fc2, al) for x in subset)
                 if s > best + 1e-9:
                     best, fc, improved = s, fc2, True
             if not improved:
                 break
-        return w, fq, fc
+        return w, fq, fc, al
 
     # starts = today's live behavior, so the fitted result can only
     # move away from it by measured improvement
@@ -193,27 +208,30 @@ def main():
     for i in range(len(cases)):
         train = [c for j, c in enumerate(cases) if j != i]
         same = [c for c in train if c["dir"] == cases[i]["dir"]]
-        w, fq, fc = fit(same or train,
-                        DIR0 if cases[i]["dir"] else CON0)
-        loqo.append(score_query(cases[i], w, fq, fc))
+        w, fq, fc, al = fit(same or train,
+                            DIR0 if cases[i]["dir"] else CON0)
+        loqo.append(score_query(cases[i], w, fq, fc, al))
         print(f"LOQO holdout {cases[i]['q'][:44]:44s} "
               f"score {loqo[-1]:.2f}", flush=True)
     print(f"LOQO mean objective: {np.mean(loqo):.3f}")
 
-    w_dir, fq_dir, fc_dir = fit([c for c in cases if c["dir"]]
-                                or cases, DIR0)
-    w_con, fq_con, fc_con = fit([c for c in cases if not c["dir"]]
-                                or cases, CON0)
+    w_dir, fq_dir, fc_dir, al_dir = fit([c for c in cases
+                                         if c["dir"]] or cases, DIR0)
+    w_con, fq_con, fc_con, al_con = fit([c for c in cases
+                                         if not c["dir"]] or cases,
+                                        CON0)
     out = {"set_weights_dir": w_dir, "filter_quantile_dir": fq_dir,
-           "filter_channels_dir": fc_dir,
+           "filter_channels_dir": fc_dir, "cut_alpha_dir": al_dir,
            "set_weights": w_con, "filter_quantile": fq_con,
-           "filter_channels": fc_con,
+           "filter_channels": fc_con, "cut_alpha": al_con,
            "fitted_on": "eval/truthsets/bridge4h.parquet",
            "loqo_mean": round(float(np.mean(loqo)), 3)}
     p = Path("lake/bench/_set_weights.json")
     p.write_text(json.dumps(out, indent=1))
-    print(f"dir {json.dumps(w_dir)} fq={fq_dir:.2f} fc={fc_dir}")
-    print(f"con {json.dumps(w_con)} fq={fq_con:.2f} fc={fc_con}")
+    print(f"dir {json.dumps(w_dir)} fq={fq_dir:.2f} fc={fc_dir} "
+          f"al={al_dir:.2f}")
+    print(f"con {json.dumps(w_con)} fq={fq_con:.2f} fc={fc_con} "
+          f"al={al_con:.2f}")
 
 
 if __name__ == "__main__":

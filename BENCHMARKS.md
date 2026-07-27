@@ -433,3 +433,4 @@ scaffold committed; (2) per-query channel authority for binding queries
 (3) _STOP compound prepositions ("out of", "on top") before q11–q13 enter
 the graded set; (4) atomic _vocab.json writes (tmp+rename) if attestation
 ever runs concurrently.
+| 2026-07-27 14:26 | 9a8e8b4 | 19/72 returned true | mean prec 0.28 | mean yield 0.20 | q00:2/10 q01:2/10 q02:2/4 q03:3/4 q04:6/10 q05:3/10 q07:1/4 q08:0/2 q09:0/10 q10:0/8 |

@@ -307,6 +307,7 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     weights = {c: 1.0 for c in ch}
     filter_q = 1 / 3
     fnames = None       # None => legacy: every contrast channel
+    cut_alpha = 0.0     # 0 => fill to k_max (legacy, pre-cut)
     from pathlib import Path
     sw = Path(store.dir) / "_set_weights.json"
     try:
@@ -328,6 +329,9 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
                   "filter_channels_dir" in cfg else "filter_channels")
             if ck in cfg:
                 fnames = list(cfg[ck])
+            ak = ("cut_alpha_dir" if directional and
+                  "cut_alpha_dir" in cfg else "cut_alpha")
+            cut_alpha = float(cfg.get(ak, 0.0))
         else:
             cfg = json.loads((Path(store.dir)
                               / "_channel_weights.json").read_text())
@@ -366,7 +370,7 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     # fusion structurally outvotes a decisive minority channel
     # (Cormack et al. 2009), and bag-of-concepts encoders cannot
     # rank binding (Winoground/ARO), so the constraint must prune.
-    from .setpath import filter_mask
+    from .setpath import confidence_cut, filter_mask
     fsrc = dict(ch)
     fsrc.update(contrast_ch)
     if fnames is None:
@@ -378,11 +382,15 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     idx = np.where(alive)[0]
     order = idx[np.argsort(-fused[idx])]
     # when roles are FITTED, the boundary is part of the fitted
-    # configuration (the fit optimized plain top-K + filter; the knee
-    # is a hand heuristic that reshaped what was fitted — measured
-    # divergence: fit LOQO 0.21 vs live 0.16, q02 zeroed)
-    cut = (min(len(order), k_max) if sw.exists()
-           else min(_knee(fused[order]), k_max))
+    # configuration: the set ends where fused confidence drops below
+    # the fitted alpha x the query's own top mass (setpath.
+    # confidence_cut, shared with the fit — the hand knee here was a
+    # measured fit-live divergence: fit LOQO 0.21 vs live 0.16). The
+    # product ratio is true/returned -> returned/support; padding to
+    # k_max buys yield with junk, and the fitted alpha prices that
+    # trade on the truthset instead of a fixed count.
+    cut = (confidence_cut(fused[order], cut_alpha, k_max)
+           if sw.exists() else min(_knee(fused[order]), k_max))
     chosen = order[:cut]
     borderline = order[cut:cut + 20]
 

@@ -13,7 +13,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 
-from elidedb.setpath import filter_mask, rankfrac   # noqa: E402
+from elidedb.setpath import (confidence_cut, filter_mask,   # noqa: E402
+                             rankfrac)
 
 
 def test_rankfrac_nan_votes_neutral():
@@ -59,6 +60,29 @@ def test_filter_all_nan_channel_excluded_from_median():
 
 def test_filter_empty_channels_no_crash():
     assert filter_mask({}, ["mot"], 0.5).shape == (0,)
+
+
+def test_cut_alpha_zero_is_plain_topk():
+    s = np.array([5.0, 4.0, 3.0, 2.0, 1.0])
+    assert confidence_cut(s, 0.0, 3) == 3
+    assert confidence_cut(s, 0.0, 10) == 5
+
+
+def test_cut_drops_low_confidence_tail():
+    # top-5 mean 0.654; alpha 0.9 -> floor 0.589 -> first 3 survive
+    s = np.array([1.0, 0.99, 0.98, 0.2, 0.1])
+    assert confidence_cut(s, 0.9, 10) == 3
+
+
+def test_cut_confident_head_never_empty_for_sane_alpha():
+    # s[0] >= top-5 mean always, so alpha <= 1 keeps at least one
+    s = np.array([1.0, 0.1])
+    assert confidence_cut(s, 0.95, 10) >= 1
+
+
+def test_cut_bounded_by_kmax():
+    s = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+    assert confidence_cut(s, 0.5, 4) == 4
 
 
 if __name__ == "__main__":

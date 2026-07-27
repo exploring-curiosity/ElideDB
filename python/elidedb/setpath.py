@@ -21,6 +21,28 @@ def rankfrac(v):
     return r
 
 
+def confidence_cut(scores, alpha, k_max):
+    """Where the returned set ENDS: keep clips while the fused score
+    stays >= alpha x the query's own top-5 mean, bounded by k_max.
+
+    The product contract is "up to K, and everything returned is
+    true" — so the cut is where the system stops being confident, not
+    a fixed count. alpha is FITTED per query type (0 => plain top-K,
+    the pre-cut behavior); the ratio-to-own-top-mass form is
+    scale-invariant, so uncalibrated RRF scores from different channel
+    counts compare safely across queries. This is the fitted successor
+    of the hand-tuned 0.62 knee floor the fit-live unification
+    removed. `scores` must be sorted descending."""
+    s = np.asarray(scores, float)
+    n = min(len(s), int(k_max))
+    if alpha <= 0 or n == 0:
+        return n
+    top = float(s[:min(5, len(s))].mean())
+    if top <= 0:
+        return n
+    return int(np.searchsorted(-s[:n], -alpha * top, side="right"))
+
+
 def filter_mask(ch, names, q):
     """Median rank-fraction over the named filter channels; episodes
     in the bottom-q die. Quantile, never sign: AUC-validated channels
