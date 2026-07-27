@@ -320,6 +320,7 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     filter_q = 1 / 3
     fnames = None       # None => legacy: every contrast channel
     cut_alpha = 0.0     # 0 => fill to k_max (legacy, pre-cut)
+    nms_r = 0           # 0 => no temporal event dedup (legacy)
     from pathlib import Path
     sw = Path(store.dir) / "_set_weights.json"
     try:
@@ -344,6 +345,9 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
             ak = ("cut_alpha_dir" if directional and
                   "cut_alpha_dir" in cfg else "cut_alpha")
             cut_alpha = float(cfg.get(ak, 0.0))
+            rk = ("nms_r_dir" if directional and
+                  "nms_r_dir" in cfg else "nms_r")
+            nms_r = int(cfg.get(rk, 0))
         else:
             cfg = json.loads((Path(store.dir)
                               / "_channel_weights.json").read_text())
@@ -382,7 +386,8 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     # fusion structurally outvotes a decisive minority channel
     # (Cormack et al. 2009), and bag-of-concepts encoders cannot
     # rank binding (Winoground/ARO), so the constraint must prune.
-    from .setpath import confidence_cut, filter_mask
+    from .setpath import (confidence_cut, event_positions, filter_mask,
+                          nms_keep)
     fsrc = dict(ch)
     fsrc.update(contrast_ch)
     if fnames is None:
@@ -393,6 +398,12 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
 
     idx = np.where(alive)[0]
     order = idx[np.argsort(-fused[idx])]
+    if nms_r > 0:
+        # temporal event dedup (fitted radius, shared with the fit):
+        # duplicates of one event give way to the next-ranked
+        # DISTINCT events — the product wants each true event once
+        sid, pos = event_positions(keys)
+        order = nms_keep(order, sid, pos, nms_r)
     # when roles are FITTED, the boundary is part of the fitted
     # configuration: the set ends where fused confidence drops below
     # the fitted alpha x the query's own top mass (setpath.

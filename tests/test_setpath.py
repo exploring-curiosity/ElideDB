@@ -13,8 +13,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 
-from elidedb.setpath import (confidence_cut, filter_mask,   # noqa: E402
-                             rankfrac)
+from elidedb.setpath import (confidence_cut, event_positions,  # noqa: E402
+                             filter_mask, nms_keep, rankfrac)
 
 
 def test_rankfrac_nan_votes_neutral():
@@ -83,6 +83,38 @@ def test_cut_confident_head_never_empty_for_sane_alpha():
 def test_cut_bounded_by_kmax():
     s = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
     assert confidence_cut(s, 0.5, 4) == 4
+
+
+def _toy_geometry():
+    # two streams: A with 4 consecutive episodes, B with 2
+    keys = [("A", 10, 19), ("A", 20, 29), ("A", 30, 39), ("A", 40, 49),
+            ("B", 10, 19), ("B", 20, 29)]
+    return event_positions(keys)
+
+
+def test_nms_zero_radius_is_identity():
+    sid, pos = _toy_geometry()
+    order = np.array([3, 0, 1, 4])
+    assert list(nms_keep(order, sid, pos, 0)) == [3, 0, 1, 4]
+
+
+def test_nms_suppresses_adjacent_same_stream():
+    sid, pos = _toy_geometry()
+    # ranked: A0 best, A1 adjacent duplicate, B0 distinct, A3 far
+    order = np.array([0, 1, 4, 3])
+    assert list(nms_keep(order, sid, pos, 1)) == [0, 4, 3]
+
+
+def test_nms_keeps_other_stream_same_position():
+    sid, pos = _toy_geometry()
+    order = np.array([0, 4])     # A pos0 and B pos0 — different events
+    assert list(nms_keep(order, sid, pos, 2)) == [0, 4]
+
+
+def test_nms_radius_two_reaches_further():
+    sid, pos = _toy_geometry()
+    order = np.array([0, 2, 3])  # A pos0, pos2, pos3
+    assert list(nms_keep(order, sid, pos, 2)) == [0, 3]
 
 
 if __name__ == "__main__":

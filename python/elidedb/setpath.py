@@ -43,6 +43,45 @@ def confidence_cut(scores, alpha, k_max):
     return int(np.searchsorted(-s[:n], -alpha * top, side="right"))
 
 
+def event_positions(keys):
+    """(stream_id, position-in-stream) per episode key — store
+    geometry only (episodes are consecutive windows; position
+    distance is the unit of temporal adjacency)."""
+    by = {}
+    for i, (s, a, _b) in enumerate(keys):
+        by.setdefault(s, []).append((a, i))
+    sid = np.empty(len(keys), int)
+    pos = np.empty(len(keys), int)
+    for j, s in enumerate(sorted(by)):
+        for p, (_a, i) in enumerate(sorted(by[s])):
+            sid[i] = j
+            pos[i] = p
+    return sid, pos
+
+
+def nms_keep(order, sid, pos, r):
+    """Temporal non-max suppression over the ranked order: a clip
+    within r episode positions of an already-kept SAME-STREAM clip is
+    the same event seen again — suppress it (r=0 disables; r is
+    FITTED per query type). Measured motivation: the eggplant query
+    returned five windows of one event while the graded action moment
+    sat at rank ~15 — the product wants each true event once, and
+    every suppressed duplicate frees a slot for the next-ranked
+    DISTINCT event."""
+    if r <= 0:
+        return order
+    kept = []
+    taken = {}
+    for i in order:
+        ps = taken.setdefault(int(sid[i]), [])
+        p = int(pos[i])
+        if any(abs(p - q) <= r for q in ps):
+            continue
+        ps.append(p)
+        kept.append(int(i))
+    return np.asarray(kept, int)
+
+
 def filter_mask(ch, names, q):
     """Median rank-fraction over the named filter channels; episodes
     in the bottom-q die. Quantile, never sign: AUC-validated channels
