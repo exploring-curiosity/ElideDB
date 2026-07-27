@@ -28,6 +28,8 @@ from elidedb import Store  # noqa: E402
 STORES: dict[str, Store] = {}
 LAKE = ROOT / "lake"
 _CACHE: dict = {}
+import os  # noqa: E402
+READONLY = os.environ.get("DESK_READONLY", "") == "1"
 
 
 def discover():
@@ -1068,6 +1070,12 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n) or b"{}")
             if u.path == "/api/query":
                 return self._json(api_query(body["store"], body))
+            # mutating operations: refused in the public demo. Queries
+            # stay open; the stores stay exactly as shipped.
+            if READONLY and u.path in ("/api/build_index",
+                                       "/api/maintenance"):
+                return self._json(
+                    {"error": "this deployment is read only"}, 403)
             if u.path == "/api/build_index":
                 return self._json(api_build_index(body["store"], body))
             if u.path == "/api/maintenance":
@@ -1109,16 +1117,21 @@ def _warm():
 def main():
     global LAKE
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", default=str(LAKE))
-    ap.add_argument("--port", type=int, default=8787)
+    ap.add_argument("--root", default=os.environ.get("DESK_ROOT",
+                                                     str(LAKE)))
+    ap.add_argument("--port", type=int,
+                    default=int(os.environ.get("PORT", "8787")))
+    ap.add_argument("--host", default=os.environ.get("DESK_HOST",
+                                                     "127.0.0.1"))
     ap.add_argument("--open", action="store_true")
     args = ap.parse_args()
     LAKE = Path(args.root).resolve()
     discover()
     threading.Thread(target=_warm, daemon=True).start()
-    srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"ElideDB Desk: http://localhost:{args.port}  "
-          f"({len(STORES)} stores under {LAKE})")
+    srv = ThreadingHTTPServer((args.host, args.port), Handler)
+    print(f"ElideDB Desk: http://{args.host}:{args.port}  "
+          f"({len(STORES)} stores under {LAKE})"
+          f"{'  [read only]' if READONLY else ''}")
     if args.open:
         import subprocess
         threading.Timer(0.4, lambda: subprocess.run(

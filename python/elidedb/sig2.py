@@ -30,10 +30,12 @@ def _text_vec(text):
         return cache[text]
     if "model" not in _S:
         from transformers import AutoModel, AutoProcessor
-        dev = "mps" if torch.backends.mps.is_available() else "cpu"
+        from .device import pick, strip_vision
+        dev, dtype = pick()
         _S["proc"] = AutoProcessor.from_pretrained(MID)
-        _S["model"] = AutoModel.from_pretrained(
-            MID, dtype=torch.float16).to(dev).eval()
+        _S["model"] = strip_vision(AutoModel.from_pretrained(
+            MID, dtype=dtype,
+            low_cpu_mem_usage=True).to(dev).eval(), "vision_model")
         _S["dev"] = dev
     with torch.no_grad():
         tok = _S["proc"](text=[text], padding="max_length",

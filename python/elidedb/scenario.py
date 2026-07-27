@@ -428,8 +428,14 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     # and clean relation phrases it is far safer than before, but the
     # fast tier's fused index is the better default by the ledger.
     if purity == "audited" and len(chosen) > 0 and rel is not None:
-        audit, keep_mask = _binding_audit(store, rel,
-                                          [keys[i] for i in chosen])
+        try:
+            audit, keep_mask = _binding_audit(store, rel,
+                                              [keys[i] for i in chosen])
+        except Exception as e:
+            # deployments without the tracker stack keep the fused set
+            # and SAY so rather than failing the query
+            audit = {"unavailable": f"{type(e).__name__}"}
+            keep_mask = None
         if keep_mask is not None:
             killed = chosen[~keep_mask]
             borderline = np.concatenate([killed, borderline])

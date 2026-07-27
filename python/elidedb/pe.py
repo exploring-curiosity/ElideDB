@@ -22,10 +22,19 @@ def _text_vec(text):
         return _TEXT["cache"][text]
     if "model" not in _TEXT:
         import open_clip
-        dev = "mps" if torch.backends.mps.is_available() else "cpu"
+
+        from .device import pick, strip_vision, text_only
+        dev, dtype = pick()
         m, _, _ = open_clip.create_model_and_transforms(
             "PE-Core-L-14-336", pretrained="meta")
-        _TEXT["model"] = m.to(dev).eval()
+        m = strip_vision(m.to(dev).eval(), "visual")
+        if text_only():
+            # serving keeps only the text tower; at reduced precision
+            # it is a few hundred MB instead of the fp32 gigabytes
+            m = m.to(dtype)
+        _TEXT["model"] = m
+        _TEXT["dtype"] = m.ln_final.weight.dtype \
+            if hasattr(m, "ln_final") else None
         _TEXT["tok"] = open_clip.get_tokenizer("PE-Core-L-14-336")
         _TEXT["dev"] = dev
         _TEXT["cache"] = {}

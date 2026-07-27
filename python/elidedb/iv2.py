@@ -28,14 +28,16 @@ V_STD = np.array([0.229, 0.224, 0.225], np.float32)
 
 def load_model():
     if "model" not in _S:
-        import torch
         from transformers import AutoModel
-        dev = "mps" if torch.backends.mps.is_available() else "cpu"
+
+        from .device import pick, strip_vision
+        dev, dtype = pick()
         m = AutoModel.from_pretrained(
-            MDIR, trust_remote_code=True,
-            torch_dtype=torch.float16).to(dev).eval()
+            MDIR, trust_remote_code=True, torch_dtype=dtype,
+            low_cpu_mem_usage=True).to(dev).eval()
+        m = strip_vision(m, "vision_encoder")
         m._config.device = dev      # get_txt_feat routes tokens here
-        _S["model"], _S["dev"] = m, dev
+        _S["model"], _S["dev"], _S["dtype"] = m, dev, dtype
     return _S["model"], _S["dev"]
 
 
@@ -59,7 +61,7 @@ def clip_vec(frames_hwc):
     fs = [cv2.resize(f, (224, 224)) for f in frames_hwc]
     x = (np.stack(fs).astype(np.float32) / 255.0 - V_MEAN) / V_STD
     px = torch.from_numpy(x).permute(0, 3, 1, 2)[None].to(
-        dev, torch.float16)
+        dev, _S["dtype"])
     return m.get_vid_feat(px).float().cpu().numpy().reshape(-1)
 
 

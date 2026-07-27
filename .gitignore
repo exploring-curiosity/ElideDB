@@ -52,3 +52,4 @@ myenv
 eval/
 FastSAM-*.pt
 models/
+deploy/demo/

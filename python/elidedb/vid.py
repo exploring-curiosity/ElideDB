@@ -24,9 +24,14 @@ def _text_vec(text):
         return _TEXT["cache"][text]
     if "model" not in _TEXT:
         from transformers import AutoProcessor, XCLIPModel
+
+        from .device import pick, strip_vision
         mid = "microsoft/xclip-large-patch14"
-        dev = "mps" if torch.backends.mps.is_available() else "cpu"
-        _TEXT["model"] = XCLIPModel.from_pretrained(mid).to(dev).eval()
+        dev = pick()[0]
+        _TEXT["model"] = strip_vision(
+            XCLIPModel.from_pretrained(
+                mid, low_cpu_mem_usage=True).to(dev).eval(),
+            "vision_model", "mit")
         _TEXT["proc"] = AutoProcessor.from_pretrained(mid)
         _TEXT["dev"] = dev
         _TEXT["cache"] = {}

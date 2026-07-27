@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ElideDB. The video database that reads almost nothing.</title>
+<meta name="description" content="A timestamp-native database for video and sensor data. Search hours of footage by describing the event. Every query reads the minimum possible bytes.">
+<style>
+  :root {
+    --bg:#020703; --bg2:#04120a;
+    --ink:#c8ffd9; --dim:#69a87e; --faint:#3d6b4e;
+    --green:#2cff7e; --green-deep:#0f9b4c;
+    --line:#10331e; --panel:rgba(3,15,8,.82);
+    --amber:#ffc24b;
+  }
+  * { box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body {
+    margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.65 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    overflow-x:hidden;
+  }
+  ::selection { background:rgba(44,255,126,.25); }
+
+  /* binary rain */
+  #rain { position:fixed; inset:0; z-index:0; opacity:.55; }
+  .crt { position:fixed; inset:0; z-index:1; pointer-events:none;
+    background:repeating-linear-gradient(0deg,
+      rgba(0,0,0,.16) 0 1px, transparent 1px 3px);
+    mix-blend-mode:multiply; }
+  .vignette { position:fixed; inset:0; z-index:1; pointer-events:none;
+    background:radial-gradient(ellipse at 50% 30%,
+      transparent 55%, rgba(0,0,0,.55) 100%); }
+
+  main { position:relative; z-index:2; }
+  .wrap { max-width:960px; margin:0 auto; padding:0 24px; }
+
+  /* nav */
+  header { display:flex; align-items:center; gap:18px;
+    padding:20px 0 0; }
+  header b { letter-spacing:.28em; font-size:14px; }
+  header b i { font-style:normal; color:var(--green); }
+  header nav { margin-left:auto; display:flex; gap:22px; }
+  header a { color:var(--dim); text-decoration:none; font-size:11px;
+    letter-spacing:.16em; text-transform:uppercase; }
+  header a:hover { color:var(--green); }
+
+  /* hero */
+  .hero { padding:110px 0 70px; }
+  .hero .pre { color:var(--green-deep); font-size:12px;
+    letter-spacing:.22em; text-transform:uppercase; margin-bottom:18px; }
+  .hero h1 { margin:0; font-size:clamp(30px, 5.4vw, 54px);
+    line-height:1.14; font-weight:700; letter-spacing:-.01em;
+    text-shadow:0 0 24px rgba(44,255,126,.22); }
+  .hero h1 em { font-style:normal; color:var(--green); }
+  .hero p.sub { color:var(--dim); max-width:56ch; font-size:15.5px;
+    margin:22px 0 34px; }
+  .cta { display:flex; gap:14px; flex-wrap:wrap; }
+  .btn { display:inline-block; padding:13px 26px; text-decoration:none;
+    font-size:12px; letter-spacing:.18em; text-transform:uppercase;
+    font-weight:700; border:1px solid var(--green-deep);
+    color:var(--green); background:rgba(15,155,76,.08); }
+  .btn:hover { background:rgba(44,255,126,.16);
+    box-shadow:0 0 22px rgba(44,255,126,.25); }
+  .btn.ghost { border-color:var(--line); color:var(--dim); }
+  .btn.ghost:hover { color:var(--ink); box-shadow:none; }
+  .cursor { display:inline-block; width:.6em; height:1em;
+    background:var(--green); vertical-align:-.12em;
+    animation:blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .cursor { animation:none; } }
+
+  /* sections */
+  section { padding:64px 0; }
+  .kicker { color:var(--green-deep); font-size:11px;
+    letter-spacing:.24em; text-transform:uppercase; margin-bottom:10px; }
+  h2 { margin:0 0 14px; font-size:24px; letter-spacing:.01em; }
+  .lede { color:var(--dim); max-width:62ch; margin:0 0 30px; }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,
+    minmax(260px, 1fr)); gap:14px; }
+  .card { border:1px solid var(--line); background:var(--panel);
+    padding:20px 20px 18px; }
+  .card h3 { margin:0 0 8px; font-size:14px; color:var(--green);
+    letter-spacing:.06em; }
+  .card p { margin:0; color:var(--dim); font-size:13px; }
+
+  /* terminal */
+  .term { border:1px solid var(--line); background:rgba(1,6,3,.92);
+    box-shadow:0 0 40px rgba(15,155,76,.12); }
+  .term .bar { display:flex; gap:7px; padding:10px 14px;
+    border-bottom:1px solid var(--line); }
+  .term .bar i { width:9px; height:9px; border-radius:50%;
+    background:var(--line); }
+  .term .bar i:first-child { background:var(--green-deep); }
+  .term pre { margin:0; padding:18px 20px; overflow-x:auto;
+    font-size:12.5px; line-height:1.75; color:var(--dim); }
+  .term .p { color:var(--green); }
+  .term .c { color:var(--faint); }
+  .term .o { color:var(--ink); }
+  .term .a { color:var(--amber); }
+
+  /* stats */
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,
+    minmax(200px, 1fr)); gap:14px; margin-top:26px; }
+  .stat { border:1px solid var(--line); background:var(--panel);
+    padding:18px 20px 14px; }
+  .stat .v { font-size:30px; font-weight:700; color:var(--green);
+    text-shadow:0 0 18px rgba(44,255,126,.3); }
+  .stat .k { color:var(--faint); font-size:11px; letter-spacing:.14em;
+    text-transform:uppercase; margin-top:4px; line-height:1.5; }
+
+  /* pipeline */
+  .pipe { display:flex; flex-wrap:wrap; gap:10px; align-items:stretch; }
+  .stage { border:1px solid var(--line); background:var(--panel);
+    padding:12px 16px; min-width:150px; flex:1; }
+  .stage b { display:block; color:var(--green); font-size:12.5px;
+    margin-bottom:4px; letter-spacing:.04em; }
+  .stage span { color:var(--faint); font-size:11px; line-height:1.5;
+    display:block; }
+  .flow { align-self:center; color:var(--green-deep); }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin:18px 0 0; }
+  .chip { border:1px solid var(--line); color:var(--dim);
+    padding:4px 12px; font-size:11px; }
+  .chip b { color:var(--green); font-weight:700; }
+
+  /* principles */
+  .rules { border-left:2px solid var(--green-deep); padding-left:22px;
+    display:grid; gap:18px; }
+  .rule b { color:var(--ink); display:block; margin-bottom:3px;
+    font-size:14px; }
+  .rule span { color:var(--dim); font-size:13px; }
+
+  footer { border-top:1px solid var(--line); padding:34px 0 44px;
+    color:var(--faint); font-size:11.5px; }
+  footer .wrap { display:flex; gap:20px; flex-wrap:wrap; }
+  footer a { color:var(--dim); text-decoration:none; }
+  footer a:hover { color:var(--green); }
+  .foot-right { margin-left:auto; }
+</style>
+</head>
+<body>
+<canvas id="rain"></canvas>
+<div class="crt"></div>
+<div class="vignette"></div>
+
+<main>
+<div class="wrap">
+  <header>
+    <b>ELIDE<i>DB</i></b>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#numbers">Numbers</a>
+      <a href="#principles">Principles</a>
+      <a href="#demo">Demo</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <div class="pre">timestamp-native database for video and sensor data</div>
+    <h1>Hours of footage.<br>
+        One question.<br>
+        <em>Almost zero bytes read.</em><span class="cursor"></span></h1>
+    <p class="sub">Robots, dashcams, and factory cameras record far more
+      than anyone can watch. ElideDB stores the streams once, untouched,
+      and answers "show me every time the arm closes the drawer" by
+      reading only the bytes that matter. The best read is the read
+      elided.</p>
+    <div class="cta">
+      <a class="btn" id="demo-link" href="#demo">Open the live demo</a>
+      <a class="btn ghost" href="#how">See the architecture</a>
+    </div>
+  </div>
+
+  <section id="how">
+    <div class="kicker">what it is</div>
+    <h2>A database, not a folder of files</h2>
+    <p class="lede">Every table is Parquet under a transaction log.
+      Every video is indexed to the byte at ingest. Every query is
+      planned to touch the minimum, and what it touched is counted and
+      reported.</p>
+    <div class="grid">
+      <div class="card"><h3>Timestamp native</h3>
+        <p>Video frames, GPS, IMU, audio: one canonical timeline.
+          Ask for any window and get aligned frames and sensor rows
+          back, decoded on demand through byte-range reads.</p></div>
+      <div class="card"><h3>Time travel included</h3>
+        <p>Appends, compaction, deletes: each is one atomic commit.
+          Any earlier version of a table stays readable until you
+          vacuum it away.</p></div>
+      <div class="card"><h3>Event search, no labels</h3>
+        <p>Describe the event in plain words. World models and
+          video-native encoders score every clip, fused with weights
+          learned from your data. Nobody annotates anything.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker">the query</div>
+    <h2>Describe it. Get the clips.</h2>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i></div>
+      <pre><span class="p">&gt;</span> <span class="o">search "the robot arm closes the drawer"</span>
+<span class="c">scanning 1,122 episodes across 8 model channels</span>
+<span class="c">fusion: fitted weights   filter: direction evidence</span>
+<span class="c">dedup: one clip per event   cut: where confidence ends</span>
+<span class="o">10 clips returned</span> <span class="a">0.8 s warm, two CPU cores</span>
+<span class="p">&gt;</span> <span class="o">search "fold a piece of towel"</span>
+<span class="o">0 clips returned</span> <span class="c">this corpus does not contain that
+action; the index abstained rather than guessing</span></pre>
+    </div>
+    <div class="chips">
+      <span class="chip">world model <b>V-JEPA 2</b></span>
+      <span class="chip">video-text <b>InternVideo2</b></span>
+      <span class="chip">fine-grained <b>SigLIP 2</b></span>
+      <span class="chip">perception <b>PE Core</b></span>
+      <span class="chip">tracking <b>SAM 3</b></span>
+      <span class="chip">and a fitted fusion layer that learns
+        <b>your corpus</b></span>
+    </div>
+  </section>
+
+  <section id="numbers">
+    <div class="kicker">measured, not promised</div>
+    <h2>Numbers from the ledger</h2>
+    <p class="lede">Every change to the engine lands with a benchmark
+      row against a frozen, hand-graded truth set. These are current
+      measurements, not targets.</p>
+    <div class="stats">
+      <div class="stat"><div class="v">&lt; 5%</div>
+        <div class="k">of file bytes read to serve a two second
+          window from an hours-long capture</div></div>
+      <div class="stat"><div class="v">0.8 s</div>
+        <div class="k">warm event query over 1,122 episodes on two
+          CPU cores, eight channels fused</div></div>
+      <div class="stat"><div class="v">0</div>
+        <div class="k">labels required from you; calibration is
+          learned from the data itself</div></div>
+      <div class="stat"><div class="v">1</div>
+        <div class="k">directory per store; delete the raw source and
+          the database keeps serving</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="kicker">the selection pipeline</div>
+    <h2>Consensus orders. Evidence vetoes.</h2>
+    <p class="lede">Encoders propose, but they never decide alone.
+      Every returned set passes a fitted chain, and each stage's
+      parameters are learned per store.</p>
+    <div class="pipe">
+      <div class="stage"><b>Fitted fusion</b>
+        <span>weighted rank consensus over every channel the store
+          carries</span></div>
+      <div class="flow">&gt;&gt;</div>
+      <div class="stage"><b>No-match gate</b>
+        <span>abstains when the corpus lacks the action</span></div>
+      <div class="flow">&gt;&gt;</div>
+      <div class="stage"><b>Direction filter</b>
+        <span>opening is not closing; contrast evidence prunes</span></div>
+      <div class="flow">&gt;&gt;</div>
+      <div class="stage"><b>Event dedup</b>
+        <span>each true event once, not five windows of it</span></div>
+      <div class="flow">&gt;&gt;</div>
+      <div class="stage"><b>Confidence cut</b>
+        <span>the set ends where confidence does, not at a count</span></div>
+    </div>
+  </section>
+
+  <section id="principles">
+    <div class="kicker">principles</div>
+    <h2>Rules the engine is built on</h2>
+    <div class="rules">
+      <div class="rule"><b>Raw data is immutable.</b>
+        <span>Ingest never re-encodes your source or writes into it.
+          The store carries its own transcoded media and serves even
+          after the original is gone.</span></div>
+      <div class="rule"><b>No dataset priors in code.</b>
+        <span>Nothing in the engine knows it is looking at kitchens,
+          roads, or factories. Whatever matters in your corpus is
+          learned from your corpus.</span></div>
+      <div class="rule"><b>No language model judges.</b>
+        <span>Retrieval is scored by measurement: encoder evidence,
+          learned weights, and pixel-level geometric verification.</span></div>
+      <div class="rule"><b>Honest abstention.</b>
+        <span>A query the data cannot answer returns nothing, with the
+          reason, instead of ten confident look-alikes.</span></div>
+      <div class="rule"><b>Every byte is counted.</b>
+        <span>Each query reports bytes touched against bytes stored.
+          In the cloud that number is your bill.</span></div>
+    </div>
+  </section>
+
+  <section id="demo">
+    <div class="kicker">try it</div>
+    <h2>The console is the demo</h2>
+    <p class="lede">A live, read-only deployment of the real product:
+      1,122 robot manipulation episodes, searchable by event, every
+      result a playable clip decoded through the byte-range path.</p>
+    <div class="cta">
+      <a class="btn" id="demo-link-2" href="#" data-demo="unset">Launch the console</a>
+      <a class="btn ghost" href="mailto:sr7431@nyu.edu?subject=ElideDB">Talk to us</a>
+    </div>
+  </section>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>ELIDEDB</span>
+    <span>the best read is the read elided</span>
+    <span class="foot-right">built on Parquet, Arrow, and open
+      world models</span>
+  </div>
+</footer>
+</main>
+
+<script>
+"use strict";
+/* binary rain: strictly 0 and 1, phosphor green, cheap to run */
+(() => {
+  const c = document.getElementById("rain");
+  const ctx = c.getContext("2d");
+  const CELL = 16;
+  let cols = 0, drops = [], speeds = [], last = 0;
+  function size() {
+    c.width = innerWidth * devicePixelRatio;
+    c.height = innerHeight * devicePixelRatio;
+    c.style.width = innerWidth + "px";
+    c.style.height = innerHeight + "px";
+    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    cols = Math.ceil(innerWidth / CELL);
+    drops = Array.from({length: cols},
+      () => Math.random() * innerHeight / CELL);
+    speeds = Array.from({length: cols}, () => .25 + Math.random() * .9);
+    ctx.fillStyle = "#020703";
+    ctx.fillRect(0, 0, innerWidth, innerHeight);
+  }
+  size();
+  addEventListener("resize", size);
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function frame(t) {
+    if (t - last > 66) {          /* ~15 fps is plenty for rain */
+      last = t;
+      ctx.fillStyle = "rgba(2,7,3,.14)";
+      ctx.fillRect(0, 0, innerWidth, innerHeight);
+      ctx.font = "13px ui-monospace, Menlo, monospace";
+      for (let i = 0; i < cols; i++) {
+        const y = drops[i] * CELL;
+        const bit = Math.random() < .5 ? "0" : "1";
+        const head = Math.random() < .02;
+        ctx.fillStyle = head ? "#b7ffcf"
+          : (i % 7 === 0 ? "rgba(44,255,126,.5)"
+                         : "rgba(15,155,76,.38)");
+        ctx.fillText(bit, i * CELL, y);
+        drops[i] += speeds[i];
+        if (y > innerHeight && Math.random() > .975) {
+          drops[i] = 0;
+          speeds[i] = .25 + Math.random() * .9;
+        }
+      }
+    }
+    if (!reduced) requestAnimationFrame(frame);
+  }
+  if (reduced) {                   /* one static field, no motion */
+    for (let k = 0; k < 3; k++) frame(100 * k + 100);
+  } else {
+    requestAnimationFrame(frame);
+  }
+})();
+
+/* demo link: set once the deployment URL exists */
+(() => {
+  const DEMO_URL = "";             /* paste the console URL here */
+  for (const id of ["demo-link", "demo-link-2"]) {
+    const a = document.getElementById(id);
+    if (DEMO_URL) { a.href = DEMO_URL; a.removeAttribute("data-demo"); }
+  }
+})();
+</script>
+</body>
+</html>

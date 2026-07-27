@@ -1,0 +1,19 @@
+# ElideDB demo service: CPU-only, Linux. The heavy encoders run at
+# ingest; a deployment only pays for text towers at query time.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1
+transformers==4.57.6
+accelerate>=1.0
+numpy<2.1
+pyarrow>=17
+pandas>=2.2
+duckdb>=1.0
+pillow>=10
+opencv-python-headless>=4.10
+open_clip_torch>=2.26
+timm>=1.0
+einops>=0.8
+nltk>=3.9
+huggingface_hub>=0.26
+scikit-learn>=1.5
+umap-learn>=0.5

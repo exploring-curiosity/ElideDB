@@ -42,6 +42,34 @@ def resolve_model(name):
     return MODELS.get(name, name) if name else DEFAULT_MODEL
 
 
+# PORTABILITY: the mlx build of siglip-so400m is a straight conversion
+# of the google checkpoint, so the SAME weights run through
+# transformers on any machine and land in the same embedding space.
+# Backend is auto-detected (mlx where it imports, torch elsewhere) and
+# can be forced with ELIDEDB_TEXT_BACKEND=torch for parity testing.
+_HF_EQUIV = {
+    "mlx-community/siglip-so400m-patch14-384":
+        "google/siglip-so400m-patch14-384",
+    "mlx-community/siglip-so400m-patch14-224":
+        "google/siglip-so400m-patch14-224",
+}
+
+
+def _backend():
+    if "backend" not in _MODEL_CACHE:
+        import os
+        forced = os.environ.get("ELIDEDB_TEXT_BACKEND", "").strip()
+        if forced:
+            _MODEL_CACHE["backend"] = forced
+        else:
+            try:
+                import mlx_embeddings  # noqa: F401
+                _MODEL_CACHE["backend"] = "mlx"
+            except ImportError:
+                _MODEL_CACHE["backend"] = "torch"
+    return _MODEL_CACHE["backend"]
+
+
 def _load_model(model_id):
     if model_id not in _MODEL_CACHE:
         from mlx_embeddings.utils import load
@@ -49,7 +77,32 @@ def _load_model(model_id):
     return _MODEL_CACHE[model_id]
 
 
+def _load_torch(model_id):
+    key = ("torch", model_id)
+    if key not in _MODEL_CACHE:
+        from transformers import AutoModel, AutoProcessor
+
+        from .device import pick, strip_vision
+        dev, dtype = pick()
+        hf = _HF_EQUIV.get(model_id, model_id)
+        m = AutoModel.from_pretrained(
+            hf, dtype=dtype, low_cpu_mem_usage=True).to(dev).eval()
+        m = strip_vision(m, "vision_model")
+        _MODEL_CACHE[key] = (m, AutoProcessor.from_pretrained(hf), dev)
+    return _MODEL_CACHE[key]
+
+
 def _embed_images(images, model_id):
+    if _backend() == "torch":
+        import torch
+        model, processor, dev = _load_torch(resolve_model(model_id))
+        iv = processor(images=images, return_tensors="pt")
+        with torch.no_grad():
+            out = model.get_image_features(
+                pixel_values=iv["pixel_values"].to(
+                    dev, model.dtype))
+        out = out.float().cpu().numpy().astype(np.float32)
+        return out / np.linalg.norm(out, axis=1, keepdims=True)
     import mlx.core as mx
     model, processor = _load_model(resolve_model(model_id))
     iv = processor(images=images, return_tensors="np")
@@ -59,6 +112,22 @@ def _embed_images(images, model_id):
 
 
 def embed_text(text, model_id=DEFAULT_MODEL):
+    if _backend() == "torch":
+        import torch
+        model, processor, dev = _load_torch(resolve_model(model_id))
+        try:
+            max_len = int(
+                model.config.text_config.max_position_embeddings)
+        except AttributeError:
+            max_len = 64
+        ti = processor(text=[text], padding="max_length",
+                       max_length=max_len, truncation=True,
+                       return_tensors="pt")
+        with torch.no_grad():
+            v = model.get_text_features(
+                input_ids=ti["input_ids"].to(dev))
+        v = v[0].float().cpu().numpy().astype(np.float32)
+        return v / np.linalg.norm(v)
     import mlx.core as mx
     model, processor = _load_model(resolve_model(model_id))
     # Each checkpoint has its own text context (so400m-384: 64 tokens,

@@ -173,7 +173,7 @@ def directional_swap(query: str) -> str | None:
     training-time hard negatives, where nonsense negatives are harmless.)
     Multiword pairs are tried first so "picks up" wins before any single
     word could."""
-    from .fdnnv2 import VERB_SWAPS
+    from .lexicon import VERB_SWAPS
     weak = {frozenset(p) for p in ((("left", "right")),
                                    (("up", "down")),
                                    (("front", "back")))}

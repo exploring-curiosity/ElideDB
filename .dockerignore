@@ -1,0 +1,9 @@
+# Only what the image needs enters the build context. The lake and
+# datasets are tens of GB; the demo store ships from deploy/demo.
+*
+!python
+!scripts/get_iv2.py
+!deploy
+deploy/demo/lake/bench/tables/*/_cache
+!.dockerignore
+python/**/__pycache__

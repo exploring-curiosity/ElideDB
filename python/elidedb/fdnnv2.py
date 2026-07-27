@@ -44,39 +44,9 @@ from .fdnnvideo import EMBED_DIM, FDNNVideoEncoder
 
 CTX_DIM = 256
 
-# Verb/direction swaps for L3 hard negatives. GENERIC english antonyms —
-# no dataset nouns, per the plan's "nothing dataset-specific" rule.
-VERB_SWAPS = [
-    ("open", "close"), ("opens", "closes"), ("opening", "closing"),
-    ("opened", "closed"), ("into", "out of"), ("inside", "outside"),
-    ("picks up", "puts down"), ("picking up", "putting down"),
-    ("lifts", "lowers"), ("lifting", "lowering"),
-    ("pushes", "pulls"), ("pushing", "pulling"),
-    ("left", "right"), ("up", "down"), ("onto", "off"),
-    ("toward", "away from"), ("front", "back"),
-]
-
-# The un- REVERSAL family: verbs whose opposite is their morphological
-# negation. Needed because a query like "folding cloth" without a swap
-# gets an ABSOLUTE verifier question, and both VLM tiers answer absolute
-# questions with concept PRESENCE, not action direction (measured twice:
-# open clips outscored close clips 0.36; tiger-in-drawer outscored
-# fold-cloth +1.6 vs +0.17 because the drawer clip contains cloth).
-# The swap-contrast cancels that bias by construction. Generic English,
-# generated inflections, zero dataset words.
-_UN_BASES = ["fold", "wrap", "roll", "stack", "cover", "screw", "plug",
-             "zip", "tie", "load", "lock", "pack", "buckle", "hook",
-             "fasten", "tangle"]
-
-
-def _inflect(v):
-    ing = (v[:-1] + "ing") if v.endswith("e") else (v + "ing")
-    ed = (v + "d") if v.endswith("e") else (v + "ed")
-    return [v, v + "s", ing, ed]
-
-
-VERB_SWAPS += [(a, b) for base in _UN_BASES
-               for a, b in zip(_inflect(base), _inflect("un" + base))]
+# Verb/direction swaps for L3 hard negatives: shared lexicon (moved to
+# lexicon.py so the QUERY path can import it without this module's mlx)
+from .lexicon import VERB_SWAPS  # noqa: E402,F401
 
 
 def swap_verbs(text: str, rng) -> str | None:
