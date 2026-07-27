@@ -330,3 +330,29 @@ shortlist and shortlisting from the RRF union once captions exist.
 | 2026-07-27 05:30 | 01a4720 | 25/100 returned true | mean prec 0.25 | mean yield 0.26 | q00:2/10 q01:2/10 q02:5/10 q03:5/10 q04:5/10 q05:3/10 q07:3/10 q08:0/10 q09:0/10 q10:0/10 |
 | 2026-07-27 05:43 | 0868832 | 25/100 returned true | mean prec 0.25 | mean yield 0.26 | q00:2/10 q01:2/10 q02:5/10 q03:5/10 q04:5/10 q05:3/10 q07:3/10 q08:0/10 q09:0/10 q10:0/10 |
 | 2026-07-27 05:56 | 286b2e5 | 25/100 returned true | mean prec 0.25 | mean yield 0.26 | q00:2/10 q01:2/10 q02:5/10 q03:5/10 q04:5/10 q05:3/10 q07:3/10 q08:0/10 q09:0/10 q10:0/10 |
+
+### Binding diagnosis (2026-07-27)
+
+`scripts/diag_binding.py` instruments q08/q09/q10 per-channel: the fitter (previous
+commit) rejected joining `conj` to the filter set, and this run shows why the
+channels are not the whole story. q08 "place the spoon on top of the cloth"
+(support 18): conj AUC +0.829, top10-by-conj-alone 3/10; obj AUC +0.837, top10
+3/10 — both individually well above chance, yet the live fused+filtered pipeline
+returns 0/10 for the same query across every ledger row since d88ca01. That is
+the fusion/filter pattern: usable per-channel signal, discarded downstream. q10
+"put the banana on top of the drawer" (support 2): conj AUC +0.933, sig2 +0.921,
+vid +0.900, but top10 0/10 on every channel; with only 2 positives among ~1100
+episodes, a top-10 hit by any ranker is a low-probability event regardless of
+ranking quality, so this query's numbers do not distinguish fusion failure from
+encoder failure. q09 "put the eggplant into the drawer" (support 2) has the same
+n=2 noise problem, but also a distinct, non-noisy defect: `atoms_of` returns a
+single atom, `['the eggplant into the']` — the regex swallowed the preposition
+"into" as a filler word and grabbed the next determiner as the head, so the
+phrase never reaches "drawer" and `conj_lookup` abstains (len(atoms) < 2) before
+scoring anything. `atoms_of` on q08 and q10 shows a milder form of the same
+defect: `['the spoon on top', 'the cloth']` and `['the banana on top', 'the
+drawer']` — the object atom absorbs the relational "on top" phrase instead of
+stopping at the noun, corrupting the text embedding fed to SigLIP2 even where
+conj does run. Next lever: fix the atom boundary (stop at prepositions) before
+re-attempting filter-membership search, since q08's fusion/filter finding is
+only actionable once the atoms feeding conj are the intended noun phrases.
