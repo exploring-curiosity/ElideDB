@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from bench_product import QUERIES                            # noqa: E402
 from elidedb import Store                                    # noqa: E402
 from elidedb.fusion import rrf, variant_max                  # noqa: E402
+from elidedb.setpath import filter_mask                      # noqa: E402
 
 CH = ["pe", "act", "vid", "obj", "mot", "prf", "sig2", "conj"]
 K = 10
@@ -92,14 +93,6 @@ def capture(db, keys, text):
     return out, sq is not None
 
 
-def rankfrac(v):
-    r = np.full(len(v), 0.5)
-    fin = np.isfinite(v)
-    if fin.sum() > 1:
-        r[fin] = np.argsort(np.argsort(v[fin])) / (fin.sum() - 1)
-    return r
-
-
 def score_query(case, w, fq):
     ch = {c: case["ch"][c] for c in CH
           if np.isfinite(case["ch"][c]).any() and w.get(c, 0) > 0}
@@ -108,10 +101,7 @@ def score_query(case, w, fq):
     fused = rrf(ch, weights=w)
     alive = np.ones(len(fused), bool)
     if case["dir"] and fq > 0:
-        con = [rankfrac(case["ch"][c]) for c in ("mot", "act", "prf")
-               if np.isfinite(case["ch"][c]).any()]
-        if con:
-            alive &= ~(np.median(np.stack(con), 0) < fq)
+        alive = filter_mask(case["ch"], ["mot", "act", "prf"], fq)
     idx = np.where(alive)[0]
     order = idx[np.argsort(-fused[idx])][:K]
     lab = case["lab"][order]

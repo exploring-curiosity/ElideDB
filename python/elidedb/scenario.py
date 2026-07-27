@@ -354,30 +354,14 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
 
     # DIRECTION HARD FILTER — QUANTILE, NOT SIGN (AUC-validated
     # channels have uncalibrated zero points; a sign test executed
-    # 130/183 true closes). For open/close, motion ALONE decides
-    # (bottom half dropped); for containment, both direction channels
-    # must agree (bottom third AND).
-    def _rankfrac(v):
-        r = np.full(len(v), 0.5)
-        fin = np.isfinite(v)
-        if fin.sum() > 1:
-            order = np.argsort(np.argsort(v[fin]))
-            r[fin] = order / (fin.sum() - 1)
-        return r
-
-    dropped = 0
-    alive = np.ones(len(keys), bool)
-    if contrast_ch:
-        # unified contrast filter: mean rank fraction over EVERY
-        # available contrast channel (motion delta, action-class
-        # contrast, corpus-derived PRF anchors), bottom third dies.
-        # Quantile not sign (uncalibrated zeros execute true clips —
-        # 130/183 measured); abstaining channels vote neutral 0.5.
-        cf = np.median(np.stack([_rankfrac(v) for v in
-                                 contrast_ch.values()]), 0)
-        bad = cf < filter_q
-        alive &= ~bad
-        dropped = int(bad.sum())
+    # 130/183 true closes). Shared with the fitter via setpath.py: the
+    # knee/obj-boost divergences of the acceptance sprint (fit LOQO
+    # 0.21 vs live 0.16) were measured regressions from the live path
+    # reshaping what the fit optimized — one code path kills the class.
+    from .setpath import filter_mask
+    alive = (filter_mask(contrast_ch, list(contrast_ch), filter_q)
+             if contrast_ch else np.ones(len(keys), bool))
+    dropped = int((~alive).sum())
 
     idx = np.where(alive)[0]
     order = idx[np.argsort(-fused[idx])]

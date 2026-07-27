@@ -327,3 +327,4 @@ shortlist and shortlisting from the RRF union once captions exist.
 | 2026-07-26 01:10 | d88ca01 | 24/100 returned true | mean prec 0.24 | mean yield 0.25 | q00:2/10 q01:1/10 q02:5/10 q03:5/10 q04:6/10 q05:3/10 q07:2/10 q08:0/10 q09:0/10 q10:0/10 |
 | 2026-07-26 05:05 | d88ca01 | 25/100 returned true | mean prec 0.25 | mean yield 0.26 | q00:2/10 q01:2/10 q02:5/10 q03:5/10 q04:5/10 q05:3/10 q07:3/10 q08:0/10 q09:0/10 q10:0/10 |
 | 2026-07-27 05:21 | 42f7625 | 25/100 returned true | mean prec 0.25 | mean yield 0.26 | q00:2/10 q01:2/10 q02:5/10 q03:5/10 q04:5/10 q05:3/10 q07:3/10 q08:0/10 q09:0/10 q10:0/10 |
+| 2026-07-27 05:30 | 01a4720 | 25/100 returned true | mean prec 0.25 | mean yield 0.26 | q00:2/10 q01:2/10 q02:5/10 q03:5/10 q04:5/10 q05:3/10 q07:3/10 q08:0/10 q09:0/10 q10:0/10 |
