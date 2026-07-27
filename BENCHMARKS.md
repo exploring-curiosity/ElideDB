@@ -360,3 +360,36 @@ only actionable once the atoms feeding conj are the intended noun phrases.
 | 2026-07-27 06:24 | 0833cdf | 23/100 returned true | mean prec 0.23 | mean yield 0.23 | q00:2/10 q01:2/10 q02:4/10 q03:5/10 q04:4/10 q05:3/10 q07:3/10 q08:0/10 q09:0/10 q10:0/10 |
 | 2026-07-27 06:35 | 2cd631c | 24/100 returned true | mean prec 0.24 | mean yield 0.24 | q00:2/10 q01:2/10 q02:4/10 q03:5/10 q04:4/10 q05:3/10 q07:1/10 q08:3/10 q09:0/10 q10:0/10 |
 | 2026-07-27 06:38 | 2cd631c | 25/100 returned true | mean prec 0.25 | mean yield 0.26 | q00:2/10 q01:2/10 q02:5/10 q03:5/10 q04:6/10 q05:3/10 q07:2/10 q08:0/10 q09:0/10 q10:0/10 |
+
+### InternVideo2 negative result (2026-07-27)
+
+Task 7 (video-native text channel via InternVideo2-Stage2 1B, arXiv 2403.15377)
+bailed at Step 1 (the load probe), before any flash_attn/MPS/CPU fallback logic
+was reached. `scripts/iv2_probe.py` calling
+`AutoTokenizer.from_pretrained("OpenGVLab/InternVideo2-Stage2_1B-224p-f4",
+trust_remote_code=True)` fails immediately with:
+
+```
+OSError: You are trying to access a gated repo.
+Make sure to have access to it at
+https://huggingface.co/OpenGVLab/InternVideo2-Stage2_1B-224p-f4.
+403 Client Error. ... Access to model
+OpenGVLab/InternVideo2-Stage2_1B-224p-f4 is restricted and you are not in the
+authorized list.
+```
+
+The machine's HF token (`whoami` succeeds, user SudharshanR) is valid and
+authenticated, but this specific repo is gate-restricted and the account has
+not been granted access — that requires a manual "request access" click on
+the model page and (for OpenGVLab gates) an indeterminate wait for approval,
+which is a human/account action outside this task's scope, not a code or
+environment problem. No shim exists for an HTTP 403 the way one exists for a
+missing `flash_attn` import, so the flash_attn-shim fallback in the bailout
+protocol was never reached — this is a harder stop than the anticipated
+failure mode. Total wall-clock on Task 7: under 5 minutes (probe fails on the
+first `from_pretrained` call). No `iv2_vectors` table, no channel code, no
+weight-fit or bench changes — `python/elidedb/scenario.py` and
+`scripts/fit_set_weights.py` are unchanged by this task. `scripts/iv2_probe.py`
+is committed as the scaffold; a future attempt only needs HF access granted
+(https://huggingface.co/OpenGVLab/InternVideo2-Stage2_1B-224p-f4 → Request
+access) before rerunning it.
