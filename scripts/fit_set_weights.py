@@ -93,15 +93,14 @@ def capture(db, keys, text):
     return out, sq is not None
 
 
-def score_query(case, w, fq):
+def score_query(case, w, fq, fc):
     ch = {c: case["ch"][c] for c in CH
           if np.isfinite(case["ch"][c]).any() and w.get(c, 0) > 0}
     if not ch:
         return 0.0
     fused = rrf(ch, weights=w)
-    alive = np.ones(len(fused), bool)
-    if case["dir"] and fq > 0:
-        alive = filter_mask(case["ch"], ["mot", "act", "prf"], fq)
+    alive = (filter_mask(case["ch"], fc, fq) if fc and fq > 0
+             else np.ones(len(fused), bool))
     idx = np.where(alive)[0]
     order = idx[np.argsort(-fused[idx])][:K]
     lab = case["lab"][order]
@@ -137,49 +136,70 @@ def main():
     grid = [0.0, 0.5, 1.0, 2.0, 4.0, 6.0]
     fqs = [0.0, 0.25, 1 / 3, 0.5]
 
-    def fit(subset):
+    def fit(subset, fc0):
         w = {c: 1.0 for c in CH}
         fq = 1 / 3
-        best = sum(score_query(c, w, fq) for c in subset)
+        fc = list(fc0)
+        best = sum(score_query(c, w, fq, fc) for c in subset)
         for _ in range(4):
             improved = False
             for c in CH:
                 for g in grid:
                     w2 = dict(w); w2[c] = g
-                    s = sum(score_query(x, w2, fq) for x in subset)
+                    s = sum(score_query(x, w2, fq, fc) for x in subset)
                     if s > best + 1e-9:
                         best, w, improved = s, w2, True
             for f2 in fqs:
-                s = sum(score_query(x, w, f2) for x in subset)
+                s = sum(score_query(x, w, f2, fc) for x in subset)
                 if s > best + 1e-9:
                     best, fq, improved = s, f2, True
+            # membership toggle: any channel may join or leave the
+            # filter set — the fitter, not code, decides which
+            # channels have veto authority for this query type
+            for c in CH:
+                fc2 = ([x for x in fc if x != c] if c in fc
+                       else fc + [c])
+                s = sum(score_query(x, w, fq, fc2) for x in subset)
+                if s > best + 1e-9:
+                    best, fc, improved = s, fc2, True
             if not improved:
                 break
-        return w, fq
+        return w, fq, fc
+
+    # starts = today's live behavior, so the fitted result can only
+    # move away from it by measured improvement
+    DIR0 = ["mot", "act", "prf"]
+    CON0 = []
 
     # leave-one-query-out: the honest generalization estimate.
-    # Weights fitted PER QUERY TYPE (directional vs not) — routing is
-    # a lexicon property (swap exists?), weights are data.
+    # Weights AND filter membership fitted PER QUERY TYPE (directional
+    # vs not) — routing is a lexicon property (swap exists?), roles
+    # are data.
     loqo = []
     for i in range(len(cases)):
         train = [c for j, c in enumerate(cases) if j != i]
-        w, fq = fit([c for c in train
-                     if c["dir"] == cases[i]["dir"]] or train)
-        loqo.append(score_query(cases[i], w, fq))
+        same = [c for c in train if c["dir"] == cases[i]["dir"]]
+        w, fq, fc = fit(same or train,
+                        DIR0 if cases[i]["dir"] else CON0)
+        loqo.append(score_query(cases[i], w, fq, fc))
         print(f"LOQO holdout {cases[i]['q'][:44]:44s} "
               f"score {loqo[-1]:.2f}", flush=True)
     print(f"LOQO mean objective: {np.mean(loqo):.3f}")
 
-    w_dir, fq_dir = fit([c for c in cases if c["dir"]] or cases)
-    w_con, fq_con = fit([c for c in cases if not c["dir"]] or cases)
+    w_dir, fq_dir, fc_dir = fit([c for c in cases if c["dir"]]
+                                or cases, DIR0)
+    w_con, fq_con, fc_con = fit([c for c in cases if not c["dir"]]
+                                or cases, CON0)
     out = {"set_weights_dir": w_dir, "filter_quantile_dir": fq_dir,
+           "filter_channels_dir": fc_dir,
            "set_weights": w_con, "filter_quantile": fq_con,
+           "filter_channels": fc_con,
            "fitted_on": "eval/truthsets/bridge4h.parquet",
            "loqo_mean": round(float(np.mean(loqo)), 3)}
     p = Path("lake/bench/_set_weights.json")
     p.write_text(json.dumps(out, indent=1))
-    print(f"dir {json.dumps(w_dir)} fq={fq_dir:.2f}")
-    print(f"con {json.dumps(w_con)} fq={fq_con:.2f} -> {p}")
+    print(f"dir {json.dumps(w_dir)} fq={fq_dir:.2f} fc={fc_dir}")
+    print(f"con {json.dumps(w_con)} fq={fq_con:.2f} fc={fc_con}")
 
 
 if __name__ == "__main__":

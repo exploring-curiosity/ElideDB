@@ -310,6 +310,7 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     directional = sq is not None
     weights = {c: 1.0 for c in ch}
     filter_q = 1 / 3
+    fnames = None       # None => legacy: every contrast channel
     from pathlib import Path
     sw = Path(store.dir) / "_set_weights.json"
     try:
@@ -327,6 +328,10 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
                   "filter_quantile_dir" in cfg else "filter_quantile")
             weights = {c: float(cfg[wk].get(c, 1.0)) for c in ch}
             filter_q = float(cfg.get(fk, 1 / 3))
+            ck = ("filter_channels_dir" if directional and
+                  "filter_channels_dir" in cfg else "filter_channels")
+            if ck in cfg:
+                fnames = list(cfg[ck])
         else:
             cfg = json.loads((Path(store.dir)
                               / "_channel_weights.json").read_text())
@@ -358,9 +363,20 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     # knee/obj-boost divergences of the acceptance sprint (fit LOQO
     # 0.21 vs live 0.16) were measured regressions from the live path
     # reshaping what the fit optimized — one code path kills the class.
+    # FITTED VETO AUTHORITY: which channels filter is a per-store
+    # learned artifact, not code. For binding queries this lets conj
+    # act as a hard constraint (each query atom must find its own
+    # frame evidence) instead of a drowned RRF vote — consensus
+    # fusion structurally outvotes a decisive minority channel
+    # (Cormack et al. 2009), and bag-of-concepts encoders cannot
+    # rank binding (Winoground/ARO), so the constraint must prune.
     from .setpath import filter_mask
-    alive = (filter_mask(contrast_ch, list(contrast_ch), filter_q)
-             if contrast_ch else np.ones(len(keys), bool))
+    fsrc = dict(ch)
+    fsrc.update(contrast_ch)
+    if fnames is None:
+        fnames = list(contrast_ch)
+    alive = (filter_mask(fsrc, fnames, filter_q)
+             if fnames else np.ones(len(keys), bool))
     dropped = int((~alive).sum())
 
     idx = np.where(alive)[0]
