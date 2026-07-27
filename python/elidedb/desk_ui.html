@@ -525,19 +525,56 @@ async function selectStore(key, refresh) {
 }
 
 /* overview: identity, coverage timeline, tables */
+function fmtDur(sec) {
+  if (sec == null) return "";
+  if (sec >= 5400) return (sec / 3600).toFixed(1) + " h";
+  if (sec >= 90) return Math.round(sec / 60) + " min";
+  return Math.round(sec) + " s";
+}
 function renderOverview() {
   const s = CUR;
-  const tiles = [
-    {k:"database", v: fmtB(s.db_bytes), hero:true, d:"one directory, standalone"},
-    {k:"media", v: fmtB(s.media_bytes), d:"managed, byte-range decoded"},
-    {k:"tables", v: fmtB(s.bytes), d:`${s.tables.length} Parquet tables`},
-    {k:"rows", v: fmtN(s.rows), d:"all tables"},
-    {k:"span", v: Math.round((s.max_ts - s.min_ts)/1e9) + " s", d:"canonical timeline"},
-    {k:"vectors", v: fmtN(s.windows), d: s.model ? esc(s.model).slice(0,26) : "none"},
-  ];
+  const extentS = Math.round((s.max_ts - s.min_ts) / 1e9);
+  const covS = s.covered_s != null ? Math.round(s.covered_s) : null;
+  const ratio = s.raw_bytes > 0 && s.db_bytes > 0
+    ? s.raw_bytes / s.db_bytes : null;
+  const tiles = [];
+  if (s.raw_bytes > 0)
+    tiles.push({k:"source data", v: fmtB(s.raw_bytes),
+      d:`${s.raw_files} original file${s.raw_files === 1 ? "" : "s"} as ingested`});
+  tiles.push({k:"database", v: fmtB(s.db_bytes), hero:true,
+    d: s.standalone ? "serves without the source"
+                    : "depends on linked media"});
+  if (ratio != null && ratio > 1.05)
+    tiles.push({k:"compression", v: ratio.toFixed(1) + "x",
+      d:"source bytes per database byte", hero:true});
+  tiles.push({k:"media", v: fmtB(s.media_bytes + s.linked_bytes),
+    d: s.linked_bytes > 0 ? "linked from another store"
+                          : "managed, byte-range decoded"});
+  tiles.push({k:"tables", v: fmtB(s.bytes),
+    d:`${s.tables.length} Parquet tables · ${fmtN(s.rows)} rows`});
+  tiles.push({k:"coverage",
+    v: covS != null ? fmtDur(covS) : fmtDur(extentS),
+    d: covS != null && extentS > covS * 1.2
+       ? `recorded content over a ${fmtDur(extentS)} extent`
+       : "recorded content"});
+  tiles.push({k:"vectors", v: fmtN(s.vec_rows),
+    d:`${s.vec_tables} vector table${s.vec_tables === 1 ? "" : "s"}`});
   let h = `<div class="tiles">` + tiles.map(t =>
     `<div class="tile${t.hero?" hero":""}"><div class="k">${t.k}</div>
      <div class="v tnum">${t.v}</div>${t.d?`<div class="d">${t.d}</div>`:""}</div>`).join("") + `</div>`;
+  if (s.raw_missing > 0)
+    h += `<div class="panel"><div class="bd">
+      <span class="pill">source removed</span>
+      <span class="qstat">${s.raw_missing} original source
+      file${s.raw_missing === 1 ? "" : "s"} no longer exist on disk.
+      ${s.standalone ? "The store serves anyway; that is the point." :
+        "This store still depends on linked media."}</span></div></div>`;
+  if (s.linked_bytes > 0)
+    h += `<div class="panel" style="border-color:var(--signal)"><div class="bd">
+      <span class="pill warn">linked media</span>
+      <span class="qstat">${fmtB(s.linked_bytes)} of media is symlinked
+      from another store. Remove the target and this store stops
+      serving frames. Copy the media in to make it standalone.</span></div></div>`;
   if (s.external_bytes > 0)
     h += `<div class="panel" style="border-color:var(--signal)"><div class="bd">
       <span class="pill warn">external media</span>

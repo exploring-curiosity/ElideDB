@@ -41,23 +41,132 @@ def discover():
                     pass
 
 
+def _covered_seconds(db, desc):
+    """Recorded CONTENT time: the union of row-group ts ranges of the
+    frame tables, from parquet footers only. Extent (max minus min) lies
+    on sparse stores; a store holding three hours of episodes spread
+    over three days of wall clock covers three hours, not three days."""
+    import pyarrow.parquet as pq
+    frame_tabs = [d["table"] for d in desc
+                  if d["kind"] == "frame_index" and d["rows"]]
+    if not frame_tabs:
+        frame_tabs = [d["table"] for d in desc
+                      if d["table"] == "frames" and d["rows"]]
+    # exact when available: every ingest commit recorded its fps, and
+    # frame count over fps is the recorded duration regardless of how
+    # the rows pack into row groups
+    total_s = 0.0
+    exact = False
+    for name in frame_tabs:
+        try:
+            for c in db.table(name).history():
+                m = c.get("meta") or {}
+                fps = m.get("fps")
+                if fps and c.get("added_rows"):
+                    total_s += c["added_rows"] / float(fps)
+                    exact = True
+        except Exception:
+            continue
+    if exact:
+        return total_s
+    # episode-organized stores: the episodes table IS the content list
+    if any(d["table"] == "episodes" and d["rows"] for d in desc):
+        try:
+            t = db.table("episodes").scan(columns=["ts", "t1"])
+            a = t.column("ts").to_numpy()
+            b = t.column("t1").to_numpy()
+            return float((b - a).sum() / 1e9)
+        except Exception:
+            pass
+    spans = []
+    for name in frame_tabs:
+        try:
+            st = db.table(name).state()
+            for f in st.files:
+                pf = pq.ParquetFile(db.dir / "tables" / name / f.path)
+                md = pf.metadata
+                names = md.schema.names
+                if "ts" not in names:
+                    continue
+                ti = names.index("ts")
+                for g in range(md.num_row_groups):
+                    s = md.row_group(g).column(ti).statistics
+                    if s and s.min is not None:
+                        spans.append((int(s.min), int(s.max)))
+        except Exception:
+            continue
+    if not spans:
+        return None
+    spans.sort()
+    total, cur_a, cur_b = 0, spans[0][0], spans[0][1]
+    for a, b in spans[1:]:
+        if a > cur_b:
+            total += cur_b - cur_a
+            cur_a, cur_b = a, b
+        else:
+            cur_b = max(cur_b, b)
+    total += cur_b - cur_a
+    return total / 1e9
+
+
+def _raw_source_bytes(db, desc):
+    """Bytes of the ORIGINAL ingested sources, from the ingest metadata
+    each append recorded. This is the honest numerator of the
+    compression story; a missing original is reported as unknown, not
+    guessed."""
+    originals = set()
+    for d in desc:
+        if d["kind"] != "frame_index" and d["table"] != "frames":
+            continue
+        try:
+            for c in db.table(d["table"]).history():
+                o = (c.get("meta") or {}).get("original")
+                if o:
+                    originals.add(o)
+        except Exception:
+            continue
+    known = missing = 0
+    total = 0
+    for o in originals:
+        p = Path(o)
+        if p.exists():
+            total += p.stat().st_size
+            known += 1
+        else:
+            missing += 1
+    return {"bytes": total, "files": known, "missing": missing}
+
+
 def store_summary(key: str):
     db = STORES[key]
     desc = db.describe()
+    ck = ("summary", key,
+          tuple(sorted((d["table"], d["version"]) for d in desc)))
+    if ck in _CACHE:
+        return _CACHE[ck]
     total_rows = sum(d["rows"] for d in desc)
     total_bytes = sum(d["bytes"] for d in desc)
     span_tabs = [d for d in desc if d["rows"] and d["table"] != "centroids"]
     lo = min((d["min_ts"] for d in span_tabs), default=0)
     hi = max((d["max_ts"] for d in span_tabs), default=0)
     emb = next((d for d in desc if d["table"] == "embeddings"), None)
-    # The database size is the STORE DIRECTORY: managed media + parquet
-    # tables + logs. A standalone store carries everything; only stores with
-    # reference-in-place media (copy=False ingest) have external bytes, and
-    # those are flagged separately, never mixed into the database size.
-    media_bytes = sum(p.stat().st_size
-                      for p in (db.dir / "media").glob("*")
-                      if p.is_file()) if (db.dir / "media").is_dir() else 0
-    db_bytes = sum(p.stat().st_size for p in db.dir.rglob("*") if p.is_file())
+    # PHYSICAL directory bytes (lstat): a symlink is a path entry, not
+    # the target's bytes. Media reached through symlinks is counted as
+    # linked_bytes instead, because the store STOPS WORKING if those
+    # targets go away, and the standalone claim must be earned.
+    media_bytes = linked_bytes = 0
+    mdir = db.dir / "media"
+    if mdir.is_dir():
+        for p in mdir.glob("*"):
+            if p.is_symlink():
+                try:
+                    linked_bytes += p.stat().st_size
+                except OSError:
+                    pass
+            elif p.is_file():
+                media_bytes += p.lstat().st_size
+    db_bytes = sum(p.lstat().st_size for p in db.dir.rglob("*")
+                   if p.is_file() and not p.is_symlink())
     external_bytes = 0
     for d in desc:
         if d["kind"] != "frame_index":
@@ -66,17 +175,31 @@ def store_summary(key: str):
         for s in set(t.column("source").to_pylist()):
             if not s.startswith("@") and Path(s).exists():
                 external_bytes += Path(s).stat().st_size
-    return {
+    raw = _raw_source_bytes(db, desc)
+    vec_rows = sum(d["rows"] for d in desc if d["kind"] == "embeddings")
+    vec_tables = sum(1 for d in desc
+                     if d["kind"] == "embeddings" and d["rows"])
+    out = {
         "key": key, "name": db.name, "path": str(db.dir),
         "tables": desc, "rows": total_rows, "bytes": total_bytes,
         "db_bytes": db_bytes, "media_bytes": media_bytes,
         "emb_bytes": emb["bytes"] if emb else 0,
         "external_bytes": external_bytes,
+        "linked_bytes": linked_bytes,
+        "standalone": external_bytes == 0 and linked_bytes == 0,
+        "raw_bytes": raw["bytes"], "raw_files": raw["files"],
+        "raw_missing": raw["missing"],
+        "covered_s": _covered_seconds(db, desc),
         "min_ts": lo, "max_ts": hi,
         "windows": emb["rows"] if emb else 0,
+        "vec_rows": vec_rows, "vec_tables": vec_tables,
         "model": (emb or {}).get("meta", {}).get("model", ""),
         "display": db.meta.get("display", {}),
     }
+    if len(_CACHE) > 32:
+        _CACHE.clear()
+    _CACHE[ck] = out
+    return out
 
 
 def api_storage(key: str, table: str):
