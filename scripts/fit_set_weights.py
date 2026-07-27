@@ -26,7 +26,7 @@ from elidedb import Store                                    # noqa: E402
 from elidedb.fusion import rrf, variant_max                  # noqa: E402
 from elidedb.setpath import confidence_cut, filter_mask      # noqa: E402
 
-CH = ["pe", "act", "vid", "obj", "mot", "prf", "sig2", "conj"]
+CH = ["pe", "act", "vid", "obj", "mot", "prf", "sig2", "conj", "iv2"]
 K = 10
 
 
@@ -93,6 +93,18 @@ def capture(db, keys, text):
     else:
         out["mot"] = np.full(len(keys), np.nan)
         out["prf"] = np.full(len(keys), np.nan)
+    try:
+        # NaN abstention when the store has no iv2_vectors — matches
+        # live's missing-channel behavior (unlike vocab, iv2 may
+        # legitimately be absent on an uningested store)
+        from elidedb.iv2 import iv2_lookup
+        vs = []
+        for vt in variants:
+            look, _ = iv2_lookup(db, vt)
+            vs.append(np.array([look(*k) for k in keys]))
+        out["iv2"] = variant_max(vs)
+    except Exception:
+        out["iv2"] = np.full(len(keys), np.nan)
     return out, sq is not None
 
 

@@ -242,6 +242,18 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     except Exception:
         pass
     try:
+        # iv2: VIDEO-native text alignment (InternVideo2-Stage2 1B,
+        # temporal modeling the frame-pooled channels lack) — the
+        # 4 frames pass through the encoder together
+        from .iv2 import iv2_lookup
+        vs = []
+        for vtext in variants:
+            look, _ = iv2_lookup(store, vtext)
+            vs.append(np.array([look(*k) for k in keys]))
+        ch["iv2"] = variant_max(vs)
+    except Exception:
+        pass
+    try:
         from .vid import vid_lookup
         vs = []
         for vtext in variants:
