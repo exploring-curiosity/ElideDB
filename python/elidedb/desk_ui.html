@@ -3,356 +3,344 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ElideDB Desk</title>
+<title>ElideDB</title>
 <style>
+  /* ElideDB console: a precision instrument, not a demo.
+     Monospace-forward identity, paper and graphite surfaces, one
+     working accent. Chart hues are the validated categorical set. */
   :root {
-    --ground:#f4f6f7; --panel:#ffffff; --panel-2:#eceff1; --rail:#eef1f3;
-    --ink:#16202a; --muted:#5a6875; --faint:#8b98a5;
-    --line:#d5dbe0; --grid:#e3e8ec;
-    --accent:#177e6e; --accent-soft:#177e6e1c;
-    --sensor-bar:#7d8fa3; --code-bg:#eef1f3;
-    --shadow:0 10px 30px rgba(20,30,40,.12);
+    --ground:#f3f2ee; --panel:#fcfbf9; --panel-2:#eceae4; --rail:#eae8e2;
+    --ink:#191d21; --muted:#565e66; --faint:#8a9098;
+    --line:#d8d5cd; --hairline:#e5e2da; --grid:#e9e6df;
+    --accent:#0f6f63; --accent-ink:#0b5c52; --accent-soft:rgba(15,111,99,.12);
+    --signal:#b4500f; --code-bg:#efede7;
+    --shadow:0 14px 40px rgba(24,28,32,.14);
   }
   @media (prefers-color-scheme: dark) { :root {
-    --ground:#10151a; --panel:#161d24; --panel-2:#1c242d; --rail:#0d1216;
-    --ink:#e9eef3; --muted:#93a1ae; --faint:#6b7885;
-    --line:#26303a; --grid:#202a34;
-    --accent:#45b8a4; --accent-soft:#45b8a422;
-    --sensor-bar:#55677a; --code-bg:#0d1216;
-    --shadow:0 12px 34px rgba(0,0,0,.5);
+    --ground:#131518; --panel:#1a1d21; --panel-2:#22262b; --rail:#0e1013;
+    --ink:#e7e9ea; --muted:#9aa3ab; --faint:#697077;
+    --line:#2c3238; --hairline:#24292e; --grid:#22272c;
+    --accent:#3fb9a5; --accent-ink:#5accb9; --accent-soft:rgba(63,185,165,.14);
+    --signal:#e8763d; --code-bg:#101317;
+    --shadow:0 18px 48px rgba(0,0,0,.55);
   }}
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; }
   body {
     display:flex; background:var(--ground); color:var(--ink);
-    font:13.5px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font:13px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     overflow:hidden;
+    -webkit-font-smoothing:antialiased;
   }
-  .mono,code,.tnum { font-family:ui-monospace,"SF Mono",Menlo,monospace; }
   .tnum { font-variant-numeric:tabular-nums; }
+  ::selection { background:var(--accent-soft); }
 
-  /* ── left rail: the store list (the Atlas cluster rail) ─────────────── */
+  /* micro label: the one recurring signature */
+  .lbl { font-size:9.5px; letter-spacing:.16em; text-transform:uppercase;
+         color:var(--faint); font-weight:600; }
+
+  /* left rail */
   aside {
-    width:250px; flex:none; background:var(--rail);
+    width:252px; flex:none; background:var(--rail);
     border-right:1px solid var(--line);
     display:flex; flex-direction:column;
   }
-  .brand { padding:16px 16px 12px; border-bottom:1px solid var(--line); }
-  .brand b { font-family:ui-monospace,Menlo,monospace; letter-spacing:.08em; font-size:14px; }
-  .brand b::before { content:"▮"; color:var(--accent); margin-right:7px; }
-  .brand div { color:var(--faint); font-size:11px; margin-top:2px; }
-  .stores { flex:1; overflow-y:auto; padding:10px; }
+  .brand { padding:18px 16px 14px; border-bottom:1px solid var(--line); }
+  .brand b { letter-spacing:.22em; font-size:13px; font-weight:700; }
+  .brand b i { font-style:normal; color:var(--accent); }
+  .brand .sub { color:var(--faint); font-size:10px; margin-top:3px;
+                letter-spacing:.05em; }
+  .rail-h { padding:14px 16px 6px; }
+  .stores { flex:1; overflow-y:auto; padding:4px 10px 10px; }
   .store-card {
-    padding:11px 12px; border-radius:9px; cursor:pointer;
-    border:1px solid transparent; margin-bottom:6px;
+    padding:10px 12px; border-radius:6px; cursor:pointer;
+    border:1px solid transparent; margin-bottom:5px;
   }
   .store-card:hover { background:var(--panel); }
-  .store-card.on { background:var(--panel); border-color:var(--accent); }
-  .store-card .n { font-weight:650; font-size:13.5px; }
-  .store-card .m { color:var(--faint); font-size:11.5px; margin-top:2px; }
-  .railfoot { padding:10px 16px; color:var(--faint); font-size:11px; border-top:1px solid var(--line); }
+  .store-card.on { background:var(--panel); border-color:var(--line);
+                   box-shadow:inset 3px 0 0 var(--accent); }
+  .store-card .n { font-weight:700; font-size:12.5px; letter-spacing:.02em; }
+  .store-card .m { color:var(--faint); font-size:10.5px; margin-top:3px; }
+  .railfoot { padding:12px 16px; color:var(--faint); font-size:10px;
+              border-top:1px solid var(--line); line-height:1.7; }
 
-  /* ── main column ────────────────────────────────────────────────────── */
+  /* main column */
   .main { flex:1; display:flex; flex-direction:column; min-width:0; }
   .topbar {
-    display:flex; align-items:center; gap:8px; padding:10px 22px;
-    border-bottom:1px solid var(--line); background:var(--ground); flex-wrap:wrap;
+    display:flex; align-items:center; gap:18px; padding:0 22px;
+    border-bottom:1px solid var(--line); background:var(--ground);
+    min-height:52px; flex-wrap:wrap;
   }
-  .topbar h1 { font-size:16px; margin:0 14px 0 0; font-weight:700; }
-  .seg { display:flex; gap:2px; background:var(--panel-2); padding:3px; border-radius:8px; }
-  .seg button {
+  .topbar h1 { font-size:14px; margin:0; font-weight:700;
+               letter-spacing:.03em; }
+  nav#views { display:flex; gap:2px; align-self:stretch; }
+  nav#views button {
     border:0; background:transparent; color:var(--muted); cursor:pointer;
-    font:600 12px/1 -apple-system,sans-serif; padding:6px 13px; border-radius:6px;
+    font:600 10.5px/1 ui-monospace, Menlo, monospace;
+    letter-spacing:.14em; padding:0 13px; border-bottom:2px solid transparent;
+    text-transform:uppercase;
   }
-  .seg button.on { background:var(--panel); color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.15); }
-  .seg button:focus-visible { outline:2px solid var(--accent); }
-  .content { flex:1; overflow-y:auto; padding:20px 22px; }
+  nav#views button:hover { color:var(--ink); }
+  nav#views button.on { color:var(--ink); border-bottom-color:var(--accent); }
+  nav#views button:focus-visible { outline:2px solid var(--accent); }
+  .topstat { margin-left:auto; color:var(--faint); font-size:11px; }
+  .content { flex:1; overflow-y:auto; padding:22px 24px 40px; }
   .view { display:none; } .view.on { display:block; }
 
-  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin-bottom:16px; }
-  .tile { background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:11px 13px 9px; }
-  .tile .k { font-size:10px; letter-spacing:.11em; text-transform:uppercase; color:var(--faint);
-             font-weight:600; font-family:ui-monospace,Menlo,monospace; margin-bottom:4px; }
-  .tile .v { font-size:20px; font-weight:700; }
-  .tile .v small { font-size:12px; color:var(--muted); font-weight:500; margin-left:2px; }
-  .tile.hero .v { color:var(--accent); }
+  /* stat tiles */
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+           gap:10px; margin-bottom:18px; }
+  .tile { background:var(--panel); border:1px solid var(--line);
+          border-radius:6px; padding:12px 14px 10px; }
+  .tile .k { font-size:9.5px; letter-spacing:.16em; text-transform:uppercase;
+             color:var(--faint); font-weight:600; margin-bottom:6px; }
+  .tile .v { font-size:21px; font-weight:700; letter-spacing:-.01em; }
+  .tile .v small { font-size:11px; color:var(--muted); font-weight:500; }
+  .tile .d { font-size:10.5px; color:var(--muted); margin-top:3px; }
+  .tile.hero { border-color:var(--accent); }
+  .tile.hero .v { color:var(--accent-ink); }
 
-  .panel { background:var(--panel); border:1px solid var(--line); border-radius:11px;
-           padding:16px 18px; margin-bottom:16px; }
-  .panel h2 { margin:0 0 3px; font-size:14px; }
-  .panel .note { color:var(--muted); font-size:12px; margin:0 0 12px; max-width:76ch; }
+  /* panels: engineering sheet header, hairline body */
+  .panel { background:var(--panel); border:1px solid var(--line);
+           border-radius:6px; padding:0; margin-bottom:16px; overflow:hidden; }
+  .panel > .hd { display:flex; align-items:baseline; gap:12px;
+    padding:11px 16px 9px; border-bottom:1px solid var(--hairline); }
+  .panel > .hd h2 { margin:0; font-size:11px; letter-spacing:.16em;
+    text-transform:uppercase; font-weight:700; }
+  .panel > .hd .note { color:var(--faint); font-size:10.5px; }
+  .panel > .bd { padding:14px 16px 16px; }
 
-  table { border-collapse:collapse; width:100%; font-size:12.5px; }
-  th { text-align:left; font-size:10px; letter-spacing:.1em; text-transform:uppercase;
-       color:var(--faint); padding:5px 12px 5px 0; border-bottom:1px solid var(--line);
-       font-family:ui-monospace,Menlo,monospace; }
-  td { padding:6px 12px 6px 0; border-bottom:1px solid var(--grid); color:var(--muted); }
+  table { border-collapse:collapse; width:100%; font-size:12px; }
+  th { text-align:left; font-size:9.5px; letter-spacing:.14em;
+       text-transform:uppercase; color:var(--faint); font-weight:600;
+       padding:5px 14px 5px 0; border-bottom:1px solid var(--line); }
+  td { padding:5.5px 14px 5.5px 0; border-bottom:1px solid var(--grid);
+       color:var(--muted); }
   td:first-child { color:var(--ink); }
   td.r,th.r { text-align:right; }
   tr:last-child td { border-bottom:0; }
   .tablewrap { overflow-x:auto; }
-  .badge { display:inline-block; font-size:10px; padding:1px 8px; border-radius:999px;
-           border:1px solid var(--line); color:var(--muted);
-           font-family:ui-monospace,Menlo,monospace; }
+  .badge { display:inline-block; font-size:9px; padding:1px 7px;
+           border-radius:3px; border:1px solid var(--line);
+           color:var(--muted); letter-spacing:.08em; text-transform:uppercase; }
+  .pill { font-size:9.5px; padding:1.5px 8px; border-radius:3px;
+          border:1px solid var(--line); color:var(--muted); }
+  .pill.ok { color:var(--accent-ink); border-color:var(--accent); }
+  .pill.warn { color:var(--signal); border-color:var(--signal); }
+
+  /* charts */
+  .chart-tip { position:fixed; z-index:60; pointer-events:none; display:none;
+    background:var(--panel); border:1px solid var(--line); border-radius:4px;
+    box-shadow:var(--shadow); padding:6px 9px; font-size:10.5px;
+    color:var(--muted); max-width:280px; }
+  .chart-tip b { color:var(--ink); display:block; font-size:11px; }
+  .bar-row { display:grid; grid-template-columns:170px 1fr 92px; gap:12px;
+             align-items:center; padding:3px 0; }
+  .bar-row .id { font-size:11.5px; overflow:hidden; text-overflow:ellipsis;
+                 white-space:nowrap; }
+  .bar-track { height:14px; background:var(--panel-2); border-radius:3px;
+               position:relative; }
+  .bar-fill { position:absolute; top:2px; bottom:2px; left:0;
+              background:var(--accent); border-radius:2px; min-width:2px; }
+  .bar-fill.dim { opacity:.35; }
+  .bar-val { font-size:10.5px; color:var(--faint); text-align:right; }
+  .heat-row { display:grid; grid-template-columns:170px 1fr 92px; gap:12px;
+              align-items:center; padding:2.5px 0; }
+  .heat-strip { display:flex; height:13px; border-radius:3px; overflow:hidden;
+                background:var(--panel-2); }
+  .heat-cell { flex:1; }
+  .axis { display:flex; justify-content:space-between; color:var(--faint);
+          font-size:9.5px; margin-top:6px; }
+  .axis.indent { padding-left:182px; padding-right:104px; }
 
   /* timeline */
-  .tl-row { display:grid; grid-template-columns:220px 1fr 120px; gap:12px; align-items:center; padding:2.5px 0; }
-  .tl-row .id { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .tl-row .meta { font-size:11px; color:var(--faint); text-align:right; }
-  .tl-track { position:relative; height:13px; background:var(--panel-2); border-radius:4px; }
-  .tl-bar { position:absolute; top:2px; bottom:2px; border-radius:3px; min-width:3px; }
-  .tl-bar.frame_index { background:var(--accent); }
-  .tl-bar.timeseries { background:var(--sensor-bar); }
-  .tl-bar.embeddings,.tl-bar.centroids { background:#9085e9; }
-  .tl-axis { display:flex; justify-content:space-between; color:var(--faint); font-size:10.5px;
-             margin-top:6px; padding-left:232px; padding-right:132px; }
+  .tl-bar { position:absolute; top:2px; bottom:2px; border-radius:2px;
+            min-width:3px; }
+
+  /* forms */
+  .seg { display:inline-flex; gap:2px; background:var(--panel-2);
+         padding:3px; border-radius:5px; flex-wrap:wrap; }
+  .seg button { border:0; background:transparent; color:var(--muted);
+    cursor:pointer; font:600 10.5px/1 ui-monospace, Menlo, monospace;
+    letter-spacing:.08em; padding:6px 12px; border-radius:3px; }
+  .seg button.on { background:var(--panel); color:var(--ink);
+                   box-shadow:0 1px 2px rgba(0,0,0,.14); }
+  textarea,input[type=text] {
+    width:100%; background:var(--code-bg); color:var(--ink);
+    border:1px solid var(--line); border-radius:5px; padding:10px 12px;
+    font:12.5px/1.5 ui-monospace, Menlo, monospace; resize:vertical;
+  }
+  textarea:focus,input:focus,select:focus { outline:2px solid var(--accent);
+    border-color:transparent; }
+  select,input[type=number] { background:var(--code-bg); color:var(--ink);
+    border:1px solid var(--line); border-radius:4px; padding:6px 8px;
+    font:11.5px ui-monospace, Menlo, monospace; }
+  .hint { color:var(--faint); font-size:10.5px; margin:7px 2px 0;
+          line-height:1.6; }
+  .ctrl { display:flex; flex-wrap:wrap; gap:14px; margin-top:12px;
+          align-items:center; }
+  .ctrl label { display:flex; align-items:center; gap:6px; font-size:10.5px;
+    color:var(--muted); font-weight:600; letter-spacing:.04em;
+    text-transform:uppercase; }
+  .ctrl input[type=number] { width:70px; }
+  .runrow { display:flex; gap:12px; align-items:center; margin-top:14px; }
+  button.run { background:var(--accent); color:#fff; border:0;
+    border-radius:5px; font:700 11px/1 ui-monospace, Menlo, monospace;
+    letter-spacing:.14em; text-transform:uppercase; padding:10px 22px;
+    cursor:pointer; }
+  button.run:hover { filter:brightness(1.07); }
+  .btn { background:var(--panel-2); border:1px solid var(--line);
+    color:var(--ink); border-radius:4px; padding:6px 13px; cursor:pointer;
+    font:600 11px ui-monospace, Menlo, monospace; }
+  .btn:hover { border-color:var(--accent); }
+  .btn.danger { color:var(--signal); }
+  .btn.danger:hover { border-color:var(--signal); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .qstat { color:var(--faint); font-size:11px; }
+  .err { color:var(--signal); font-size:11.5px; margin-top:10px;
+         white-space:pre-wrap; }
+  .empty { color:var(--faint); padding:36px; text-align:center;
+           font-size:11.5px; }
+
+  /* result grid */
+  .hitgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
+             gap:12px; margin-top:14px; }
+  .hit { background:var(--panel-2); border-radius:5px; overflow:hidden;
+         border:1px solid var(--line); cursor:pointer; position:relative; }
+  .hit img { width:100%; aspect-ratio:4/3; object-fit:cover; display:block;
+             background:var(--grid); }
+  .hit .m { padding:7px 10px; font-size:10.5px; color:var(--muted); }
+  .hit .m b { color:var(--ink); }
+  .hit .play { position:absolute; inset:0; display:flex; align-items:center;
+    justify-content:center; aspect-ratio:4/3; opacity:0; transition:opacity .12s;
+    pointer-events:none; }
+  .hit:hover .play { opacity:1; }
+  .hit .play span { width:42px; height:42px; border-radius:50%;
+    background:rgba(12,16,20,.68); display:flex; align-items:center;
+    justify-content:center; }
+  .hit .play svg { width:15px; height:15px; margin-left:2px; fill:#fff; }
+
+  /* index and maintenance rows */
+  .ixrow { display:flex; align-items:center; gap:12px; padding:8px 0;
+    border-bottom:1px solid var(--grid); font-size:12px; }
+  .ixrow:last-child { border-bottom:0; }
+  .ixrow .grow { flex:1; }
 
   /* map */
   .mapgrid { display:grid; grid-template-columns:1fr 230px; gap:16px; }
   .canvasbox { position:relative; }
-  canvas.viz { width:100%; display:block; border-radius:8px; background:var(--panel-2); cursor:crosshair; }
-  .legend { font-size:12px; }
-  .legend h3 { font-size:10px; letter-spacing:.11em; text-transform:uppercase; color:var(--faint);
-               margin:0 0 6px; font-family:ui-monospace,Menlo,monospace; }
-  .legend .li { display:flex; align-items:center; gap:7px; padding:2px 0; color:var(--muted); }
+  canvas.viz { width:100%; display:block; border-radius:5px;
+               background:var(--panel-2); cursor:crosshair; }
+  .legend { font-size:11.5px; }
+  .legend h3 { font-size:9.5px; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--faint); margin:0 0 6px; font-weight:600; }
+  .legend .li { display:flex; align-items:center; gap:7px; padding:2px 0;
+                color:var(--muted); }
   .legend .li i { width:9px; height:9px; border-radius:50%; flex:none; }
-  .legend .li.noise i { background:transparent; border:1.5px solid var(--faint); }
+  .legend .li.noise i { background:transparent;
+                        border:1.5px solid var(--faint); }
   .legend .cnt { margin-left:auto; color:var(--faint); }
   .hovercard { position:absolute; z-index:20; pointer-events:none; width:190px;
-               background:var(--panel); border:1px solid var(--line); border-radius:10px;
-               box-shadow:var(--shadow); overflow:hidden; display:none; }
+    background:var(--panel); border:1px solid var(--line); border-radius:6px;
+    box-shadow:var(--shadow); overflow:hidden; display:none; }
   .hovercard .ph { width:190px; height:120px; background:var(--panel-2);
-                   display:flex; align-items:center; justify-content:center; color:var(--faint); font-size:11px; }
+    display:flex; align-items:center; justify-content:center;
+    color:var(--faint); font-size:10.5px; }
   .hovercard img { width:100%; display:block; }
-  .hovercard .m { padding:7px 10px; font-size:11px; color:var(--muted); }
-  .hovercard .m b { color:var(--ink); display:block; font-size:11.5px; }
+  .hovercard .m { padding:7px 10px; font-size:10.5px; color:var(--muted); }
+  .hovercard .m b { color:var(--ink); display:block; font-size:11px; }
 
-  /* query console */
-  .qmodes { margin-bottom:12px; }
-  textarea,input[type=text] {
-    width:100%; background:var(--code-bg); color:var(--ink);
-    border:1px solid var(--line); border-radius:8px; padding:10px 12px;
-    font:12.5px/1.5 ui-monospace,Menlo,monospace; resize:vertical;
-  }
-  textarea:focus,input:focus,select:focus { outline:2px solid var(--accent); border-color:transparent; }
-  select { background:var(--code-bg); color:var(--ink); border:1px solid var(--line);
-    border-radius:6px; padding:6px 8px; font:12px ui-monospace,Menlo,monospace; }
-  .hint2 { color:var(--faint); font-size:11.5px; margin:7px 2px 0; line-height:1.5; }
-  .hint2 b { color:var(--muted); font-family:ui-monospace,Menlo,monospace; }
-  .ctrlgrid { display:flex; flex-wrap:wrap; gap:14px; margin-top:12px; align-items:center; }
-  .ctrlgrid label { display:flex; align-items:center; gap:6px; font-size:11.5px;
-    color:var(--muted); font-weight:600; }
-  .ctrlgrid input[type=number] { width:64px; }
-  .ctrlgrid input[type=range] { width:120px; accent-color:var(--accent); }
-  /* index / maintenance cards */
-  .ixrow { display:flex; align-items:center; gap:12px; padding:9px 0;
-    border-bottom:1px solid var(--grid); font-size:13px; }
-  .ixrow:last-child { border-bottom:0; }
-  .ixrow .grow { flex:1; }
-  .btn { background:var(--panel-2); border:1px solid var(--line); color:var(--ink);
-    border-radius:7px; padding:6px 13px; cursor:pointer; font:600 12px -apple-system,sans-serif; }
-  .btn:hover { border-color:var(--accent); }
-  .btn.danger { color:#e66767; }
-  .btn.danger:hover { border-color:#e66767; }
-  .btn:disabled { opacity:.5; cursor:default; }
-  .pill { font-size:10px; padding:1px 8px; border-radius:999px; border:1px solid var(--line);
-    color:var(--muted); font-family:ui-monospace,Menlo,monospace; }
-  .pill.warn { color:#c98500; border-color:#c98500; }
-  .pill.ok { color:var(--accent); border-color:var(--accent); }
-  .runrow { display:flex; gap:10px; align-items:center; margin-top:14px; }
-  button.run {
-    background:var(--accent); color:#fff; border:0; border-radius:8px;
-    font:600 13px/1 -apple-system,sans-serif; padding:9px 20px; cursor:pointer;
-  }
-  button.run:hover { filter:brightness(1.08); }
-  .qstat { color:var(--faint); font-size:11.5px; }
-  .hitgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; margin-top:14px; }
-  .hit { background:var(--panel-2); border-radius:9px; overflow:hidden; border:1px solid var(--line); }
-  .hit img { width:100%; aspect-ratio:4/3; object-fit:cover; display:block; background:var(--grid); }
-  .hit .m { padding:7px 10px; font-size:11px; color:var(--muted); }
-  .hit .m b { color:var(--ink); }
-  .err { color:#e66767; font-size:12px; margin-top:10px; white-space:pre-wrap; }
-  .empty { color:var(--faint); padding:40px; text-align:center; }
-  .hit { cursor:pointer; position:relative; }
-  .hit .play {
-    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
-    aspect-ratio:4/3; opacity:0; transition:opacity .12s; pointer-events:none;
-  }
-  .hit:hover .play { opacity:1; }
-  .hit .play span {
-    width:44px; height:44px; border-radius:50%; background:rgba(10,14,18,.65);
-    color:#fff; display:flex; align-items:center; justify-content:center;
-    font-size:17px; padding-left:3px; backdrop-filter:blur(2px);
-  }
-
-  /* player modal */
-  .player-back {
-    position:fixed; inset:0; background:rgba(6,10,14,.72); z-index:100;
-    display:none; align-items:center; justify-content:center; backdrop-filter:blur(3px);
-  }
+  /* player */
+  .player-back { position:fixed; inset:0; background:rgba(8,10,13,.72);
+    z-index:100; display:none; align-items:center; justify-content:center;
+    backdrop-filter:blur(3px); }
   .player-back.on { display:flex; }
-  .player {
-    width:min(760px, 92vw); background:var(--panel); border:1px solid var(--line);
-    border-radius:14px; box-shadow:var(--shadow); overflow:hidden;
-  }
-  .player video { width:100%; display:block; background:#000; min-height:280px; }
-  .player .loading { height:340px; display:flex; align-items:center; justify-content:center;
-                     color:var(--faint); font-size:13px; gap:10px; }
-  .spin { width:16px; height:16px; border:2px solid var(--line); border-top-color:var(--accent);
-          border-radius:50%; animation:spin .8s linear infinite; }
+  .player { width:min(760px, 92vw); background:var(--panel);
+    border:1px solid var(--line); border-radius:8px; box-shadow:var(--shadow);
+    overflow:hidden; }
+  .player video { width:100%; display:block; background:#000;
+                  min-height:280px; }
+  .player .loading { height:340px; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; color:var(--faint);
+    font-size:12px; gap:10px; }
+  .spin { width:16px; height:16px; border:2px solid var(--line);
+    border-top-color:var(--accent); border-radius:50%;
+    animation:spin .8s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spin { animation:none; } }
-  .player .bar { display:flex; align-items:center; gap:12px; padding:10px 14px; }
-  .player .bar b { font-size:13px; }
-  .player .bar .t { color:var(--faint); font-size:12px; }
-  .player .bar button {
-    margin-left:auto; background:var(--panel-2); border:1px solid var(--line);
-    color:var(--muted); border-radius:7px; padding:6px 12px; cursor:pointer; font-size:12px;
-  }
+  .player .bar { display:flex; align-items:center; gap:12px;
+                 padding:10px 14px; }
+  .player .bar b { font-size:12px; }
+  .player .bar .t { color:var(--faint); font-size:11px; }
+  .player .bar button { margin-left:auto; background:var(--panel-2);
+    border:1px solid var(--line); color:var(--muted); border-radius:4px;
+    padding:6px 12px; cursor:pointer; font-size:11px; }
+  .player .bar button + button { margin-left:0; }
   .player .bar button:hover { color:var(--ink); }
 </style>
 </head>
 <body>
 <aside>
-  <div class="brand"><b>ELIDEDB</b><div>desk — the best read is the read elided</div></div>
+  <div class="brand"><b>ELIDE<i>DB</i></b>
+    <div class="sub">timestamp-native multimodal store</div></div>
+  <div class="rail-h lbl">Stores</div>
   <div class="stores" id="stores"></div>
-  <div class="railfoot">every table is Parquet under a<br>transaction log · read-only view</div>
+  <div class="railfoot">Parquet tables under a transaction log.<br>
+    Reads are byte-range and counted.</div>
 </aside>
 
 <div class="main">
   <div class="topbar">
-    <h1 id="store-title">—</h1>
-    <div class="seg" id="views" role="tablist">
+    <h1 id="store-title"></h1>
+    <nav id="views" role="tablist">
       <button data-v="overview" class="on">Overview</button>
-      <button data-v="timeline">Timeline</button>
+      <button data-v="analytics">Analytics</button>
+      <button data-v="search">Search</button>
       <button data-v="data">Data</button>
       <button data-v="storage">Storage</button>
       <button data-v="arch">Architecture</button>
-      <button data-v="map">Semantic map</button>
+      <button data-v="map">Map</button>
       <button data-v="geo" id="geo-btn" style="display:none">Geo</button>
-      <button data-v="query">Query</button>
-    </div>
-    <span class="qstat tnum" id="store-sub" style="margin-left:auto"></span>
+      <button data-v="ops">Ops</button>
+    </nav>
+    <span class="topstat tnum" id="store-sub"></span>
   </div>
   <div class="content">
     <div class="view on" id="v-overview"></div>
-    <div class="view" id="v-timeline"></div>
-    <div class="view" id="v-storage">
+    <div class="view" id="v-analytics"></div>
+
+    <div class="view" id="v-search">
       <div class="panel">
-        <h2>Storage — the Parquet format, visible</h2>
-        <p class="note">A table is its transaction log folded over plain Parquet files.
-          Each file is drawn as its row groups (width ∝ compressed bytes) — the exact units
-          zone-map pruning reads or skips. Pick a table:</p>
-        <div class="seg qmodes" id="storage-tables" style="flex-wrap:wrap"></div>
-        <div id="storage-out"></div>
-      </div>
-    </div>
-    <div class="view" id="v-arch">
-      <div id="arch-wrap">
-        <svg id="arch-svg"><g id="arch-cam"></g></svg>
-        <div id="arch-title"></div>
-        <div id="arch-detail"></div>
-        <div id="arch-hint">drag to pan · wheel to zoom · drag blocks ·
-          click a block for its full schema · double-click to reset</div>
-      </div>
-    </div>
-    <div class="view" id="v-map">
-      <div class="panel">
-        <h2>Semantic map</h2>
-        <p class="note">Each dot is one embedded window (UMAP layout, visualization only —
-          retrieval ranks in full embedding space). Hover any point: its frame is decoded
-          live through the byte-range path. <b>Click a point to play the clip</b> (with the
-          sensor's microphone track where the store has one).</p>
-        <div class="mapgrid">
-          <div class="canvasbox">
-            <canvas id="scatter" class="viz" height="470"></canvas>
-            <div class="hovercard" id="card"><div class="ph">decoding…</div><div class="m"></div></div>
-          </div>
-          <div class="legend" id="legend"></div>
-        </div>
-      </div>
-    </div>
-    <div class="view" id="v-geo">
-      <div class="panel"><h2>Geo trace</h2>
-        <p class="note" id="geo-note"></p>
-        <canvas id="route" class="viz" height="420" style="cursor:default"></canvas></div>
-    </div>
-    <div class="view" id="v-data"></div>
-    <div class="view" id="v-query">
-      <div class="panel">
-        <h2>Query console</h2>
-        <div class="seg qmodes" id="qmodes">
-          <button data-q="context" class="on">Contextual</button>
+        <div class="hd"><h2>Search</h2>
+          <span class="note">every result is a playable clip</span></div>
+        <div class="bd">
+        <div class="seg" id="qmodes">
+          <button data-q="set" class="on">Event</button>
           <button data-q="predicate">Predicate</button>
           <button data-q="sql">SQL</button>
           <button data-q="window">Window</button>
         </div>
 
-        <!-- ── SEMANTIC (internal; superseded by Contextual) ── -->
-        <div id="q-text" style="display:none">
-          <input type="text" id="text-input"
-            placeholder='describe a moment… try  two people AND a laptop  NOT a phone'>
-          <div class="hint2">
-            <b>AND</b> = every term must match (a clip with people but no laptop is rejected) ·
-            <b>NOT</b> / <b>-term</b> = exclude · plain text = classic semantic search
+        <div id="q-set" style="margin-top:12px">
+          <input type="text" id="set-input" placeholder="Describe an event">
+          <div class="hint">
+            Returns up to K clips and only clips the index is confident in;
+            a query the corpus cannot answer returns nothing. Scores fuse
+            every channel this store carries.
           </div>
-          <div class="ctrlgrid">
-            <label>Precision
-              <select id="floor-mode">
-                <option value="none">rank all</option>
-                <option value="percentile" selected>top percentile</option>
-                <option value="min_score">min cosine</option>
-              </select></label>
-            <label id="floor-wrap">keep top
-              <input type="range" id="floor" min="50" max="99" value="90">
-              <span id="floor-val" class="tnum">10%</span></label>
-            <label>Vector tier
-              <select id="method">
-                <option value="auto">auto</option>
-                <option value="exact">exact</option>
-                <option value="hnsw">HNSW</option>
-                <option value="ivfpq">IVF-PQ</option>
-              </select></label>
+          <div class="ctrl">
             <label>Max results
-              <input type="number" id="k-input" value="12" min="1" max="48"></label>
-            <label title="A vision model looks at each candidate frame and judges whether the described situation is actually happening — catches relations embeddings miss (slower).">
-              <input type="checkbox" id="rerank"> Verify with vision model</label>
-          </div>
-          <div class="ctrlgrid">
-            <label>Stream <select id="stream-filter"><option value="">any</option></select></label>
-            <label>From +s <input type="number" id="hyb-t0" placeholder="any" style="width:90px"></label>
-            <label>To +s <input type="number" id="hyb-t1" placeholder="any" style="width:90px"></label>
+              <input type="number" id="set-k" value="10" min="1" max="24"></label>
+            <label title="Verify each candidate with the geometry tracker: the named objects must be present, move, and satisfy the stated relation. Slower.">
+              <input type="checkbox" id="set-audit"> Geometry audit</label>
+            <label>Stream <select id="set-stream"><option value="">any</option></select></label>
+            <label>From s <input type="number" id="set-t0"></label>
+            <label>To s <input type="number" id="set-t1"></label>
           </div>
         </div>
 
-        <!-- ── CONTEXTUAL: the search. recall proposes, a VLM verifies ── -->
-        <div id="q-context">
-          <input type="text" id="ctx-input"
-            placeholder='describe what is happening… try  a person putting a cup in the sink'>
-          <div class="hint2">
-            Describe the <b>event</b>, not just the objects — e.g.
-            <i>put a green object in the drawer and close it</i>. Candidates
-            come from every index the store has; each finalist clip is judged
-            by a vision model reading its start and end frames ("did this
-            happen in between?"). Verdicts are cached, so repeated and nearby
-            queries get faster.
-          </div>
-          <div class="ctrlgrid">
-            <label>Max results
-              <input type="number" id="ctx-k" value="8" min="1" max="24"></label>
-            <label title="Run the SAM-3 geometric binding audit over the set (deterministic, VLM-free). Slower; prunes clips whose objects don't satisfy the query's spatial relation.">
-              <input type="checkbox" id="ctx-rerank"> Deep verify (geometry)</label>
-          </div>
-          <div class="ctrlgrid">
-            <label>Stream <select id="ctx-stream"><option value="">any</option></select></label>
-            <label>From +s <input type="number" id="ctx-t0" placeholder="any" style="width:90px"></label>
-            <label>To +s <input type="number" id="ctx-t1" placeholder="any" style="width:90px"></label>
-          </div>
-        </div>
-
-        <!-- ── PREDICATE (B+ / zone-map pushdown on a column) ── -->
-        <div id="q-predicate" style="display:none">
-          <div class="ctrlgrid">
+        <div id="q-predicate" style="display:none; margin-top:12px">
+          <div class="ctrl" style="margin-top:0">
             <label>Table <select id="pred-table"></select></label>
             <label>Column <select id="pred-col"></select></label>
             <label>Op <select id="pred-op">
@@ -363,40 +351,105 @@
             <label id="pred-val2-wrap" style="display:none">and
               <input type="number" step="any" id="pred-val2" style="width:110px"></label>
           </div>
-          <div class="hint2">Filter rows by a sensor value — e.g. speed above a threshold.
-            Reports how much of the table it had to read.</div>
+          <div class="hint">Filter rows by a numeric column. The result
+            reports how many files and bytes the scan touched versus
+            skipped.</div>
         </div>
 
-        <div id="q-sql" style="display:none">
-          <textarea id="sql-input" rows="4">SELECT count(*) AS rows, min(ts) AS min_ts, max(ts) AS max_ts FROM gps</textarea>
+        <div id="q-sql" style="display:none; margin-top:12px">
+          <textarea id="sql-input" rows="4"></textarea>
+          <div class="hint">Read-only SQL over every table in this store.</div>
         </div>
-        <div id="q-window" style="display:none">
-          <input type="text" id="win-input" placeholder="t0,t1 as capture-relative seconds — e.g. 650,652">
+        <div id="q-window" style="display:none; margin-top:12px">
+          <input type="text" id="win-input"
+            placeholder="start,end in seconds from capture start">
+          <div class="hint">Retrieve one aligned time window across every
+            table: frames as playable streams, sensors as rows.</div>
         </div>
         <div class="runrow">
           <button class="run" id="run">Run</button>
           <span class="qstat" id="q-stat"></span>
         </div>
         <div id="q-out"></div>
+        </div>
       </div>
     </div>
+
+    <div class="view" id="v-data"></div>
+
+    <div class="view" id="v-storage">
+      <div class="panel">
+        <div class="hd"><h2>Storage</h2>
+          <span class="note">transaction log and physical file layout,
+            read from the Parquet footers</span></div>
+        <div class="bd">
+          <div class="seg" id="storage-tables"></div>
+          <div id="storage-out"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="view" id="v-arch">
+      <div id="arch-wrap">
+        <svg id="arch-svg"><g id="arch-cam"></g></svg>
+        <div id="arch-title"></div>
+        <div id="arch-detail"></div>
+        <div id="arch-hint">drag to pan · wheel to zoom · click a block
+          for its schema · double click resets</div>
+      </div>
+    </div>
+
+    <div class="view" id="v-map">
+      <div class="panel">
+        <div class="hd"><h2>Embedding map</h2>
+          <span class="note">2D layout for browsing only; retrieval ranks
+            in the full vector space</span></div>
+        <div class="bd">
+          <div class="mapgrid">
+            <div class="canvasbox">
+              <canvas id="scatter" class="viz" height="470"></canvas>
+              <div class="hovercard" id="card">
+                <div class="ph">decoding</div><div class="m"></div></div>
+            </div>
+            <div class="legend" id="legend"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="view" id="v-geo">
+      <div class="panel">
+        <div class="hd"><h2>Geo trace</h2>
+          <span class="note" id="geo-note"></span></div>
+        <div class="bd">
+          <canvas id="route" class="viz" height="420" style="cursor:default"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="view" id="v-ops"></div>
   </div>
 </div>
 
+<div class="chart-tip" id="chart-tip"></div>
+
 <div class="player-back" id="player-back">
   <div class="player">
-    <div id="player-media"><div class="loading"><div class="spin"></div>decoding + muxing clip…</div></div>
-    <div class="bar"><b id="player-title"></b><span class="t" id="player-time"></span>
-      <button id="player-pin">open in query console</button>
+    <div id="player-media"><div class="loading"><div class="spin"></div>
+      decoding and muxing the clip</div></div>
+    <div class="bar"><b id="player-title"></b>
+      <span class="t" id="player-time"></span>
+      <button id="player-pin">open as window</button>
       <button id="player-close">close</button></div>
   </div>
 </div>
 
 <script>
 "use strict";
+/* validated categorical palette (fixed order, never cycled) */
 const CAT = {
-  light:["#2a78d6","#1baf7a","#eda100","#008300","#4a3aa7","#e34948","#e87ba4","#eb6834"],
-  dark: ["#3987e5","#199e70","#c98500","#008300","#9085e9","#e66767","#d55181","#d95926"],
+  light:["#2a78d6","#eb6834","#1baf7a","#eda100","#e87ba4","#008300","#4a3aa7","#e34948"],
+  dark: ["#3987e5","#d95926","#199e70","#c98500","#d55181","#008300","#9085e9","#e66767"],
   otherLight:"#9aa5b0", otherDark:"#5c6873",
 };
 const $ = id => document.getElementById(id);
@@ -405,6 +458,7 @@ const mode = () => matchMedia("(prefers-color-scheme: dark)").matches ? "dark" :
 const fmtB = b => b >= 1e9 ? (b/1e9).toFixed(2)+" GB" : b >= 1e6 ? (b/1e6).toFixed(1)+" MB" : (b/1e3).toFixed(0)+" KB";
 const fmtN = n => n >= 1e6 ? (n/1e6).toFixed(2)+" M" : n >= 1e3 ? (n/1e3).toFixed(1)+" k" : ""+n;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const PLAY = `<span><svg viewBox="0 0 14 14"><path d="M2 1l11 6-11 6z"/></svg></span>`;
 
 let STORES = [], CUR = null, MAP = null, GEO = null, PIN = null;
 const rel = ns => ((ns - CUR.min_ts) / 1e9);
@@ -416,116 +470,270 @@ async function j(url, opts) {
   return d;
 }
 
-/* ── stores rail ── */
+/* shared chart tooltip */
+const tip = $("chart-tip");
+function tipShow(e, html) {
+  tip.innerHTML = html; tip.style.display = "block";
+  const x = Math.min(e.clientX + 14, innerWidth - 300);
+  tip.style.left = x + "px";
+  tip.style.top = Math.min(e.clientY + 14, innerHeight - 90) + "px";
+}
+function tipHide() { tip.style.display = "none"; }
+function wireTips(root) {
+  root.querySelectorAll("[data-tip]").forEach(el => {
+    el.addEventListener("pointermove", e => tipShow(e, el.dataset.tip));
+    el.addEventListener("pointerleave", tipHide);
+  });
+}
+
+/* stores rail */
 async function loadStores() {
   STORES = await j("/api/stores");
   $("stores").innerHTML = STORES.map(s => `
     <div class="store-card" data-k="${s.key}">
       <div class="n">${esc(s.name)}</div>
       <div class="m tnum">${s.tables.length} tables · ${fmtN(s.rows)} rows · ${fmtB(s.db_bytes)}</div>
-    </div>`).join("") || `<div class="empty">no stores under lake/</div>`;
+    </div>`).join("") || `<div class="empty">no stores found</div>`;
   document.querySelectorAll(".store-card").forEach(el =>
     el.addEventListener("click", () => selectStore(el.dataset.k)));
   if (STORES.length) selectStore(STORES[0].key);
 }
 
 async function selectStore(key, refresh) {
-  if (refresh) {   // reload store summary after a mutating op
-    STORES = await j("/api/stores");
-  }
+  if (refresh) STORES = await j("/api/stores");
   CUR = STORES.find(s => s.key === key);
-  MAP = GEO = PIN = IXDATA = null;
+  MAP = GEO = PIN = IXDATA = ANA = null; ARCH = null;
   document.querySelectorAll(".store-card").forEach(el =>
     el.classList.toggle("on", el.dataset.k === key));
   $("store-title").textContent = CUR.name;
   $("store-sub").textContent =
-    `${fmtB(CUR.db_bytes)} database · span ${Math.round((CUR.max_ts - CUR.min_ts)/1e9)} s`;
-  // stream filter for hybrid semantic search
-  const vstreams = CUR.tables.filter(t => t.kind === "frame_index");
-  // stream names come from the map payload; populate lazily but seed "any"
-  $("stream-filter").innerHTML = `<option value="">any stream</option>`;
-  renderOverview(); renderTimeline(); renderStorageTabs();
+    `${fmtB(CUR.db_bytes)} · ${Math.round((CUR.max_ts - CUR.min_ts)/1e9)} s span`;
+  $("set-stream").innerHTML = `<option value="">any</option>`;
+  renderOverview(); renderStorageTabs();
   $("geo-btn").style.display = "none";
   j(`/api/geo?store=${key}`).then(g => {
     GEO = g;
-    if (g.points.length) { $("geo-btn").style.display = ""; }
+    if (g.points.length) $("geo-btn").style.display = "";
   }).catch(() => {});
-  // fetch stream list (for the hybrid filter) from the semantic map payload
   j(`/api/map?store=${key}`).then(mp => {
     const names = [...new Set((mp.points || []).map(p => p.s))].sort();
-    const opts = `<option value="">any stream</option>` +
+    $("set-stream").innerHTML = `<option value="">any</option>` +
       names.map(n => `<option>${esc(n)}</option>`).join("");
-    $("stream-filter").innerHTML = opts;
-    $("ctx-stream").innerHTML = opts;
   }).catch(() => {});
   const cur = document.querySelector("#views button.on").dataset.v;
-  if (cur === "map") loadMap();
-  if (cur === "geo") drawGeo();
-  if (cur === "data") loadData();
+  routeView(cur);
 }
 
-/* ── overview ── */
+/* overview: identity, coverage timeline, tables */
 function renderOverview() {
   const s = CUR;
-  // Database size = the store directory, full stop: managed media + Parquet
-  // tables + logs. Standalone by construction after `elidedb adopt`.
   const tiles = [
-    {k:"database size", v: fmtB(s.db_bytes), hero:true,
-     d:"one directory, standalone"},
-    {k:"— media (managed)", v: fmtB(s.media_bytes), d:"compressed, in-store"},
-    {k:"— tables + index", v: fmtB(s.bytes), d:"Parquet + logs"},
-    {k:"— embeddings", v: fmtB(s.emb_bytes), d:`${s.windows} windows`},
-    {k:"rows", v: fmtN(s.rows), d:`${s.tables.length} tables`},
+    {k:"database", v: fmtB(s.db_bytes), hero:true, d:"one directory, standalone"},
+    {k:"media", v: fmtB(s.media_bytes), d:"managed, byte-range decoded"},
+    {k:"tables", v: fmtB(s.bytes), d:`${s.tables.length} Parquet tables`},
+    {k:"rows", v: fmtN(s.rows), d:"all tables"},
     {k:"span", v: Math.round((s.max_ts - s.min_ts)/1e9) + " s", d:"canonical timeline"},
+    {k:"vectors", v: fmtN(s.windows), d: s.model ? esc(s.model).slice(0,26) : "none"},
   ];
   let h = `<div class="tiles">` + tiles.map(t =>
-    `<div class="tile${t.hero?" hero":""}"><div class="k">${t.k}</div><div class="v tnum">${t.v}</div>${t.d?`<div class="d" style="font-size:11px;color:var(--muted);margin-top:2px">${t.d}</div>`:""}</div>`).join("") + `</div>`;
+    `<div class="tile${t.hero?" hero":""}"><div class="k">${t.k}</div>
+     <div class="v tnum">${t.v}</div>${t.d?`<div class="d">${t.d}</div>`:""}</div>`).join("") + `</div>`;
   if (s.external_bytes > 0)
-    h += `<div class="panel" style="border-color:#c98500"><p class="note" style="margin:0">
-      ⚠ ${fmtB(s.external_bytes)} of media is referenced OUTSIDE the store
-      (indexed with copy=false). Run <code>elidedb adopt ${esc(s.key)}</code>
-      to pull it in and make the database standalone.</p></div>`;
-  h += `<div class="panel"><h2>Tables</h2>
-    <p class="note">Each table is Parquet files + a transaction log. Version = number of commits;
-    reading any older version is free (time travel).</p>
-    <div class="tablewrap"><table><thead><tr>
-      <th>table</th><th>kind</th><th class="r">rows</th><th class="r">size</th>
-      <th class="r">files</th><th class="r">version</th><th>window</th></tr></thead><tbody>`;
-  for (const t of s.tables) {
-    h += `<tr><td class="mono">${esc(t.table)}</td>
-      <td><span class="badge">${t.kind}</span></td>
-      <td class="r tnum">${t.rows.toLocaleString()}</td>
-      <td class="r tnum">${fmtB(t.bytes)}</td>
-      <td class="r tnum">${t.files}</td><td class="r tnum">v${t.version}</td>
-      <td class="tnum">${t.table === "centroids" ? "—"
-        : `+${rel(t.min_ts).toFixed(1)} → +${rel(t.max_ts).toFixed(1)} s`}</td></tr>`;
-  }
-  h += `</tbody></table></div></div>`;
-  if (s.model) h += `<div class="panel"><h2>Semantic run</h2>
-    <p class="note">model <code>${esc(s.model)}</code> · ${s.windows} windows —
-    query it in the Query tab or via <code>store.search_text(...)</code>.</p></div>`;
-  $("v-overview").innerHTML = h;
-}
+    h += `<div class="panel" style="border-color:var(--signal)"><div class="bd">
+      <span class="pill warn">external media</span>
+      <span class="qstat">${fmtB(s.external_bytes)} of media is referenced
+      outside the store. Run <b>elidedb adopt ${esc(s.key)}</b> to make the
+      database standalone.</span></div></div>`;
 
-/* ── timeline ── */
-function renderTimeline() {
-  const s = CUR, lo = s.min_ts, hi = s.max_ts || lo + 1;
-  let h = `<div class="panel"><h2>Stream timeline</h2>
-    <p class="note">Every table on the store's timeline. A query window outside a bar
-    never touches that table's files (log-level pruning).</p>`;
+  const lo = s.min_ts, hi = s.max_ts || lo + 1;
+  h += `<div class="panel"><div class="hd"><h2>Coverage</h2>
+    <span class="note">each table on the store timeline; a query window
+    outside a bar never opens that table's files</span></div><div class="bd">`;
+  const kindColor = {frame_index:"var(--accent)", timeseries:"#7d8fa3",
+                     embeddings:"#8a7fe0", centroids:"#8a7fe0"};
   for (const t of s.tables) {
     if (!t.rows || t.table === "centroids") continue;
     const l = ((t.min_ts - lo) / (hi - lo)) * 100;
     const w = Math.max(((t.max_ts - t.min_ts) / (hi - lo)) * 100, 0.35);
-    h += `<div class="tl-row"><div class="id mono">${esc(t.table)}</div>
-      <div class="tl-track"><div class="tl-bar ${t.kind}" style="left:${l.toFixed(2)}%;width:${w.toFixed(2)}%"></div></div>
-      <div class="meta tnum">${fmtN(t.rows)} · ${fmtB(t.bytes)}</div></div>`;
+    h += `<div class="bar-row"><div class="id">${esc(t.table)}</div>
+      <div class="bar-track"><div class="tl-bar"
+        style="left:${l.toFixed(2)}%;width:${w.toFixed(2)}%;background:${kindColor[t.kind]||"var(--accent)"}"
+        data-tip="<b>${esc(t.table)}</b>${fmtN(t.rows)} rows · ${fmtB(t.bytes)}"></div></div>
+      <div class="bar-val tnum">${fmtN(t.rows)} · ${fmtB(t.bytes)}</div></div>`;
   }
-  h += `<div class="tl-axis tnum"><span>+0 s</span><span>+${Math.round((hi-lo)/2e9)} s</span><span>+${Math.round((hi-lo)/1e9)} s</span></div></div>`;
-  $("v-timeline").innerHTML = h;
+  h += `<div class="axis indent tnum"><span>0 s</span>
+    <span>${Math.round((hi-lo)/2e9)} s</span>
+    <span>${Math.round((hi-lo)/1e9)} s</span></div></div></div>`;
+
+  h += `<div class="panel"><div class="hd"><h2>Tables</h2>
+    <span class="note">version counts commits; older versions stay readable</span></div>
+    <div class="bd"><div class="tablewrap"><table><thead><tr>
+      <th>table</th><th>kind</th><th class="r">rows</th><th class="r">size</th>
+      <th class="r">files</th><th class="r">version</th><th>window</th></tr></thead><tbody>`;
+  for (const t of s.tables) {
+    h += `<tr><td>${esc(t.table)}</td>
+      <td><span class="badge">${t.kind}</span></td>
+      <td class="r tnum">${t.rows.toLocaleString()}</td>
+      <td class="r tnum">${fmtB(t.bytes)}</td>
+      <td class="r tnum">${t.files}</td><td class="r tnum">v${t.version}</td>
+      <td class="tnum">${t.table === "centroids" ? "" :
+        `+${rel(t.min_ts).toFixed(1)} to +${rel(t.max_ts).toFixed(1)} s`}</td></tr>`;
+  }
+  h += `</tbody></table></div></div></div>`;
+  $("v-overview").innerHTML = h;
+  wireTips($("v-overview"));
 }
 
-/* ── storage: the parquet format, visible ── */
+/* analytics: general to any datastore */
+let ANA = null;
+async function loadAnalytics() {
+  const el = $("v-analytics");
+  if (!ANA) {
+    el.innerHTML = `<div class="empty">reading logs and footers</div>`;
+    try { ANA = await j(`/api/analytics?store=${CUR.key}`); }
+    catch (e) { el.innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
+  }
+  const a = ANA, spanS = (a.span.hi - a.span.lo) / 1e9;
+  const totB = a.tables.reduce((x, t) => x + t.bytes, 0);
+  const totR = a.tables.reduce((x, t) => x + t.rows, 0);
+  let h = `<div class="tiles">
+    <div class="tile hero"><div class="k">bytes on disk</div>
+      <div class="v tnum">${fmtB(totB)}</div>
+      <div class="d">${a.tables.length} tables</div></div>
+    <div class="tile"><div class="k">rows</div>
+      <div class="v tnum">${fmtN(totR)}</div></div>
+    <div class="tile"><div class="k">commits</div>
+      <div class="v tnum">${a.commit_total}</div>
+      <div class="d">across all logs</div></div>
+    <div class="tile"><div class="k">vector tables</div>
+      <div class="v tnum">${a.vectors.length}</div>
+      <div class="d">${a.base_rows ? fmtN(a.base_rows) + " base units" : ""}</div></div>
+    <div class="tile"><div class="k">indexes</div>
+      <div class="v tnum">${a.indexes.bptree.length + a.indexes.ann.length}</div>
+      <div class="d">${a.indexes.bptree.length} btree · ${a.indexes.ann.length} ann</div></div>
+    <div class="tile"><div class="k">span</div>
+      <div class="v tnum">${Math.round(spanS)}<small> s</small></div></div>
+  </div>`;
+
+  /* storage by table: one measure, one hue */
+  const byBytes = [...a.tables].filter(t => t.rows).sort((x, y) => y.bytes - x.bytes);
+  const maxB = Math.max(...byBytes.map(t => t.bytes), 1);
+  h += `<div class="panel"><div class="hd"><h2>Storage by table</h2>
+    <span class="note">compressed bytes on disk</span></div><div class="bd">`;
+  for (const t of byBytes) {
+    h += `<div class="bar-row"><div class="id">${esc(t.table)}</div>
+      <div class="bar-track"><div class="bar-fill"
+        style="width:${(100 * t.bytes / maxB).toFixed(2)}%"
+        data-tip="<b>${esc(t.table)}</b>${fmtB(t.bytes)} · ${t.rows.toLocaleString()} rows · ${t.files} files · ${t.bpr ?? "?"} bytes per row"></div></div>
+      <div class="bar-val tnum">${fmtB(t.bytes)}</div></div>`;
+  }
+  h += `</div></div>`;
+
+  /* temporal density: rows per bucket per table, footer stats only */
+  const dTables = Object.keys(a.density);
+  if (dTables.length) {
+    h += `<div class="panel"><div class="hd"><h2>Row density over time</h2>
+      <span class="note">rows per time bucket from row group statistics;
+      this is the elision map a range query prunes against</span></div><div class="bd">`;
+    for (const name of dTables) {
+      const cells = a.density[name], mx = Math.max(...cells, 1);
+      const strip = cells.map((v, i) => {
+        const t0 = (spanS * i / a.buckets).toFixed(0);
+        const t1 = (spanS * (i + 1) / a.buckets).toFixed(0);
+        return `<div class="heat-cell"
+          style="background:${v ? `color-mix(in srgb, var(--accent) ${Math.round(12 + 88 * v / mx)}%, var(--panel-2))` : "transparent"}"
+          data-tip="<b>${esc(name)}</b>~${v.toLocaleString()} rows · +${t0} to +${t1} s"></div>`;
+      }).join("");
+      h += `<div class="heat-row"><div class="id">${esc(name)}</div>
+        <div class="heat-strip">${strip}</div>
+        <div class="bar-val tnum">${fmtN(cells.reduce((x, y) => x + y, 0))}</div></div>`;
+    }
+    h += `<div class="axis indent tnum"><span>0 s</span>
+      <span>${Math.round(spanS / 2)} s</span><span>${Math.round(spanS)} s</span></div>
+    </div></div>`;
+  }
+
+  /* vector inventory */
+  if (a.vectors.length) {
+    h += `<div class="panel"><div class="hd"><h2>Vector inventory</h2>
+      <span class="note">every embedding table, with coverage against the
+      store's base units</span></div><div class="bd">
+      <div class="tablewrap"><table><thead><tr>
+        <th>table</th><th>encoder</th><th class="r">dim</th>
+        <th class="r">rows</th><th>coverage</th><th class="r">size</th>
+      </tr></thead><tbody>`;
+    for (const v of a.vectors) {
+      const cov = v.per_base == null ? "" :
+        `<div class="bar-track" style="width:110px;display:inline-block;vertical-align:middle">
+           <div class="bar-fill${v.per_base < 1 ? " dim" : ""}"
+             style="width:${Math.min(100, 100 * Math.min(v.per_base, 1)).toFixed(0)}%"
+             data-tip="<b>${esc(v.table)}</b>${v.per_base} vectors per base unit"></div>
+         </div> <span class="tnum" style="font-size:10.5px">${v.per_base}x</span>`;
+      h += `<tr><td>${esc(v.table)}</td>
+        <td style="font-size:10.5px">${esc(v.model)}</td>
+        <td class="r tnum">${v.dim ?? ""}</td>
+        <td class="r tnum">${v.rows.toLocaleString()}</td>
+        <td>${cov}</td>
+        <td class="r tnum">${fmtB(v.bytes)}</td></tr>`;
+    }
+    h += `</tbody></table></div></div></div>`;
+  }
+
+  /* fitted retrieval profile */
+  if (a.fitted && a.fitted.set_weights) {
+    const f = a.fitted;
+    const rowOf = (w, title, alpha, q, r) => {
+      const entries = Object.entries(w).sort((x, y) => y[1] - x[1]);
+      const mx = Math.max(...entries.map(e => e[1]), 1);
+      let g = `<div style="flex:1;min-width:280px">
+        <div class="lbl" style="margin-bottom:8px">${title}</div>`;
+      for (const [c, v] of entries) {
+        g += `<div class="bar-row" style="grid-template-columns:56px 1fr 40px">
+          <div class="id">${esc(c)}</div>
+          <div class="bar-track"><div class="bar-fill${v ? "" : " dim"}"
+            style="width:${(100 * v / mx).toFixed(1)}%"
+            data-tip="<b>${esc(c)}</b>ordering weight ${v}"></div></div>
+          <div class="bar-val tnum">${v}</div></div>`;
+      }
+      g += `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+        <span class="pill">cut ${alpha}</span>
+        <span class="pill">filter q ${Number(q).toFixed(2)}</span>
+        <span class="pill">dedup r ${r}</span></div></div>`;
+      return g;
+    };
+    h += `<div class="panel"><div class="hd"><h2>Retrieval profile</h2>
+      <span class="note">per-store fitted roles: which channels order,
+      filter, and where the returned set ends · holdout objective
+      ${f.loqo_mean ?? ""}</span></div>
+      <div class="bd"><div style="display:flex;gap:32px;flex-wrap:wrap">` +
+      rowOf(f.set_weights_dir || {}, "directional queries",
+            f.cut_alpha_dir ?? 0, f.filter_quantile_dir ?? 0, f.nms_r_dir ?? 0) +
+      rowOf(f.set_weights || {}, "descriptive queries",
+            f.cut_alpha ?? 0, f.filter_quantile ?? 0, f.nms_r ?? 0) +
+      `</div></div></div>`;
+  }
+
+  /* write history */
+  if (a.commits.length) {
+    h += `<div class="panel"><div class="hd"><h2>Write history</h2>
+      <span class="note">latest ${a.commits.length} of ${a.commit_total}
+      commits, straight from the transaction logs</span></div><div class="bd">
+      <div class="tablewrap"><table><thead><tr>
+        <th>table</th><th>op</th><th class="r">version</th>
+        <th class="r">rows added</th><th>utc</th></tr></thead><tbody>` +
+      [...a.commits].reverse().map(c => `<tr>
+        <td>${esc(c.table)}</td>
+        <td><span class="badge">${esc(c.op)}</span></td>
+        <td class="r tnum">v${c.version}</td>
+        <td class="r tnum">${(c.rows || 0).toLocaleString()}</td>
+        <td class="tnum" style="font-size:10.5px">${esc(c.ts_utc)}</td></tr>`).join("") +
+      `</tbody></table></div></div></div>`;
+  }
+  el.innerHTML = h;
+  wireTips(el);
+}
+
+/* storage */
 function renderStorageTabs() {
   const tabs = CUR.tables.filter(t => t.rows);
   $("storage-tables").innerHTML = tabs.map((t, i) =>
@@ -542,45 +750,47 @@ function renderStorageTabs() {
 async function loadStorage(table) {
   table = table || document.querySelector("#storage-tables button.on")?.dataset.t;
   if (!table) return;
-  $("storage-out").innerHTML = `<div class="empty">reading Parquet footers…</div>`;
+  $("storage-out").innerHTML = `<div class="empty">reading Parquet footers</div>`;
   try {
     const d = await j(`/api/storage?store=${CUR.key}&table=${encodeURIComponent(table)}`);
-    const H3 = t => `<h3 class="mono" style="font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--faint);margin:18px 0 8px">${t}</h3>`;
-    let h = H3(`transaction log — ${d.history.length} commit${d.history.length > 1 ? "s" : ""} (table version v${d.version})`);
-    h += `<div class="tablewrap"><table><thead><tr><th>v</th><th>op</th><th class="r">rows added</th><th>when (utc)</th><th>meta</th></tr></thead><tbody>` +
+    const H3 = t => `<div class="lbl" style="margin:18px 0 8px">${t}</div>`;
+    let h = H3(`transaction log · ${d.history.length} commit${d.history.length > 1 ? "s" : ""} · v${d.version}`);
+    h += `<div class="tablewrap"><table><thead><tr><th>v</th><th>op</th>
+      <th class="r">rows added</th><th>utc</th><th>meta</th></tr></thead><tbody>` +
       d.history.map(c => `<tr><td class="tnum">v${c.version}</td>
         <td><span class="badge">${esc(c.op)}</span></td>
         <td class="r tnum">${c.added_rows.toLocaleString()}</td>
-        <td class="tnum">${esc(c.ts_utc)}</td>
-        <td style="font-size:11px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(JSON.stringify(c.meta))}</td></tr>`).join("") +
+        <td class="tnum" style="font-size:10.5px">${esc(c.ts_utc)}</td>
+        <td style="font-size:10.5px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(JSON.stringify(c.meta))}</td></tr>`).join("") +
       `</tbody></table></div>`;
-    h += H3(`active parquet files — ${d.files.length} · row groups are the pruning unit`);
+    h += H3(`active files · ${d.files.length} · row groups are the pruning unit`);
     const maxB = Math.max(...d.files.map(f => f.bytes), 1);
     for (const f of d.files) {
       const segs = f.row_groups.map(g => {
         const t0 = g.min_ts != null ? `+${rel(g.min_ts).toFixed(1)}s` : "?";
         const t1 = g.max_ts != null ? `+${rel(g.max_ts).toFixed(1)}s` : "?";
-        return `<div title="row group: ${g.rows.toLocaleString()} rows · ${fmtB(g.bytes)} · ts ${t0} … ${t1}"
+        return `<div data-tip="<b>row group</b>${g.rows.toLocaleString()} rows · ${fmtB(g.bytes)} · ${t0} to ${t1}"
           style="flex:${Math.max(g.bytes, 1)};background:var(--accent);opacity:.85;border-right:2px solid var(--panel);min-width:3px"></div>`;
       }).join("");
       h += `<div style="margin:12px 0">
-        <div style="display:flex;justify-content:space-between;gap:12px;font-size:11.5px" class="mono">
+        <div style="display:flex;justify-content:space-between;gap:12px;font-size:11px">
           <span style="overflow:hidden;text-overflow:ellipsis">${esc(f.name)}</span>
-          <span class="tnum" style="color:var(--faint);flex:none">${f.rows.toLocaleString()} rows · ${f.row_groups.length} rg · ${fmtB(f.bytes)} · footer ${fmtB(f.footer_bytes)}</span></div>
-        <div style="display:flex;height:22px;border-radius:5px;overflow:hidden;background:var(--panel-2);width:${Math.max(100 * f.bytes / maxB, 10)}%;margin-top:4px">${segs}</div></div>`;
+          <span class="tnum" style="color:var(--faint);flex:none">${f.rows.toLocaleString()} rows · ${f.row_groups.length} groups · ${fmtB(f.bytes)} · footer ${fmtB(f.footer_bytes)}</span></div>
+        <div style="display:flex;height:20px;border-radius:3px;overflow:hidden;background:var(--panel-2);width:${Math.max(100 * f.bytes / maxB, 10)}%;margin-top:4px">${segs}</div></div>`;
     }
     if (d.files[0])
-      h += `<p class="note" style="margin-top:14px">columns: <span class="mono">${esc(d.files[0].columns.join(" · "))}</span></p>`;
+      h += `<div class="hint" style="margin-top:14px">columns: ${esc(d.files[0].columns.join(" · "))}</div>`;
     $("storage-out").innerHTML = h;
+    wireTips($("storage-out"));
   } catch (e) {
     $("storage-out").innerHTML = `<div class="err">${esc(e.message)}</div>`;
   }
 }
 
-/* ── semantic map ── */
+/* embedding map */
 async function loadMap() {
   if (!MAP) {
-    $("legend").innerHTML = `<h3>clusters</h3><div class="li">computing layout…</div>`;
+    $("legend").innerHTML = `<h3>clusters</h3><div class="li">computing layout</div>`;
     try { MAP = await j(`/api/map?store=${CUR.key}`); }
     catch (e) { $("legend").innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
   }
@@ -588,15 +798,15 @@ async function loadMap() {
 }
 
 function drawScatter() {
-  const canvas = $("scatter"), pts = MAP.points;
+  const canvas = $("scatter"), pts = MAP ? MAP.points : [];
   const pal = CAT[mode()], other = mode() === "dark" ? CAT.otherDark : CAT.otherLight;
   const dpr = devicePixelRatio || 1, W = canvas.clientWidth, H = 470;
   canvas.width = W * dpr; canvas.height = H * dpr;
   const ctx = canvas.getContext("2d"); ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, W, H);
   if (!pts.length) {
-    ctx.fillStyle = cssVar("--faint"); ctx.font = "13px -apple-system";
-    ctx.fillText("no embeddings table in this store — run store.embed_windows()", 24, 40);
+    ctx.fillStyle = cssVar("--faint"); ctx.font = "12px ui-monospace, Menlo";
+    ctx.fillText("no embeddings table in this store", 24, 40);
     $("legend").innerHTML = ""; return;
   }
   const counts = {};
@@ -629,11 +839,15 @@ function drawScatter() {
   ranked.slice(0, 8).forEach(([c, n], i) =>
     lh += `<div class="li"><i style="background:${pal[i]}"></i>cluster ${c}<span class="cnt tnum">${n}</span></div>`);
   const otherN = ranked.slice(8).reduce((a, [, n]) => a + n, 0);
-  if (otherN) lh += `<div class="li"><i style="background:${other}"></i>${ranked.length - 8} small clusters<span class="cnt tnum">${otherN}</span></div>`;
+  if (otherN) lh += `<div class="li"><i style="background:${other}"></i>${ranked.length - 8} more<span class="cnt tnum">${otherN}</span></div>`;
   const noise = pts.filter(p => p.c < 0).length;
   if (noise) lh += `<div class="li noise"><i></i>noise<span class="cnt tnum">${noise}</span></div>`;
-  lh += `<h3 style="margin-top:14px">windows</h3><div class="li">total<span class="cnt tnum">${pts.length}</span></div>
-    <div class="li">previews<span class="cnt">decoded live</span></div>`;
+  lh += `<h3 style="margin-top:14px">windows</h3>
+    <div class="li">plotted<span class="cnt tnum">${pts.length}</span></div>` +
+    (MAP.sampled_of > pts.length ?
+     `<div class="li">of<span class="cnt tnum">${MAP.sampled_of.toLocaleString()}</span></div>` : "") +
+    `<div class="li">previews<span class="cnt">decoded live</span></div>
+     <div class="li">click<span class="cnt">plays the clip</span></div>`;
   $("legend").innerHTML = lh;
 }
 
@@ -652,15 +866,16 @@ $("scatter").addEventListener("pointermove", e => {
   if (best !== hoverP) {
     hoverP = best;
     card.querySelector(".m").innerHTML =
-      `<b>${esc(best.s)}</b>+${rel(best.t0).toFixed(1)} → +${rel(best.t1).toFixed(1)} s · cluster ${best.c}`;
-    card.querySelector(".ph") ? null : null;
+      `<b>${esc(best.s)}</b>+${rel(best.t0).toFixed(1)} to +${rel(best.t1).toFixed(1)} s · cluster ${best.c}`;
     let ph = card.querySelector(".ph"), img = card.querySelector("img");
     if (img) img.remove();
-    if (!ph) { ph = document.createElement("div"); ph.className = "ph"; ph.textContent = "decoding…"; card.prepend(ph); }
+    if (!ph) { ph = document.createElement("div"); ph.className = "ph";
+      ph.textContent = "decoding"; card.prepend(ph); }
     clearTimeout(thumbTimer);
     thumbTimer = setTimeout(() => {
       const im = new Image();
-      im.onload = () => { if (hoverP === best) { card.querySelector(".ph")?.remove(); card.prepend(im); } };
+      im.onload = () => { if (hoverP === best) {
+        card.querySelector(".ph")?.remove(); card.prepend(im); } };
       im.src = `/api/thumb?store=${CUR.key}&stream=${encodeURIComponent(best.s)}&t=${best.t0}&w=380`;
     }, 120);
   }
@@ -668,18 +883,18 @@ $("scatter").addEventListener("pointermove", e => {
   card.style.top = Math.max(best.Y - 175, 4) + "px";
   card.style.display = "block";
 });
-$("scatter").addEventListener("pointerleave", () => { $("card").style.display = "none"; hoverP = null; });
+$("scatter").addEventListener("pointerleave", () => {
+  $("card").style.display = "none"; hoverP = null; });
 $("scatter").addEventListener("click", () => {
-  if (!hoverP) return;
-  openPlayer(hoverP.s, hoverP.t0, hoverP.t1);  // a window IS a clip: play it
+  if (hoverP) openPlayer(hoverP.s, hoverP.t0, hoverP.t1);
 });
 
-/* ── geo ── */
+/* geo */
 function drawGeo() {
   if (!GEO || !GEO.points.length) return;
   const canvas = $("route"), R = GEO.points;
   $("geo-note").textContent =
-    `table “${GEO.table}” · ${R.length} fixes (downsampled) — teal marks the span covered by frame-indexed video`;
+    `table ${GEO.table} · ${R.length} fixes, downsampled · the accent span is covered by frame-indexed video`;
   const dpr = devicePixelRatio || 1, W = canvas.clientWidth, H = 420;
   canvas.width = W * dpr; canvas.height = H * dpr;
   const ctx = canvas.getContext("2d"); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, W, H);
@@ -692,34 +907,32 @@ function drawGeo() {
   const vids = CUR.tables.filter(t => t.kind === "frame_index");
   const vlo = Math.min(...vids.map(t => t.min_ts), Infinity);
   const vhi = Math.max(...vids.map(t => t.max_ts), -Infinity);
-  ctx.strokeStyle = cssVar("--sensor-bar"); ctx.lineWidth = 2; ctx.lineJoin = "round";
+  ctx.strokeStyle = "#7d8fa3"; ctx.lineWidth = 2; ctx.lineJoin = "round";
   ctx.beginPath(); R.forEach((p, i) => i ? ctx.lineTo(px(p), py(p)) : ctx.moveTo(px(p), py(p))); ctx.stroke();
   ctx.strokeStyle = cssVar("--accent"); ctx.lineWidth = 6; ctx.lineCap = "round";
   ctx.beginPath(); let st = false;
-  for (const p of R) if (p.t >= vlo && p.t <= vhi) { st ? ctx.lineTo(px(p), py(p)) : ctx.moveTo(px(p), py(p)); st = true; }
+  for (const p of R) if (p.t >= vlo && p.t <= vhi) {
+    st ? ctx.lineTo(px(p), py(p)) : ctx.moveTo(px(p), py(p)); st = true; }
   ctx.stroke();
-  ctx.fillStyle = cssVar("--muted"); ctx.font = "11px ui-monospace,Menlo";
+  ctx.fillStyle = cssVar("--muted"); ctx.font = "11px ui-monospace, Menlo";
   const s0 = R[0], s1 = R[R.length - 1];
-  ctx.beginPath(); ctx.arc(px(s0), py(s0), 4, 0, 7); ctx.fill(); ctx.fillText("start", px(s0) + 8, py(s0) + 4);
-  ctx.beginPath(); ctx.arc(px(s1), py(s1), 4, 0, 7); ctx.fill(); ctx.fillText("end", px(s1) + 8, py(s1) + 4);
+  ctx.beginPath(); ctx.arc(px(s0), py(s0), 4, 0, 7); ctx.fill();
+  ctx.fillText("start", px(s0) + 8, py(s0) + 4);
+  ctx.beginPath(); ctx.arc(px(s1), py(s1), 4, 0, 7); ctx.fill();
+  ctx.fillText("end", px(s1) + 8, py(s1) + 4);
 }
 
-/* ── clip player ── */
+/* clip player */
 function openPlayer(stream, t0, t1) {
   PIN = {s: stream, t0, t1};
   $("player-back").classList.add("on");
   $("player-title").textContent = stream;
   const durS = (t1 - t0) / 1e9;
   $("player-time").textContent =
-    `+${rel(t0).toFixed(2)} → +${rel(t1).toFixed(2)} s · ${durS.toFixed(1)} s segment` +
-    (durS > 30 ? " · previewing first 30 s" : "");
+    `+${rel(t0).toFixed(2)} to +${rel(t1).toFixed(2)} s · ${durS.toFixed(1)} s` +
+    (durS > 30 ? " · first 30 s previewed" : "");
   $("player-media").innerHTML =
-    `<div class="loading"><div class="spin"></div>decoding + muxing clip…</div>`;
-  // Fetch rather than assigning v.src directly. A <video> element cannot read
-  // an error response body, so a failed clip could only ever report "it
-  // failed"; fetching lets the server's actual reason reach the screen, and
-  // for a <=30 s preview buffering the whole blob first is more reliable than
-  // range-streaming a file that is still being muxed.
+    `<div class="loading"><div class="spin"></div>decoding and muxing the clip</div>`;
   const url = `/api/clip?store=${CUR.key}&stream=${encodeURIComponent(stream)}&t0=${t0}&t1=${t1}&w=720`;
   fetch(url).then(async r => {
     if (!r.ok) {
@@ -728,7 +941,7 @@ function openPlayer(stream, t0, t1) {
       const why = d.error || `server returned ${r.status}`;
       $("player-media").innerHTML =
         `<div class="loading"><b>${esc(why)}</b>` +
-        (d.detail ? `<div class="dim" style="margin-top:6px">${esc(d.detail)}</div>` : "") +
+        (d.detail ? `<div style="margin-top:6px">${esc(d.detail)}</div>` : "") +
         `</div>`;
       return;
     }
@@ -753,41 +966,33 @@ function closePlayer() {
   $("player-media").innerHTML = "";
 }
 $("player-close").addEventListener("click", closePlayer);
-$("player-back").addEventListener("click", e => { if (e.target === $("player-back")) closePlayer(); });
+$("player-back").addEventListener("click", e => {
+  if (e.target === $("player-back")) closePlayer(); });
 addEventListener("keydown", e => { if (e.key === "Escape") closePlayer(); });
 $("player-pin").addEventListener("click", () => {
   if (!PIN) return;
   closePlayer();
   setQMode("window");
   $("win-input").value = `${rel(PIN.t0).toFixed(2)},${rel(PIN.t1).toFixed(2)}`;
-  document.querySelector('#views button[data-v="query"]').click();
+  document.querySelector('#views button[data-v="search"]').click();
 });
 
-/* ── query console ── */
+/* search console */
 function setQMode(m) {
-  document.querySelectorAll("#qmodes button").forEach(b => b.classList.toggle("on", b.dataset.q === m));
-  $("q-text").style.display = m === "text" ? "" : "none";
-  $("q-context").style.display = m === "context" ? "" : "none";
+  document.querySelectorAll("#qmodes button").forEach(b =>
+    b.classList.toggle("on", b.dataset.q === m));
+  $("q-set").style.display = m === "set" ? "" : "none";
   $("q-predicate").style.display = m === "predicate" ? "" : "none";
   $("q-sql").style.display = m === "sql" ? "" : "none";
   $("q-window").style.display = m === "window" ? "" : "none";
   if (m === "predicate") fillPredicate();
+  if (m === "sql" && !$("sql-input").value)
+    $("sql-input").value = "SELECT count(*) AS rows, min(ts), max(ts) FROM " +
+      (CUR.tables.find(t => t.kind === "timeseries")?.table || CUR.tables[0].table);
 }
 document.querySelectorAll("#qmodes button").forEach(b =>
   b.addEventListener("click", () => setQMode(b.dataset.q)));
 
-// precision-floor slider live label + mode gating
-$("floor-mode").addEventListener("change", syncFloor);
-$("floor").addEventListener("input", syncFloor);
-function syncFloor() {
-  const mode = $("floor-mode").value, f = $("floor");
-  $("floor-wrap").style.display = mode === "none" ? "none" : "";
-  if (mode === "min_score") { f.min = 0; f.max = 30; f.step = 1;
-    $("floor-val").textContent = (f.value / 100).toFixed(2); }
-  else { f.min = 50; f.max = 99; f.step = 1;
-    $("floor-val").textContent = "top " + (100 - +f.value) + "%"; }
-}
-// predicate dropdowns from /api/indexes
 let IXDATA = null;
 async function fillPredicate() {
   IXDATA = IXDATA || await j(`/api/indexes?store=${CUR.key}`).catch(() => ({indexable:{}}));
@@ -803,36 +1008,21 @@ $("pred-op").addEventListener("change", () =>
   $("pred-val2-wrap").style.display = $("pred-op").value === "between" ? "" : "none");
 
 $("run").addEventListener("click", runQuery);
-$("text-input").addEventListener("keydown", e => { if (e.key === "Enter") runQuery(); });
-$("ctx-input").addEventListener("keydown", e => { if (e.key === "Enter") runQuery(); });
-
+$("set-input").addEventListener("keydown", e => { if (e.key === "Enter") runQuery(); });
 $("win-input").addEventListener("keydown", e => { if (e.key === "Enter") runQuery(); });
 
 async function runQuery() {
   const m = document.querySelector("#qmodes button.on").dataset.q;
   const out = $("q-out"), stat = $("q-stat");
-  out.innerHTML = ""; stat.textContent = "running…";
+  out.innerHTML = ""; stat.textContent = "running";
   try {
     let body = {store: CUR.key};
-    if (m === "text") {
-      body.type = "text"; body.text = $("text-input").value;
-      body.k = +$("k-input").value || 12;
-      body.method = $("method").value;
-      const fm = $("floor-mode").value;
-      if (fm !== "none") { body.floor_mode = fm;
-        body.floor = fm === "min_score" ? +$("floor").value / 100 : +$("floor").value; }
-      const s = $("stream-filter").value; if (s) body.streams = [s];
-      if ($("rerank").checked) { body.rerank = true; body.rerank_top = 10; }
-      const a = $("hyb-t0").value, b = $("hyb-t1").value;
-      if (a !== "") body.t0 = Math.round(CUR.min_ts + +a * 1e9);
-      if (b !== "") body.t1 = Math.round(CUR.min_ts + +b * 1e9);
-    }
-    if (m === "context") {
-      body.type = "context"; body.text = $("ctx-input").value;
-      body.k = +$("ctx-k").value || 8;
-      const cs = $("ctx-stream").value; if (cs) body.streams = [cs];
-      if ($("ctx-rerank").checked) { body.rerank = true; body.rerank_top = 8; }
-      const ca = $("ctx-t0").value, cb = $("ctx-t1").value;
+    if (m === "set") {
+      body.type = "context"; body.text = $("set-input").value;
+      body.k = +$("set-k").value || 10;
+      const cs = $("set-stream").value; if (cs) body.streams = [cs];
+      if ($("set-audit").checked) body.rerank = true;
+      const ca = $("set-t0").value, cb = $("set-t1").value;
       if (ca !== "") body.t0 = Math.round(CUR.min_ts + +ca * 1e9);
       if (cb !== "") body.t1 = Math.round(CUR.min_ts + +cb * 1e9);
     }
@@ -857,60 +1047,51 @@ async function runQuery() {
         : `${r.rows.length} rows · `) + `${r.ms} ms`;
       out.innerHTML = `<div class="tablewrap" style="margin-top:14px"><table><thead><tr>` +
         r.columns.map(c => `<th>${esc(c)}</th>`).join("") + `</tr></thead><tbody>` +
-        r.rows.map(row => `<tr>` + row.map(v => `<td class="tnum">${esc(typeof v === "number" && !Number.isInteger(v) ? v.toFixed(4) : (v ?? "∅"))}</td>`).join("") + `</tr>`).join("") +
+        r.rows.map(row => `<tr>` + row.map(v =>
+          `<td class="tnum">${esc(typeof v === "number" && !Number.isInteger(v) ? v.toFixed(4) : (v ?? ""))}</td>`).join("") + `</tr>`).join("") +
         `</tbody></table></div>`;
-    } else if (m === "text" || m === "context" || body.type === "clip") {
+    } else if (m === "set") {
       const S = r.stats;
-      const terms = (S.positive_terms || []).map(t => `<span class="pill ok">${esc(t)}</span>`).join(" ")
-        + (S.negative_terms || []).map(t => `<span class="pill warn">NOT ${esc(t)}</span>`).join(" ");
-      const seg = S.segments != null
-        ? `${r.hits.length} of ${S.segments} segment${S.segments === 1 ? "" : "s"} · ` : "";
-      const floor = S.after_floor != null ? `floor→${S.after_floor} windows · ` : "";
-      const rr = S.rerank ? `<span class="pill ok">vision-verified ${S.rerank.reranked}</span> ` : "";
-      const scanned = S.scanned != null ? `scanned ${S.scanned}/${S.total} · ` :
-        (S.candidates != null ? `${S.candidates} candidates · ` : "");
-      const fresh = S.verified_fresh ? `${S.verified_fresh} newly verified · ` : "";
-      const tierline = S.method ? `tier <b>${esc(S.method)}</b> · ` :
-        (S.channels && S.channels.length ? `channels <b>${esc(S.channels.join(" · "))}</b> · ` : "");
-      stat.innerHTML = `${terms} ${rr}&nbsp; ${seg}${floor}${scanned}${fresh}`
-        + `${tierline}${r.ms} ms · click a hit to play`;
-      const why = (S.why || []);
-      out.innerHTML = `<div class="hitgrid">` + r.hits.map((h, hi) => {
+      if (S.no_match && !r.hits.length) {
+        stat.textContent = `${r.ms} ms`;
+        out.innerHTML = `<div class="empty">This corpus does not contain
+          that action. The index abstained rather than returning
+          look-alikes.</div>`;
+        return;
+      }
+      const chans = S.channels && S.channels.length ?
+        `channels ${S.channels.join(" · ")} · ` : "";
+      stat.textContent = `${r.hits.length} clips · ${chans}${r.ms} ms`;
+      out.innerHTML = `<div class="hitgrid">` + r.hits.map(h => {
         const dur = (h.t1 - h.t0) / 1e9;
         const mid = Math.round((+h.t0 + +h.t1) / 2);
-        const w = why[hi];
-        const ranks = w ? `<br><span class="dim tnum">` +
-          Object.entries(w.ranks).map(([n, v]) => `${n.slice(0,3)} #${v}`).join(" · ") +
-          `</span>` : "";
-        const cap = h.caption ? `<br><span class="dim" title="machine caption — generated by a small VLM at index time; measured unreliable on action words, judge the clip not the text">🤖≈ ${esc(h.caption.slice(0,110))}</span>` : "";
         return `
         <div class="hit" data-s="${esc(h.stream)}" data-t0="${h.t0}" data-t1="${h.t1}">
           <img src="/api/thumb?store=${CUR.key}&stream=${encodeURIComponent(h.stream)}&t=${mid}&w=420" alt="">
-          <div class="play"><span>▶</span></div>
-          <div class="m"><b>${h.vlm != null ? "vision " + (h.vlm>0?"+":"") + h.vlm.toFixed(2) : h.score.toFixed(3)}</b> · ${esc(h.stream)} ·
-            <b class="tnum">${dur.toFixed(1)} s</b>${h.windows > 1 ? ` (${h.windows} windows merged)` : ""}<br>
-            <span class="tnum">+${rel(h.t0).toFixed(1)} → +${rel(h.t1).toFixed(1)} s</span>${ranks}${cap}</div>
+          <div class="play">${PLAY}</div>
+          <div class="m"><b class="tnum">${h.score.toFixed(3)}</b> · ${esc(h.stream)}<br>
+            <span class="tnum">+${rel(h.t0).toFixed(1)} to +${rel(h.t1).toFixed(1)} s · ${dur.toFixed(1)} s</span></div>
         </div>`;
       }).join("") + `</div>`;
       out.querySelectorAll(".hit").forEach(el => el.addEventListener("click", () =>
         openPlayer(el.dataset.s, +el.dataset.t0, +el.dataset.t1)));
     } else if (m === "window") {
       const s = r.stats;
-      stat.textContent = `${s.files} files · ${fmtB(s.bytes_touched)} of ${fmtB(s.corpus_bytes)} touched (${s.elided_pct}% elided) · ${r.ms} ms`;
+      stat.textContent = `${s.files} files · ${fmtB(s.bytes_touched)} of ${fmtB(s.corpus_bytes)} read · ${s.elided_pct}% elided · ${r.ms} ms`;
       let h = "";
       for (const [name, t] of Object.entries(r.tables)) {
         if (t.kind === "frames") {
           const [wa, wb] = $("win-input").value.split(",").map(Number);
           const wt0 = Math.round(CUR.min_ts + wa * 1e9), wt1 = Math.round(CUR.min_ts + wb * 1e9);
-          h += `<div style="margin-top:14px"><b class="mono">${esc(name)}</b>
-            <span class="qstat"> ${t.count} frames · ${t.streams.length} streams · click to play</span>
+          h += `<div style="margin-top:14px"><b>${esc(name)}</b>
+            <span class="qstat"> ${t.count} frames · ${t.streams.length} streams</span>
             <div class="hitgrid" style="margin-top:8px">` + t.streams.map(sname => `
               <div class="hit" data-s="${esc(sname)}" data-t0="${wt0}" data-t1="${wt1}">
                 <img src="/api/thumb?store=${CUR.key}&stream=${encodeURIComponent(sname)}&t=${wt0}&w=420">
-                <div class="play"><span>▶</span></div>
+                <div class="play">${PLAY}</div>
                 <div class="m"><b>${esc(sname)}</b></div></div>`).join("") + `</div></div>`;
         } else if (t.count) {
-          h += `<div style="margin-top:14px"><b class="mono">${esc(name)}</b>
+          h += `<div style="margin-top:14px"><b>${esc(name)}</b>
             <span class="qstat"> ${t.count.toLocaleString()} rows</span>
             <div class="tablewrap"><table><thead><tr>` +
             t.columns.slice(0, 8).map(c => `<th>${esc(c)}</th>`).join("") +
@@ -919,7 +1100,9 @@ async function runQuery() {
             `</tbody></table></div></div>`;
         }
       }
-      out.innerHTML = h || `<div class="empty">window is empty</div>`;
+      out.innerHTML = h || `<div class="empty">the window is empty</div>`;
+      out.querySelectorAll(".hit").forEach(el => el.addEventListener("click", () =>
+        openPlayer(el.dataset.s, +el.dataset.t0, +el.dataset.t1)));
     }
   } catch (e) {
     stat.textContent = "";
@@ -927,25 +1110,25 @@ async function runQuery() {
   }
 }
 
-/* ── data view: what the data actually IS ── */
-let DATA_TABLE = null;
+/* data: schema and sample rows */
 async function loadData(table) {
   const el = $("v-data");
   if (!table) {
-    el.innerHTML = `<div class="panel"><h2>Data</h2><div class="empty">reading schema…</div></div>`;
+    el.innerHTML = `<div class="panel"><div class="hd"><h2>Data</h2>
+      <span class="note">columns, types, and real rows</span></div>
+      <div class="bd"><div class="empty">reading schema</div></div></div>`;
     const all = await j(`/api/schema?store=${CUR.key}`).catch(e => ({error: e.message}));
-    if (all.error) { el.innerHTML = `<div class="panel"><div class="err">${esc(all.error)}</div></div>`; return; }
-    DATA_TABLE = all;
-    let h = `<div class="panel"><h2>Tables &amp; columns</h2>
-      <p class="note">Every table is timestamped (<span class="mono">ts</span>, nanoseconds).
-        Click a table to see its columns and real rows.</p>
-      <div class="seg qmodes" id="data-tabs" style="flex-wrap:wrap"></div>
-      <div id="data-detail"></div></div>`;
-    el.innerHTML = h;
+    if (all.error) {
+      el.querySelector(".bd").innerHTML = `<div class="err">${esc(all.error)}</div>`;
+      return;
+    }
+    el.querySelector(".bd").innerHTML =
+      `<div class="seg" id="data-tabs"></div><div id="data-detail"></div>`;
     $("data-tabs").innerHTML = all.map((t, i) =>
       `<button data-t="${esc(t.table)}"${i === 0 ? ' class="on"' : ''}>${esc(t.table)}</button>`).join("");
     document.querySelectorAll("#data-tabs button").forEach(b => b.onclick = () => {
-      document.querySelectorAll("#data-tabs button").forEach(x => x.classList.toggle("on", x === b));
+      document.querySelectorAll("#data-tabs button").forEach(x =>
+        x.classList.toggle("on", x === b));
       loadData(b.dataset.t);
     });
     if (all.length) loadData(all[0].table);
@@ -953,113 +1136,95 @@ async function loadData(table) {
   }
   const d = (await j(`/api/schema?store=${CUR.key}&table=${encodeURIComponent(table)}`))[0];
   if (!d) return;
-  const span = d.rows ? `+${rel(d.min_ts).toFixed(1)} → +${rel(d.max_ts).toFixed(1)} s` : "—";
-  let h = `<div class="ctrlgrid" style="margin:14px 0 10px">
-      <span class="pill">${esc(d.kind)}</span>
+  const span = d.rows ? `+${rel(d.min_ts).toFixed(1)} to +${rel(d.max_ts).toFixed(1)} s` : "";
+  let h = `<div class="ctrl" style="margin:14px 0 10px">
+      <span class="badge">${esc(d.kind)}</span>
       <span class="qstat tnum">${d.rows.toLocaleString()} rows · ${fmtB(d.bytes)} · v${d.version} · ${span}</span></div>`;
   h += `<div class="tablewrap"><table><thead><tr><th>column</th><th>type</th></tr></thead><tbody>` +
-    d.columns.map(c => `<tr><td class="mono">${esc(c.name)}</td>
-      <td class="mono" style="color:var(--faint)">${esc(c.type)}</td></tr>`).join("") +
+    d.columns.map(c => `<tr><td>${esc(c.name)}</td>
+      <td style="color:var(--faint)">${esc(c.type)}</td></tr>`).join("") +
     `</tbody></table></div>`;
   if (d.sample && d.sample.length) {
     const cols = Object.keys(d.sample[0]).slice(0, 9);
-    h += `<h3 style="font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--faint);
-      margin:20px 0 8px;font-family:ui-monospace,Menlo,monospace">first rows</h3>
+    h += `<div class="lbl" style="margin:20px 0 8px">first rows</div>
       <div class="tablewrap"><table><thead><tr>` +
       cols.map(c => `<th>${esc(c)}</th>`).join("") + `</tr></thead><tbody>` +
       d.sample.map(r => `<tr>` + cols.map(c => {
         let v = r[c];
-        // centroids carry no real time (ts=0); don't fake a relative stamp
         if (c === "ts" && typeof v === "number")
-          v = v === 0 ? "—" : `+${rel(v).toFixed(3)} s`;
-        return `<td class="tnum">${esc(v ?? "∅")}</td>`;
+          v = v === 0 ? "" : `+${rel(v).toFixed(3)} s`;
+        return `<td class="tnum">${esc(v ?? "")}</td>`;
       }).join("") + `</tr>`).join("") + `</tbody></table></div>`;
   }
   $("data-detail").innerHTML = h;
 }
 
-/* ── indexes view ── */
-async function loadIndexes() {
-  const el = $("v-indexes");
-  el.innerHTML = `<div class="panel"><h2>Indexes</h2><div class="empty">reading…</div></div>`;
+/* ops: indexes + maintenance */
+async function loadOps() {
+  const el = $("v-ops");
+  el.innerHTML = `<div class="empty">reading index state</div>`;
   const d = await j(`/api/indexes?store=${CUR.key}`).catch(e => ({error: e.message}));
   IXDATA = d;
-  if (d.error) { el.innerHTML = `<div class="panel"><div class="err">${esc(d.error)}</div></div>`; return; }
-  let h = `<div class="panel"><h2>Secondary indexes — B+ trees</h2>
-    <p class="note">Zone maps prune the time axis for free; a B+ tree on any other numeric
-      column makes range/point predicates read only the row groups with hits. Immutable,
-      bulk-loaded, rebuilt per version.</p>`;
-  const built = new Set(d.bptree.map(x => x.table + "." + x.column));
+  if (d.error) { el.innerHTML = `<div class="err">${esc(d.error)}</div>`; return; }
+  let h = `<div class="panel"><div class="hd"><h2>Secondary indexes</h2>
+    <span class="note">zone maps prune the time axis for free; a btree on
+    any other numeric column prunes its predicates too</span></div><div class="bd">`;
   for (const [tbl, cols] of Object.entries(d.indexable)) {
     for (const c of cols) {
       const ex = d.bptree.find(x => x.table === tbl && x.column === c);
-      h += `<div class="ixrow"><span class="mono">${esc(tbl)}.${esc(c)}</span>
+      h += `<div class="ixrow"><span>${esc(tbl)}.${esc(c)}</span>
         <span class="grow"></span>
         ${ex ? `<span class="pill ok">v${ex.version} · ${fmtB(ex.bytes)}</span>` : ""}
-        <button class="btn" data-ix-t="${esc(tbl)}" data-ix-c="${esc(c)}">${ex ? "rebuild" : "build B+ index"}</button></div>`;
+        <button class="btn" data-ix-t="${esc(tbl)}" data-ix-c="${esc(c)}">${ex ? "rebuild" : "build"}</button></div>`;
     }
   }
-  if (!Object.keys(d.indexable).length) h += `<div class="empty">no numeric columns to index</div>`;
-  h += `</div>`;
+  if (!Object.keys(d.indexable).length)
+    h += `<div class="empty">no numeric columns to index</div>`;
+  h += `</div></div>`;
   if (d.has_embeddings) {
-    h += `<div class="panel"><h2>Vector indexes — ANN tiers</h2>
-      <p class="note">Over the embeddings table. HNSW = graph ANN (sub-ms at scale); IVF-PQ =
-        product-quantized shortlist + exact rerank. Auto-selected at query time; exact and
-        learned-cell IVF need no build.</p>`;
+    h += `<div class="panel"><div class="hd"><h2>Vector indexes</h2>
+      <span class="note">approximate tiers over the embeddings table;
+      exact scan needs no build and stays available</span></div><div class="bd">`;
     for (const kind of ["hnsw", "ivfpq"]) {
       const ex = d.ann.find(x => x.kind === kind);
-      h += `<div class="ixrow"><span class="mono">${kind.toUpperCase()}</span><span class="grow"></span>
-        ${ex ? `<span class="pill ${ex.stale ? "warn" : "ok"}">v${ex.version}${ex.stale ? " (stale)" : ""} · ${fmtB(ex.bytes)}</span>` : ""}
-        <button class="btn" data-ann="${kind}">${ex ? "rebuild" : "build " + kind.toUpperCase()}</button></div>`;
+      h += `<div class="ixrow"><span>${kind.toUpperCase()}</span><span class="grow"></span>
+        ${ex ? `<span class="pill ${ex.stale ? "warn" : "ok"}">v${ex.version}${ex.stale ? " stale" : ""} · ${fmtB(ex.bytes)}</span>` : ""}
+        <button class="btn" data-ann="${kind}">${ex ? "rebuild" : "build"}</button></div>`;
     }
-    h += `</div>`;
+    h += `</div></div>`;
   }
+  h += `<div class="panel"><div class="hd"><h2>Maintenance</h2>
+    <span class="note">each operation is one atomic commit; earlier
+    versions stay readable until vacuumed</span></div><div class="bd">
+    <div class="ixrow"><span>Compact</span>
+      <span class="qstat">rewrite a table into few large sorted files</span>
+      <span class="grow"></span>
+      <select id="mt-compact-tbl"></select>
+      <button class="btn" id="mt-compact">Compact</button>
+      <span class="qstat" id="mt-compact-out"></span></div>
+    <div class="ixrow"><span>Vacuum</span>
+      <span class="qstat">drop files unreachable from the last</span>
+      <input type="number" id="mt-retain" value="3" min="1" style="width:52px">
+      <span class="qstat">versions</span>
+      <span class="grow"></span>
+      <button class="btn" id="mt-vacuum-dry">Dry run</button>
+      <button class="btn danger" id="mt-vacuum">Vacuum</button>
+      <span class="qstat" id="mt-vacuum-out"></span></div>
+    <div class="ixrow"><span>Delete range</span>
+      <select id="mt-del-tbl"></select>
+      <span class="qstat">from s</span>
+      <input type="number" id="mt-del-t0" style="width:80px">
+      <span class="qstat">to s</span>
+      <input type="number" id="mt-del-t1" style="width:80px">
+      <span class="grow"></span>
+      <button class="btn danger" id="mt-del">Delete</button>
+      <span class="qstat" id="mt-del-out"></span></div>
+    </div></div>`;
   el.innerHTML = h;
   el.querySelectorAll("[data-ix-t]").forEach(btn => btn.onclick = () =>
     buildIx(btn, {table: btn.dataset.ixT, column: btn.dataset.ixC}));
   el.querySelectorAll("[data-ann]").forEach(btn => btn.onclick = () =>
     buildIx(btn, {ann: btn.dataset.ann}));
-}
-async function buildIx(btn, spec) {
-  btn.disabled = true; const old = btn.textContent; btn.textContent = "building…";
-  try {
-    const r = await j("/api/build_index", {method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({store: CUR.key, ...spec})});
-    btn.textContent = `done · ${r.ms} ms`;
-    setTimeout(loadIndexes, 700);
-  } catch (e) { btn.textContent = "failed"; btn.title = e.message; btn.disabled = false;
-    setTimeout(() => btn.textContent = old, 1500); }
-}
-
-/* ── maintenance view ── */
-function renderMaintenance() {
-  const el = $("v-maintenance");
-  let h = `<div class="panel"><h2>Maintenance — lakehouse operations</h2>
-    <p class="note">Every operation is one atomic commit; earlier versions stay readable
-      (time travel) until vacuumed. All honest about what they touch.</p></div>`;
-  h += `<div class="panel"><h2>Compact <span class="pill">OPTIMIZE</span></h2>
-    <p class="note">Rewrite a table's active files into few large, ts-sorted, delta-encoded
-      files. Fixes the many-small-files tax of append-only logs.</p>
-    <div class="ctrlgrid"><label>Table <select id="mt-compact-tbl"></select></label>
-      <button class="btn" id="mt-compact">Compact</button>
-      <span class="qstat" id="mt-compact-out"></span></div></div>`;
-  h += `<div class="panel"><h2>Vacuum <span class="pill">GC</span></h2>
-    <p class="note">Delete parquet parts and managed media unreachable from the last N versions.
-      Frees space; shortens time-travel depth — that's the trade.</p>
-    <div class="ctrlgrid"><label>Keep last <input type="number" id="mt-retain" value="3" min="1" style="width:56px"> versions</label>
-      <button class="btn" id="mt-vacuum-dry">Dry run</button>
-      <button class="btn danger" id="mt-vacuum">Vacuum</button>
-      <span class="qstat" id="mt-vacuum-out"></span></div></div>`;
-  h += `<div class="panel"><h2>Delete range <span class="pill warn">destructive</span></h2>
-    <p class="note">Scrub a time range (bad run / PII / retention). Covered files drop,
-      overlapping files rewrite — one atomic commit.</p>
-    <div class="ctrlgrid"><label>Table <select id="mt-del-tbl"></select></label>
-      <label>from +s <input type="number" id="mt-del-t0" style="width:90px"></label>
-      <label>to +s <input type="number" id="mt-del-t1" style="width:90px"></label>
-      <button class="btn danger" id="mt-del">Delete range</button>
-      <span class="qstat" id="mt-del-out"></span></div></div>`;
-  el.innerHTML = h;
   const tbls = CUR.tables.filter(t => t.rows && t.table !== "centroids")
     .map(t => `<option>${esc(t.table)}</option>`).join("");
   $("mt-compact-tbl").innerHTML = tbls; $("mt-del-tbl").innerHTML = tbls;
@@ -1067,140 +1232,153 @@ function renderMaintenance() {
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({store: CUR.key, ...o})});
   $("mt-compact").onclick = async () => {
-    $("mt-compact-out").textContent = "…";
+    $("mt-compact-out").textContent = "working";
     try { const r = await post({op: "compact", table: $("mt-compact-tbl").value});
-      $("mt-compact-out").textContent = `${r.files_before}→${r.files_after} files · ${r.ratio}× · ${r.ms} ms`;
+      $("mt-compact-out").textContent =
+        `${r.files_before} to ${r.files_after} files · ${r.ratio}x · ${r.ms} ms`;
       selectStore(CUR.key, true);
     } catch (e) { $("mt-compact-out").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
   };
   const vac = (dry) => async () => {
-    const out = $("mt-vacuum-out"); out.textContent = "…";
+    const out2 = $("mt-vacuum-out"); out2.textContent = "working";
     try { const r = await post({op: "vacuum", retain: +$("mt-retain").value, dry_run: dry});
-      out.textContent = `${dry ? "would free" : "freed"} ${fmtB(r.bytes_freed)} · ${r.files_removed} files · ${r.ms} ms`;
+      out2.textContent = `${dry ? "would free" : "freed"} ${fmtB(r.bytes_freed)} · ${r.files_removed} files · ${r.ms} ms`;
       if (!dry) selectStore(CUR.key, true);
-    } catch (e) { out.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+    } catch (e) { out2.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
   };
   $("mt-vacuum-dry").onclick = vac(true); $("mt-vacuum").onclick = vac(false);
   $("mt-del").onclick = async () => {
     if (!confirm("Delete rows in this time range? Earlier versions keep the data until vacuum.")) return;
-    const out = $("mt-del-out"); out.textContent = "…";
+    const out2 = $("mt-del-out"); out2.textContent = "working";
     try { const r = await post({op: "delete_range", table: $("mt-del-tbl").value,
         t0: Math.round(CUR.min_ts + +$("mt-del-t0").value * 1e9),
         t1: Math.round(CUR.min_ts + +$("mt-del-t1").value * 1e9)});
-      out.textContent = `deleted ${r.rows_deleted.toLocaleString()} rows · ${r.files_rewritten} rewritten · ${r.ms} ms`;
+      out2.textContent = `deleted ${r.rows_deleted.toLocaleString()} rows · ${r.files_rewritten} rewritten · ${r.ms} ms`;
       selectStore(CUR.key, true);
-    } catch (e) { out.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+    } catch (e) { out2.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
   };
 }
+async function buildIx(btn, spec) {
+  btn.disabled = true; const old = btn.textContent; btn.textContent = "building";
+  try {
+    const r = await j("/api/build_index", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({store: CUR.key, ...spec})});
+    btn.textContent = `done · ${r.ms} ms`;
+    setTimeout(loadOps, 700);
+  } catch (e) { btn.textContent = "failed"; btn.title = e.message;
+    btn.disabled = false; setTimeout(() => btn.textContent = old, 1500); }
+}
 
-/* ── view switching ── */
+/* view routing */
+function routeView(v) {
+  if (v === "map") loadMap();
+  if (v === "arch") loadArch();
+  if (v === "storage") loadStorage();
+  if (v === "geo") drawGeo();
+  if (v === "data") loadData();
+  if (v === "ops") loadOps();
+  if (v === "analytics") loadAnalytics();
+  if (v === "overview") renderOverview();
+}
 document.querySelectorAll("#views button").forEach(b =>
   b.addEventListener("click", () => {
-    document.querySelectorAll("#views button").forEach(x => x.classList.toggle("on", x === b));
+    document.querySelectorAll("#views button").forEach(x =>
+      x.classList.toggle("on", x === b));
     document.querySelectorAll(".view").forEach(v => v.classList.remove("on"));
     $("v-" + b.dataset.v).classList.add("on");
-    if (b.dataset.v === "map") loadMap();
-    if (b.dataset.v === "arch") loadArch();
-    if (b.dataset.v === "storage") loadStorage();
-    if (b.dataset.v === "geo") drawGeo();
-    if (b.dataset.v === "data") loadData();
+    routeView(b.dataset.v);
   }));
 
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { drawScatter(); drawGeo(); });
-addEventListener("resize", () => { clearTimeout(window._rz); window._rz = setTimeout(() => { if (MAP) drawScatter(); drawGeo(); }, 150); });
-syncFloor();
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  drawScatter(); drawGeo(); });
+addEventListener("resize", () => { clearTimeout(window._rz);
+  window._rz = setTimeout(() => { if (MAP) drawScatter(); drawGeo(); }, 150); });
 loadStores();
 </script>
+
 <style>
-/* ================= architecture schematic ================= */
-#v-arch { position: relative; padding: 0;
-  height: calc(100vh - 118px); min-height: 480px; }
-#arch-wrap { position: absolute; inset: 0; overflow: hidden;
-  background:
-    radial-gradient(ellipse at 30% 0%, rgba(56,110,180,.10), transparent 60%),
-    #0b1220; }
-#arch-wrap::before { content: ""; position: absolute; inset: 0;
+/* architecture schematic */
+#v-arch { position:relative; padding:0;
+  height:calc(100vh - 118px); min-height:480px; }
+#arch-wrap { position:absolute; inset:0; overflow:hidden; background:#11151c; }
+#arch-wrap::before { content:""; position:absolute; inset:0;
   background-image:
-    linear-gradient(rgba(94,140,255,.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(94,140,255,.055) 1px, transparent 1px),
-    linear-gradient(rgba(94,140,255,.028) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(94,140,255,.028) 1px, transparent 1px);
-  background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
-  pointer-events: none; }
-#arch-svg { width: 100%; height: 100%; cursor: grab; display: block; }
-#arch-svg:active { cursor: grabbing; }
-#arch-svg text { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-.an-card { fill: #101a2e; stroke: #2c3f63; stroke-width: 1.2; rx: 3; }
-.an-card.sel { stroke: #ffb454; stroke-width: 2; }
-.an-head { fill: #16233d; }
-.an-title { fill: #dce7ff; font-size: 12.5px; font-weight: 700;
-  letter-spacing: .04em; }
-.an-kind { font-size: 8.5px; letter-spacing: .14em; }
-.an-stat { fill: #7d92bd; font-size: 9.5px; }
-.an-field-n { fill: #a8bbe0; font-size: 9.5px; }
-.an-field-t { fill: #5c729e; font-size: 9.5px; }
-.an-badge { fill: #0d2b1e; stroke: #1f5c40; }
-.an-badge-t { fill: #5fd39a; font-size: 8px; letter-spacing: .08em; }
-.an-lane { fill: #40507a; font-size: 10px; letter-spacing: .35em;
-  opacity: .75; }
-.an-lane-rule { stroke: #22304f; stroke-dasharray: 2 6; }
-.an-edge { fill: none; stroke: #3d5686; }
-.an-trace { stroke: #3d5686; stroke-width: 1.3; fill: none; }
-.an-flow { stroke: #6ea8ff; stroke-width: 1.3; fill: none;
-  stroke-dasharray: 3 9; animation: an-dash 1.6s linear infinite;
-  opacity: .8; }
-@keyframes an-dash { to { stroke-dashoffset: -12; } }
-.an-elabel { fill: #55688f; font-size: 8.5px; }
-.an-chan { fill: #101a2e; stroke: #2c3f63; }
-.an-chan-t { fill: #9fd7ff; font-size: 10px; font-weight: 600; }
-.an-chan-n { fill: #5c729e; font-size: 8.5px; }
-#arch-title { position: absolute; right: 18px; bottom: 16px;
-  border: 1px solid #34496f; background: rgba(13,20,36,.92);
-  font-family: ui-monospace, Menlo, monospace; color: #8fa7d4;
-  font-size: 10px; line-height: 1.55; padding: 8px 12px; min-width: 240px;
-  pointer-events: none; }
-#arch-title b { color: #e8f0ff; font-size: 11.5px; letter-spacing: .12em; }
-#arch-title .rule { border-top: 1px solid #2b3d61; margin: 5px -12px; }
-#arch-hint { position: absolute; left: 18px; bottom: 16px; color: #46587e;
-  font: 10px ui-monospace, Menlo, monospace; pointer-events: none; }
-#arch-detail { position: absolute; top: 14px; right: 14px; width: 340px;
-  max-height: calc(100% - 90px); overflow: auto; display: none;
-  border: 1px solid #34496f; background: rgba(13,20,36,.97);
-  font-family: ui-monospace, Menlo, monospace; font-size: 11px;
-  color: #a8bbe0; padding: 12px 14px; }
-#arch-detail.on { display: block; }
-#arch-detail h4 { margin: 0 0 4px; color: #ffd9a0; font-size: 13px; }
-#arch-detail table { width: 100%; border-collapse: collapse; margin: 6px 0; }
-#arch-detail td { padding: 1.5px 4px 1.5px 0; border-bottom:
-  1px solid #1c2a47; vertical-align: top; }
-#arch-detail td:last-child { color: #5c729e; text-align: right; }
-#arch-detail pre { background: #0a1122; border: 1px solid #1c2a47;
-  padding: 6px; overflow: auto; font-size: 10px; color: #7d92bd; }
-#arch-detail .x { position: sticky; float: right; top: 0; cursor: pointer;
-  color: #5c729e; }
+    linear-gradient(rgba(120,150,170,.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120,150,170,.06) 1px, transparent 1px),
+    linear-gradient(rgba(120,150,170,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120,150,170,.03) 1px, transparent 1px);
+  background-size:120px 120px, 120px 120px, 24px 24px, 24px 24px;
+  pointer-events:none; }
+#arch-svg { width:100%; height:100%; cursor:grab; display:block; }
+#arch-svg:active { cursor:grabbing; }
+#arch-svg text { font-family:ui-monospace, "SF Mono", Menlo, monospace; }
+.an-card { fill:#171c25; stroke:#39424f; stroke-width:1.2; rx:3; }
+.an-card.sel { stroke:#5accb9; stroke-width:2; }
+.an-head { fill:#1e242f; }
+.an-title { fill:#e3e8ee; font-size:12.5px; font-weight:700;
+  letter-spacing:.04em; }
+.an-kind { font-size:8.5px; letter-spacing:.14em; }
+.an-stat { fill:#8b96a4; font-size:9.5px; }
+.an-field-n { fill:#b4bec9; font-size:9.5px; }
+.an-field-t { fill:#68727e; font-size:9.5px; }
+.an-badge { fill:#12261f; stroke:#265c4c; }
+.an-badge-t { fill:#5accb9; font-size:8px; letter-spacing:.08em; }
+.an-lane { fill:#535e6b; font-size:10px; letter-spacing:.35em; opacity:.85; }
+.an-lane-rule { stroke:#2a323d; stroke-dasharray:2 6; }
+.an-trace { stroke:#46525f; stroke-width:1.3; fill:none; }
+.an-flow { stroke:#3fb9a5; stroke-width:1.3; fill:none;
+  stroke-dasharray:3 9; animation:an-dash 1.6s linear infinite; opacity:.7; }
+@keyframes an-dash { to { stroke-dashoffset:-12; } }
+@media (prefers-reduced-motion: reduce) { .an-flow { animation:none; } }
+.an-elabel { fill:#68727e; font-size:8.5px; }
+.an-chan { fill:#171c25; stroke:#39424f; }
+.an-chan-t { fill:#9fded1; font-size:10px; font-weight:600; }
+.an-chan-n { fill:#68727e; font-size:8.5px; }
+.an-stage { fill:#171c25; stroke:#3fb9a5; }
+#arch-title { position:absolute; right:18px; bottom:16px;
+  border:1px solid #39424f; background:rgba(17,21,28,.94);
+  font-family:ui-monospace, Menlo, monospace; color:#8b96a4;
+  font-size:10px; line-height:1.55; padding:8px 12px; min-width:240px;
+  pointer-events:none; }
+#arch-title b { color:#e3e8ee; font-size:11.5px; letter-spacing:.12em; }
+#arch-title .rule { border-top:1px solid #2a323d; margin:5px -12px; }
+#arch-hint { position:absolute; left:18px; bottom:16px; color:#535e6b;
+  font:10px ui-monospace, Menlo, monospace; pointer-events:none; }
+#arch-detail { position:absolute; top:14px; right:14px; width:340px;
+  max-height:calc(100% - 90px); overflow:auto; display:none;
+  border:1px solid #39424f; background:rgba(17,21,28,.97);
+  font-family:ui-monospace, Menlo, monospace; font-size:11px;
+  color:#b4bec9; padding:12px 14px; }
+#arch-detail.on { display:block; }
+#arch-detail h4 { margin:0 0 4px; color:#5accb9; font-size:13px; }
+#arch-detail table { width:100%; border-collapse:collapse; margin:6px 0; }
+#arch-detail td { padding:1.5px 4px 1.5px 0;
+  border-bottom:1px solid #232a34; vertical-align:top; }
+#arch-detail td:last-child { color:#68727e; text-align:right; }
+#arch-detail pre { background:#10141a; border:1px solid #232a34;
+  padding:6px; overflow:auto; font-size:10px; color:#8b96a4; }
+#arch-detail .x { position:sticky; float:right; top:0; cursor:pointer;
+  color:#68727e; }
 </style>
 <script>
-let ARCH = null, ARCH_KEY = null;
+let ARCH = null;
 async function loadArch() {
-  if (!ARCH || ARCH_KEY !== CUR.key) {
-    ARCH = await j(`/api/architecture?store=${CUR.key}`);
-    ARCH_KEY = CUR.key;
-  }
+  if (!ARCH) ARCH = await j(`/api/architecture?store=${CUR.key}`);
   drawArch();
 }
 function archLane(n) {
   if (n.kind === "media") return 0;
   if (n.kind === "model") return 3;
-  if (["context_captions", "vlm_verdicts", "teacher_windows",
-       "centroids"].includes(n.id)) return 3;
-  if (n.kind === "embeddings" || n.id === "context") return 2;
-  return 1;                                    // raw timeseries
+  if (["centroids"].includes(n.id)) return 3;
+  if (n.kind === "embeddings") return 2;
+  return 1;
 }
-const AN_LANES = ["MEDIA", "RAW TABLES", "DERIVED INDEXES", "KNOWLEDGE"];
-const AN_KINDC = { media: "#c99a5b", timeseries: "#7fb0ff",
-                   embeddings: "#5fd39a", model: "#d98fd4",
-                   frame_index: "#7fb0ff" };
-function fmtTs(ns) { return ns == null ? "—" :
+const AN_LANES = ["MEDIA", "RAW TABLES", "VECTOR TABLES", "ARTIFACTS"];
+const AN_KINDC = { media:"#c99a5b", timeseries:"#7fb0ff",
+                   embeddings:"#5accb9", model:"#d98fd4",
+                   frame_index:"#7fb0ff" };
+function fmtTs(ns) { return ns == null ? "" :
   new Date(ns / 1e6).toISOString().slice(0, 19).replace("T", " "); }
 function drawArch() {
   const svg = $("arch-svg"), cam = $("arch-cam");
@@ -1214,7 +1392,6 @@ function drawArch() {
     if (anchor) e.setAttribute("text-anchor", anchor);
     e.textContent = s; return e; };
 
-  // ---- layout: lanes as columns, blocks stacked by size ----
   const LANE_X = [40, 330, 660, 990], LANE_W = 250, PIPE_X = 1330;
   const laneY = [70, 70, 70, 70];
   const pos = {};
@@ -1239,7 +1416,7 @@ function drawArch() {
       el("rect", { width: LANE_W, height: 22, class: "an-head" }, g);
       el("rect", { width: 3, height: h,
                    fill: AN_KINDC[n.kind] || "#7fb0ff" }, g);
-      txt(10, 15, n.id.replace("model:", "⚙ "), "an-title", g);
+      txt(10, 15, n.id.replace("model:", ""), "an-title", g);
       const kt = txt(LANE_W - 8, 14, n.kind.toUpperCase(), "an-kind", g,
                      "end");
       kt.setAttribute("fill", AN_KINDC[n.kind] || "#7fb0ff");
@@ -1250,7 +1427,7 @@ function drawArch() {
       fields.forEach((f, i) => {
         txt(12, 52 + i * 13, f.name, "an-field-n", g);
         txt(LANE_W - 10, 52 + i * 13, f.type.length > 18 ?
-            f.type.slice(0, 17) + "…" : f.type, "an-field-t", g, "end");
+            f.type.slice(0, 17) + ".." : f.type, "an-field-t", g, "end");
       });
       let bx = 10;
       const by = 46 + fields.length * 13 + 2;
@@ -1260,13 +1437,12 @@ function drawArch() {
                      class: "an-badge" }, g);
         txt(bx + w / 2, by, s, "an-badge-t", g, "middle");
         bx += w + 6; };
-      if ((n.sidecars || []).length) badge("MMAP×" + n.sidecars.length);
+      if ((n.sidecars || []).length) badge("MMAP x" + n.sidecars.length);
       if (n.meta_json) badge("META");
       g.style.cursor = "pointer";
     });
   });
 
-  // ---- edges: routed traces with flow animation ----
   ARCH.edges.forEach(e => {
     const a = pos[e.from], b = pos[e.to];
     if (!a || !b) return;
@@ -1279,12 +1455,12 @@ function drawArch() {
         "middle");
   });
 
-  // ---- query pipeline: channels -> RRF -> verify tiers ----
+  /* query pipeline: channels feed the fitted selection chain */
   txt(PIPE_X, 40, "QUERY PIPELINE", "an-lane");
   el("line", { x1: PIPE_X - 20, y1: 50, x2: PIPE_X - 20, y2: 1400,
                class: "an-lane-rule" });
   let cy = 70;
-  const CH_W = 190;
+  const CH_W = 190, ST_X = PIPE_X + CH_W + 90;
   ARCH.channels.forEach(c => {
     const g = el("g", { transform: `translate(${PIPE_X},${cy})` });
     el("rect", { width: CH_W, height: 34, rx: 3, class: "an-chan" }, g);
@@ -1293,39 +1469,34 @@ function drawArch() {
     txt(CH_W - 8, 14, c.id, "an-kind", g, "end");
     const y = cy + 17;
     const d = `M${PIPE_X + CH_W},${y} C${PIPE_X + CH_W + 45},${y} ` +
-              `${PIPE_X + CH_W + 45},${170} ${PIPE_X + CH_W + 90},${170}`;
+              `${PIPE_X + CH_W + 45},${92} ${ST_X},${92}`;
     el("path", { d, class: "an-trace" }, g_edges);
     el("path", { d, class: "an-flow" }, g_edges);
     cy += 46;
   });
-  const stage = (x, y, w, title, note, col) => {
-    const g = el("g", { transform: `translate(${x},${y})` });
-    el("rect", { width: w, height: 44, rx: 3, class: "an-chan",
-                 stroke: col }, g);
-    txt(10, 18, title, "an-chan-t", g);
-    txt(10, 32, note, "an-chan-n", g);
-    return { x, y, w }; };
-  const rrf = stage(PIPE_X + CH_W + 90, 148, 130, "RRF fusion",
-                    "rank consensus · no vetoes", "#6ea8ff");
-  const scr = stage(PIPE_X + CH_W + 90, 240, 130, "2B screen",
-                    ARCH.verify.screen, "#c99a5b");
-  const jdg = stage(PIPE_X + CH_W + 90, 320, 130, "7B judge",
-                    ARCH.verify.judge, "#ffb454");
-  [[rrf, scr, "background"], [scr, jdg, "top of fused ∪ 2B"]].forEach(
-    ([p, q2, lab]) => {
-      const x = p.x + p.w / 2;
-      const d = `M${x},${p.y + 44} L${x},${q2.y}`;
+  let sy = 70;
+  const F = ARCH.fitted || {};
+  const stageNote = {
+    fuse: F.set_weights ? "per-store weights, holdout " + (F.loqo_mean ?? "") : null,
+    cut: F.cut_alpha != null ? `alpha ${F.cut_alpha_dir ?? 0} dir · ${F.cut_alpha} other` : null,
+    nms: F.nms_r_dir != null ? `radius ${F.nms_r_dir} dir · ${F.nms_r ?? 0} other` : null,
+  };
+  let prev = null;
+  ARCH.pipeline.forEach(p => {
+    const g = el("g", { transform: `translate(${ST_X},${sy})` });
+    el("rect", { width: 150, height: 44, rx: 3, class: "an-stage" }, g);
+    txt(10, 18, p.label, "an-chan-t", g);
+    txt(10, 32, stageNote[p.id] || p.note, "an-chan-n", g);
+    if (prev != null) {
+      const x = ST_X + 75;
+      const d = `M${x},${prev + 44} L${x},${sy}`;
       el("path", { d, class: "an-trace" }, g_edges);
       el("path", { d, class: "an-flow" }, g_edges);
-      txt(x + 6, (p.y + 44 + q2.y) / 2, lab, "an-elabel", g_edges);
-    });
-  if (ARCH.verify.cache) {
-    const x = jdg.x + jdg.w / 2;
-    txt(x, jdg.y + 62, "↺ verdicts append to " + ARCH.verify.cache +
-        " · the store learns", "an-elabel", cam, "middle");
-  }
+    }
+    prev = sy;
+    sy += 66;
+  });
 
-  // ---- title block (engineering drawing stamp) ----
   $("arch-title").innerHTML =
     `<b>ELIDEDB · STORE SCHEMATIC</b><div class="rule"></div>` +
     `store&nbsp;&nbsp;&nbsp;${esc(ARCH.store)}<br>` +
@@ -1335,7 +1506,6 @@ function drawArch() {
     `<div class="rule"></div>drawn from live state · ` +
     new Date().toISOString().slice(0, 16).replace("T", " ");
 
-  // ---- interactions: pan / zoom / drag / select ----
   let view = svg._view || { x: 0, y: 0, k: 0.82 };
   svg._view = view;
   const apply = () => cam.setAttribute("transform",
@@ -1392,12 +1562,12 @@ function archSelect(id) {
     c.classList.remove("sel"));
   const g = document.querySelector(`.an-node[data-id="${CSS.escape(id)}"]`);
   if (g) g.querySelector(".an-card").classList.add("sel");
-  let h = `<span class="x" onclick="$('arch-detail').classList.remove('on')">✕</span>` +
+  let h = `<span class="x" onclick="$('arch-detail').classList.remove('on')">x</span>` +
     `<h4>${esc(n.id)}</h4>` +
     `<div>${n.kind} · ${n.rows != null ? fmtN(n.rows) + " rows · " : ""}` +
     `${fmtB(n.bytes || 0)}${n.files != null ? " · " + n.files + " files" : ""}` +
     `${n.version ? " · " + n.version + " commits" : ""}</div>` +
-    `<div style="color:#5c729e">${fmtTs(n.min_ts)} → ${fmtTs(n.max_ts)}</div>`;
+    `<div style="color:#68727e">${fmtTs(n.min_ts)} to ${fmtTs(n.max_ts)}</div>`;
   if ((n.fields || []).length) {
     h += `<table>` + n.fields.map(f =>
       `<tr><td>${esc(f.name)}</td><td>${esc(f.type)}</td></tr>`).join("") +

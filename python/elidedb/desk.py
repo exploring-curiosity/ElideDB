@@ -273,35 +273,181 @@ def api_architecture(key: str):
                 (src in have or src == "media"):
             edges.append({"from": src, "to": nid, "label": lab})
 
-    # query channels: present iff their table/artifact exists
+    # query channels: present iff their table exists on disk. This list
+    # is the CURRENT set path, nothing else; a channel appears the
+    # moment its vectors are ingested and vanishes with them.
     channels = []
     def chan(cid, label, need, note):
         ok = need() if callable(need) else need in have
         if ok:
             channels.append({"id": cid, "label": label, "note": note})
-    chan("app", "appearance", "embeddings", "window vectors · soft-AND atoms")
-    chan("anc", "anchor",
-         lambda: (db.dir / "tables/frames/_subjects.json").exists(),
-         "self-mined subject prefix")
-    chan("lex", "captions", "context_captions", "TF-IDF over VLM text")
-    chan("met", "metadata", "meta_text", "uploader text · search-time only")
-    chan("ctx", "context", "context_events", "FDNN-V2 event vectors")
-    chan("mot", "motion", "motion_vectors", "delta-appearance × swap")
-    chan("obj", "objects", "object_vectors", "region crops · conjunctive")
-    chan("scr", "screen", "vlm_verdicts", "cached 2B margins")
+    chan("app", "appearance", "embeddings", "window vectors, exact scan")
+    chan("pe", "perception", "pe_vectors", "PE-Core text to frame")
+    chan("sig2", "fine-grained", "sig2_vectors", "SigLIP 2 frame space")
+    chan("conj", "conjunction", "sig2_vectors",
+         "every noun phrase must find its own frame")
+    chan("iv2", "video-text", "iv2_vectors",
+         "InternVideo2, 4 frames encoded together")
+    chan("act", "action", "action_probs", "V-JEPA 2 verb posteriors")
+    chan("vid", "clip-text", "xclip_vectors", "X-CLIP pooled clips")
+    chan("obj", "objects", "object_vectors", "region crops, conjunctive")
+    chan("mot", "motion", "motion_vectors",
+         "delta appearance against the antonym")
+    chan("prf", "feedback", "vjepa_vectors",
+         "Rocchio anchors mined from this corpus")
+
+    # selection pipeline: the fitted stages every result passes
+    # through, in order. Fitted values come from the per-store
+    # artifact; stages render even unfitted (neutral defaults).
+    fitted = {}
+    swp = db.dir / "_set_weights.json"
+    if swp.exists():
+        try:
+            fitted = json.loads(swp.read_text())
+        except Exception:
+            pass
+    pipeline = [
+        {"id": "fuse", "label": "Fitted fusion",
+         "note": "weighted rank consensus, per-store weights"},
+        {"id": "gate", "label": "No-match gate",
+         "note": "abstains when the corpus lacks the action"},
+        {"id": "filter", "label": "Contrast filter",
+         "note": "direction evidence, fitted quantile"},
+        {"id": "nms", "label": "Event dedup",
+         "note": "one clip per event, fitted radius"},
+        {"id": "cut", "label": "Confidence cut",
+         "note": "the set ends where confidence does"},
+        {"id": "audit", "label": "Geometry audit",
+         "note": "SAM 3 tracker verification, opt-in tier"},
+    ]
 
     total_rows = sum(n.get("rows") or 0 for n in nodes)
     total_bytes = sum(n.get("bytes") or 0 for n in nodes)
     return {"store": db.name, "key": key, "nodes": nodes, "edges": edges,
-            "channels": channels,
-            "verify": {"screen": "Qwen2-VL-2B · swap-contrast",
-                       "judge": "Qwen2-VL-7B · pins ranks",
-                       "cache": "vlm_verdicts" if "vlm_verdicts" in have
-                                else None},
+            "channels": channels, "pipeline": pipeline,
+            "fitted": {k: fitted[k] for k in
+                       ("set_weights_dir", "set_weights", "cut_alpha_dir",
+                        "cut_alpha", "nms_r_dir", "nms_r", "loqo_mean")
+                       if k in fitted},
             "totals": {"rows": total_rows, "bytes": total_bytes,
                        "tables": len([n for n in nodes
                                       if n["kind"] not in
                                       ("media", "model")])}}
+
+
+def api_analytics(key: str):
+    """Operational analytics, general to ANY store: everything here is
+    derived from transaction logs, parquet footers, and table meta.
+    No data pages are read and nothing is dataset-specific; a store of
+    factory video, dashcam runs, or plain sensor CSVs renders the same
+    panels."""
+    import pyarrow.parquet as pq
+    ck = ("analytics", key,
+          tuple(sorted((d["table"], d["version"])
+                       for d in STORES[key].describe())))
+    if ck in _CACHE:
+        return _CACHE[ck]
+    db = STORES[key]
+    desc = db.describe()
+    lo = min((d["min_ts"] for d in desc
+              if d["rows"] and d.get("min_ts")), default=0)
+    hi = max((d["max_ts"] for d in desc
+              if d["rows"] and d.get("max_ts")), default=lo + 1)
+    span = max(hi - lo, 1)
+
+    # write history straight off the transaction logs
+    commits = []
+    for d in desc:
+        try:
+            for c in db.table(d["table"]).history():
+                commits.append({"table": d["table"],
+                                "version": c.get("version"),
+                                "op": c.get("op", ""),
+                                "rows": c.get("added_rows", 0),
+                                "ts_utc": c.get("ts_utc", "")})
+        except Exception:
+            pass
+    commits.sort(key=lambda c: c["ts_utc"])
+
+    # temporal density from ROW-GROUP footer stats only: rows per time
+    # bucket per table. The row group is the pruning unit, so this is
+    # literally the elision map a range query sees.
+    buckets_n = 64
+    density = {}
+    for d in desc:
+        if not d["rows"] or not d.get("min_ts"):
+            continue
+        st = db.table(d["table"]).state()
+        buckets = [0.0] * buckets_n
+        try:
+            for f in st.files:
+                pf = pq.ParquetFile(db.dir / "tables" / d["table"]
+                                    / f.path)
+                md = pf.metadata
+                names = md.schema.names
+                if "ts" not in names:
+                    continue
+                ti = names.index("ts")
+                for g in range(md.num_row_groups):
+                    rg = md.row_group(g)
+                    s = rg.column(ti).statistics
+                    if not s or s.min is None:
+                        continue
+                    a = int((s.min - lo) * buckets_n // span)
+                    b = int((s.max - lo) * buckets_n // span)
+                    a = min(max(a, 0), buckets_n - 1)
+                    b = min(max(b, a), buckets_n - 1)
+                    per = rg.num_rows / (b - a + 1)
+                    for i in range(a, b + 1):
+                        buckets[i] += per
+        except Exception:
+            continue
+        if sum(buckets) > 0:
+            density[d["table"]] = [int(round(x)) for x in buckets]
+
+    # vector inventory: every embeddings-kind table, with coverage
+    # against the store's episode base when one exists
+    base_rows = next((d["rows"] for d in desc
+                      if d["table"] == "episodes" and d["rows"]), None)
+    vectors = []
+    for d in desc:
+        if d["kind"] != "embeddings" or not d["rows"]:
+            continue
+        meta = d.get("meta") or {}
+        vectors.append({
+            "table": d["table"], "rows": d["rows"], "bytes": d["bytes"],
+            "dim": meta.get("dim"),
+            "model": str(meta.get("model", ""))[:60],
+            "per_base": (round(d["rows"] / base_rows, 2)
+                         if base_rows else None)})
+
+    fitted = None
+    swp = db.dir / "_set_weights.json"
+    if swp.exists():
+        try:
+            fitted = json.loads(swp.read_text())
+        except Exception:
+            pass
+
+    ix = api_indexes(key)
+    out = {
+        "span": {"lo": lo, "hi": hi},
+        "tables": [{"table": d["table"], "kind": d["kind"],
+                    "rows": d["rows"], "bytes": d["bytes"],
+                    "files": d["files"], "version": d["version"],
+                    "bpr": (round(d["bytes"] / d["rows"], 1)
+                            if d["rows"] else None)} for d in desc],
+        "commits": commits[-48:],
+        "commit_total": len(commits),
+        "density": density, "buckets": buckets_n,
+        "vectors": vectors, "base_rows": base_rows,
+        "fitted": fitted,
+        "indexes": {"bptree": ix["bptree"], "ann": ix["ann"]},
+    }
+    if len(_CACHE) > 32:
+        _CACHE.clear()
+    _CACHE[ck] = out
+    return out
 
 
 def api_geo(key: str):
@@ -323,11 +469,25 @@ def api_geo(key: str):
     return {"points": []}
 
 
+def _as_frameset(db, fs):
+    """Tolerate frame tables whose registered kind is not frame_index
+    (seen on stores assembled by filtering another store): window()
+    then returns a plain Arrow table, which still carries the frame
+    index columns and decodes fine once wrapped."""
+    if fs is None or hasattr(fs, "decode"):
+        return fs
+    try:
+        from .video import FrameSet
+        return FrameSet(db, "frames", fs)
+    except Exception:
+        return None
+
+
 def api_thumb(key: str, stream: str, t: int, width: int = 360):
     from PIL import Image
     db = STORES[key]
     win, _ = db.window(t - 2_000_000_000, t + 2_000_000_000, tables=["frames"])
-    fs = win.get("frames")
+    fs = _as_frameset(db, win.get("frames"))
     if fs is None or len(fs) == 0:
         return None
     decoded = fs.decode(stream=stream or None, width=width, limit=1)
@@ -382,7 +542,7 @@ def api_clip(key: str, stream: str, t0: int, t1: int, width: int = 640):
     from PIL import Image
     db = STORES[key]
     win, _ = db.window(t0, t1, tables=["frames"])
-    fs = win.get("frames")
+    fs = _as_frameset(db, win.get("frames"))
     # Every failure below names itself. A <video> element cannot render an
     # error body, so the player fetches the clip and shows these strings —
     # "could not build a clip" with no reason is not a diagnosis.
@@ -746,6 +906,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(api_map(q["store"]))
             if u.path == "/api/geo":
                 return self._json(api_geo(q["store"]))
+            if u.path == "/api/analytics":
+                return self._json(api_analytics(q["store"]))
             if u.path == "/api/history":
                 db = STORES[q["store"]]
                 return self._json(db.table(q["table"]).history())
