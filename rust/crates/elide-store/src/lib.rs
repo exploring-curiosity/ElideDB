@@ -5,10 +5,12 @@
 
 pub mod count;
 pub mod log;
+pub mod predicate;
 pub mod scan;
 pub mod store;
 
 pub use count::{ByteCounter, CountingFile};
 pub use log::{FileEntry, TableLog, TableState};
-pub use scan::{scan, ScanResult, ScanStats};
+pub use predicate::{Op, Predicate, Value};
+pub use scan::{scan, scan_where, ScanResult, ScanStats};
 pub use store::{Store, StoreMeta, TableSummary};

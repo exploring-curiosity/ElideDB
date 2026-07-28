@@ -74,6 +74,15 @@ def write_parquet(table: pa.Table, path):
     pq.write_table(table, path, row_group_size=rows,
                    compression="zstd",
                    use_dictionary=dict_cols,
+                   # The PAGE INDEX (per-page min/max + offsets) is what
+                   # lets a reader skip pages INSIDE a surviving row group
+                   # — the layer that makes a columnar file behave like an
+                   # index for selective reads. pyarrow omits it by
+                   # default, so every file written before 2026-07-28 can
+                   # only prune to row-group granularity. It costs a small
+                   # constant in the footer and is read only when a query
+                   # has a predicate that can use it.
+                   write_page_index=True,
                    column_encoding={"ts": "DELTA_BINARY_PACKED"})
     fsync_file(path)  # durability: data reaches disk BEFORE the commit that
                       # references it — the write-ahead ordering rule

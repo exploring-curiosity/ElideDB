@@ -292,7 +292,8 @@ def main():
     new_name = f"part-{uuid.uuid4().hex[:12]}.parquet"
     import pyarrow.parquet as pq
     pq.write_table(t, frames.dir / new_name, row_group_size=8192,
-                   compression="zstd", write_statistics=True)
+                   compression="zstd", write_statistics=True,
+                   write_page_index=True)
     st = frames.state()
     version = frames.log.commit(
         # a frame index registered as kind="timeseries" (what stores

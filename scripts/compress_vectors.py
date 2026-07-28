@@ -63,7 +63,7 @@ def rewrite(store: Store, name: str) -> dict | None:
         pq.write_table(
             tbl, t.dir / new, row_group_size=ROW_GROUP, compression="zstd",
             use_dictionary=False, use_byte_stream_split=bss_cols,
-            write_statistics=True)
+            write_statistics=True, write_page_index=True)
         ts = tbl.column("ts")
         add.append(FileEntry(new, len(tbl), (t.dir / new).stat().st_size,
                              pa.compute.min(ts).as_py(),

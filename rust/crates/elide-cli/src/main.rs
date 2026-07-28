@@ -40,6 +40,10 @@ enum Cmd {
         /// (isolates engine time from process spawn)
         #[arg(long, default_value_t = 1)]
         repeat: u32,
+        /// predicate pushed into the scan, e.g. --where "keyframe = true"
+        /// (repeatable; all must hold)
+        #[arg(long = "where", value_name = "PREDICATE")]
+        wheres: Vec<String>,
     },
     /// Build the scan-tier codes sidecar for a vector table
     Vindex { store: PathBuf, table: String },
@@ -75,10 +79,15 @@ enum Cmd {
 fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Stats { store, version, json } => stats(&store, version, json),
-        Cmd::Scan { store, table, t0, t1, columns, version, json, repeat } => {
+        Cmd::Scan { store, table, t0, t1, columns, version, json, repeat, wheres } => {
             let cols: Option<Vec<String>> = columns
                 .map(|s| s.split(',').map(|c| c.trim().to_string()).collect());
-            scan(&store, &table, t0, t1, cols.as_deref(), version, json, repeat)
+            let preds = wheres
+                .iter()
+                .map(|w| elide_store::Predicate::parse(w))
+                .collect::<Result<Vec<_>>>()?;
+            scan(&store, &table, t0, t1, cols.as_deref(), version, json, repeat,
+                 &preds)
         }
         Cmd::Vindex { store, table } => {
             let s = Store::open(&store)?;
@@ -220,13 +229,16 @@ fn scan(
     version: Option<u64>,
     json: bool,
     repeat: u32,
+    preds: &[elide_store::Predicate],
 ) -> Result<()> {
     let store = Store::open(path)?;
     let mut lat_ms = Vec::with_capacity(repeat as usize);
-    let mut r = elide_store::scan(&store, table, t0, t1, columns, version)?;
+    let mut r =
+        elide_store::scan_where(&store, table, t0, t1, columns, version, preds)?;
     for _ in 1..repeat {
         let t = std::time::Instant::now();
-        r = elide_store::scan(&store, table, t0, t1, columns, version)?;
+        r = elide_store::scan_where(&store, table, t0, t1, columns, version,
+                                    preds)?;
         lat_ms.push(t.elapsed().as_secs_f64() * 1e3);
     }
     if json {
@@ -240,7 +252,8 @@ fn scan(
         return Ok(());
     }
     println!(
-        "rows {}   bytes read {} / {}   elided {:.2}%   files {}/{}   row groups {}/{}",
+        "rows {}   bytes read {} / {}   elided {:.2}%   files {}/{}   \
+         row groups {}/{}   pages ~{}/{}",
         r.stats.rows,
         r.stats.bytes_read,
         r.stats.bytes_total,
@@ -249,6 +262,8 @@ fn scan(
         r.stats.files_total,
         r.stats.row_groups_scanned,
         r.stats.row_groups_total,
+        r.stats.pages_scanned,
+        r.stats.pages_total,
     );
     Ok(())
 }
