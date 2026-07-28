@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -r deploy/requirements.txt
 COPY python /app/python
 COPY scripts/get_iv2.py /app/scripts/get_iv2.py
 COPY deploy/entrypoint.sh /app/deploy/entrypoint.sh
-COPY deploy/warm.py /app/deploy/warm.py
+COPY deploy/serve.py /app/deploy/serve.py
 # the demo store arrives at boot from DEMO_STORE_DATASET when set
 # (Space git repos cap at 1 GB); local builds may bake it instead:
 #   COPY deploy/demo/lake /app/lake

@@ -16,5 +16,6 @@ print("demo store downloaded", flush=True)
 PY
 fi
 python scripts/get_iv2.py
-python deploy/warm.py
-exec python -c "import sys; sys.argv=['desk']; from elidedb.desk import main; main()"
+# warm and serve in ONE process: the towers a separate warm process
+# loads die with it, and the first user query would pay them again
+exec python deploy/serve.py

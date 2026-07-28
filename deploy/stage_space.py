@@ -61,7 +61,7 @@ def main():
 
     copy(ROOT / "python", OUT / "python")
     copy(ROOT / "scripts" / "get_iv2.py", OUT / "scripts" / "get_iv2.py")
-    for f in ("requirements.txt", "entrypoint.sh", "warm.py"):
+    for f in ("requirements.txt", "entrypoint.sh", "serve.py"):
         copy(ROOT / "deploy" / f, OUT / "deploy" / f)
     # the Dockerfile builds from the repo root with this exact layout
     copy(ROOT / "deploy" / "Dockerfile", OUT / "Dockerfile")
