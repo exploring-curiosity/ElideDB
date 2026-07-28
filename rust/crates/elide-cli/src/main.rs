@@ -41,6 +41,35 @@ enum Cmd {
         #[arg(long, default_value_t = 1)]
         repeat: u32,
     },
+    /// Build the scan-tier codes sidecar for a vector table
+    Vindex { store: PathBuf, table: String },
+    /// Vector search: tiered (codes -> rerank) by default, --exact for flat
+    Vsearch {
+        store: PathBuf,
+        table: String,
+        /// query vector as .npy (little-endian float32)
+        #[arg(long)]
+        query_npy: PathBuf,
+        #[arg(long, default_value_t = 10)]
+        k: usize,
+        #[arg(long, default_value_t = 100)]
+        shortlist: usize,
+        #[arg(long)]
+        exact: bool,
+        #[arg(long, default_value_t = 1)]
+        repeat: u32,
+    },
+    /// Recall gate: tiered vs exact on sampled table rows (leave-one-out)
+    Vselftest {
+        store: PathBuf,
+        table: String,
+        #[arg(long, default_value_t = 200)]
+        queries: usize,
+        #[arg(long, default_value_t = 10)]
+        k: usize,
+        #[arg(long, default_value_t = 100)]
+        shortlist: usize,
+    },
 }
 
 fn main() -> Result<()> {
@@ -51,7 +80,92 @@ fn main() -> Result<()> {
                 .map(|s| s.split(',').map(|c| c.trim().to_string()).collect());
             scan(&store, &table, t0, t1, cols.as_deref(), version, json, repeat)
         }
+        Cmd::Vindex { store, table } => {
+            let s = Store::open(&store)?;
+            let (path, bytes, version) = elide_vec::build_for(&s, &table)?;
+            println!("built {path:?}  ({bytes} bytes, data version {version})");
+            Ok(())
+        }
+        Cmd::Vsearch { store, table, query_npy, k, shortlist, exact, repeat } => {
+            vsearch(&store, &table, &query_npy, k, shortlist, exact, repeat)
+        }
+        Cmd::Vselftest { store, table, queries, k, shortlist } => {
+            let s = Store::open(&store)?;
+            let t = elide_vec::VecTable::load(&s, &table, None)?;
+            let codes = elide_vec::CodesFile::open(&elide_vec::artifact_path(
+                &s.table_dir(&table),
+                t.version,
+            ))?;
+            let recall = elide_vec::self_test(&t, &codes, queries, k, shortlist)?;
+            println!(
+                "recall@{k} = {recall:.4}  ({queries} queries, shortlist {shortlist}, \
+                 n={}, dim={})",
+                t.n, t.dim
+            );
+            Ok(())
+        }
     }
+}
+
+fn vsearch(
+    store: &PathBuf,
+    table: &str,
+    query_npy: &PathBuf,
+    k: usize,
+    shortlist: usize,
+    exact: bool,
+    repeat: u32,
+) -> Result<()> {
+    let s = Store::open(store)?;
+    let t = elide_vec::VecTable::load(&s, table, None)?;
+    let mut q = elide_vec::npy::read_f32_1d(query_npy)?;
+    anyhow::ensure!(
+        q.len() == t.dim,
+        "query dim {} != table dim {}",
+        q.len(),
+        t.dim
+    );
+    elide_vec::normalize(&mut q);
+    let mut lat_ms = Vec::new();
+    let (hits, tier_bytes) = if exact {
+        let mut hits = elide_vec::exact_top_k(&t, &q, k);
+        for _ in 1..repeat {
+            let s0 = std::time::Instant::now();
+            hits = elide_vec::exact_top_k(&t, &q, k);
+            lat_ms.push(s0.elapsed().as_secs_f64() * 1e3);
+        }
+        (hits, (t.n * t.dim * 4) as u64)
+    } else {
+        let codes = elide_vec::CodesFile::open(&elide_vec::artifact_path(
+            &s.table_dir(table),
+            t.version,
+        ))?;
+        let (mut hits, mut bytes) = elide_vec::tiered_top_k(&t, &codes, &q, k, shortlist)?;
+        for _ in 1..repeat {
+            let s0 = std::time::Instant::now();
+            (hits, bytes) = elide_vec::tiered_top_k(&t, &codes, &q, k, shortlist)?;
+            lat_ms.push(s0.elapsed().as_secs_f64() * 1e3);
+        }
+        (hits, bytes)
+    };
+    for (i, score) in &hits {
+        println!("{:.4}  ts {}  stream {}", score, t.ts[*i], t.stream[*i]);
+    }
+    println!(
+        "tier bytes touched {} of {} fp32 bytes ({:.1}x less)",
+        tier_bytes,
+        t.n * t.dim * 4,
+        (t.n * t.dim * 4) as f64 / tier_bytes.max(1) as f64
+    );
+    if !lat_ms.is_empty() {
+        lat_ms.sort_by(|a, b| a.total_cmp(b));
+        println!(
+            "in-process lat p50 {:.3} ms  max {:.3} ms",
+            lat_ms[lat_ms.len() / 2],
+            lat_ms[lat_ms.len() - 1]
+        );
+    }
+    Ok(())
 }
 
 fn stats(path: &PathBuf, version: Option<u64>, json: bool) -> Result<()> {

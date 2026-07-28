@@ -11,5 +11,5 @@ pub mod codes;
 pub mod npy;
 pub mod search;
 
-pub use codes::{build_codes, CodesFile};
-pub use search::{exact_top_k, tiered_top_k, VecTable};
+pub use codes::{artifact_path, build_codes, CodesFile};
+pub use search::{build_for, exact_top_k, normalize, self_test, tiered_top_k, VecTable};

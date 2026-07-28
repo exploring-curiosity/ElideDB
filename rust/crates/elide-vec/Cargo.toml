@@ -8,3 +8,4 @@ elide-store = { path = "../elide-store" }
 anyhow.workspace = true
 arrow-array = "59.1.0"
 memmap2 = "0.9"
+rayon = "1.12"

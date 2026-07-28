@@ -12,3 +12,4 @@ elide-store = { path = "../elide-store" }
 anyhow.workspace = true
 serde_json.workspace = true
 clap = { version = "4", features = ["derive"] }
+elide-vec = { version = "0.1.0", path = "../elide-vec" }
