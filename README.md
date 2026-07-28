@@ -1,26 +1,30 @@
 # ElideDB
 
-**A Parquet-native, timestamp-first database for multimodal data.** Put any
-timestamped data in — sensor rows, video, GPS, audio, logs — and get back
-time-window reads, SQL, and semantic search, while the engine reads as few
-bytes as physically possible. *The best read is the read elided.*
+**A Parquet-native, timestamp-first database for camera and sensor
+recordings.** Put any timestamped data in (sensor rows, video, GPS,
+audio, logs) and get back time-window reads, SQL, and event search,
+while the engine reads as few bytes as physically possible.
+*The best read is the read elided.*
 
 - **Everything is Parquet.** Every table is plain Parquet files under a
-  Delta-Lake-style transaction log. No custom formats; DuckDB, Spark, pandas —
-  anything that reads Parquet reads your database.
+  Delta-Lake-style transaction log. No custom formats; DuckDB, Spark,
+  pandas, anything that reads Parquet reads your database.
 - **Timestamps are the law.** Every table has a `ts` column (int64
-  nanoseconds). That one rule is what makes cross-modal queries, alignment,
-  and pruning work.
-- **Media is indexed, never copied.** Video files stay exactly where they
-  are; ElideDB stores byte ranges into them and decodes only the frames a
-  query touches.
-- **Search by meaning.** Local SigLIP embeddings (no cloud) turn video into
-  searchable windows: `"a person crossing the street"` → playable clips.
+  nanoseconds). That one rule is what makes cross-modal queries,
+  alignment, and pruning work.
+- **The store is standalone.** Ingest transcodes media once into the
+  store directory and indexes it to the byte; the database keeps
+  serving after the original files are archived or deleted. Raw
+  sources are never modified.
+- **Search by describing the event.** "The arm closes the drawer"
+  returns playable clips where it actually happens. No labels, no
+  language model in the query path, and a question the footage cannot
+  answer returns nothing, with the reason.
 
 ## Install
 
 ```bash
-pip install -e ".[ml]"     # from the repo root; [ml] adds semantic search
+pip install -e ".[ml]"     # from the repo root; [ml] adds search
 brew install ffmpeg        # clip playback + video indexing
 ```
 
@@ -29,92 +33,97 @@ brew install ffmpeg        # clip playback + video indexing
 ```bash
 elidedb create lake/mydb --name "my project"
 
-# any timestamped rows: CSV/Parquet, ISO dates or epoch s/ms/us/ns (auto-detected)
+# any timestamped rows: CSV/Parquet, ISO dates or epoch s/ms/us/ns
 elidedb add lake/mydb readings sensor_log.csv --ts-col time
 
-# any video (the file is indexed in place, not copied)
+# any video
 elidedb video lake/mydb dashcam.mp4 --stream front
 
 elidedb ls lake/mydb                                   # what's inside
 elidedb sql lake/mydb "SELECT count(*) FROM readings"  # SQL via DuckDB
-elidedb embed lake/mydb                                # local ML, one command
-elidedb search lake/mydb "a cyclist passing a bus"     # → time windows
+elidedb embed lake/mydb                                # local ML, once
 elidedb desk                                           # browse it
 ```
 
-The same five verbs in Python:
+## Event search
+
+The query model is a set, not a top hit: a robotics team wants every
+clip where the thing happened, clean enough to review or retrain on.
 
 ```python
 from elidedb import Store
-db = Store.create("lake/mydb", "my project")
-db.ingest_rows("readings", df, ts_column="time")     # DataFrame/CSV/Parquet
-db.ingest_video("frames", "dashcam.mp4", stream="front")
-db.embed_windows(); import elidedb; elidedb.cluster(db)
-hits, _ = db.search_text("a cyclist passing a bus")  # → (stream, t0, t1)
-window, stats = db.window(hits[0]["t0"], hits[0]["t1"])
-print(stats)                                          # bytes touched vs corpus
+from elidedb.scenario import search_set
+
+db = Store.open("lake/mydb")
+r = search_set(db, "the robot arm closes the drawer", k_max=10)
+for c in r["clips"]:
+    print(c["stream"], c["t0"], c["t1"], c["score"])
 ```
 
-## Contextual search
+Under the hood, per-store fitted retrieval over open world models and
+video-native encoders (V-JEPA 2, InternVideo2, SigLIP 2, Perception
+Encoder, X-CLIP, FastSAM regions), fused by learned weights and passed
+through a fitted selection chain: no-match gate, direction filter,
+event dedup, and a confidence cut, so the returned set ends where the
+evidence does. An opt-in geometry tier verifies spatial relations with
+the SAM 3 video tracker. Nothing in the engine is tuned to a dataset;
+whatever matters in your corpus is learned from your corpus, and every
+change to retrieval lands with a benchmark row against a frozen,
+hand-graded truth set ([BENCHMARKS.md](BENCHMARKS.md)).
 
-Semantic search finds *what is in frame*. Contextual search finds *what is
-happening* — and it does so without a model in the query path, because the
-expensive part runs once at ingest:
+## ElideDB Desk
 
-```python
-db.index_context()                       # VLM captions -> caption index -> tower
-db.search_context("a robot putting a pot in the sink")
-db.search_context("crossing red car", weights={"lexical": 2.0})
-db.search_context("...", rerank=True, explain_top=5)   # why each hit is here
-```
+`elidedb desk` opens the console: store overview with honest size and
+coverage tiles, an analytics view (storage, row density over time,
+vector inventory, the fitted retrieval profile, write history), the
+search console where every result plays, schema and Parquet-layout
+browsers, a live architecture schematic drawn from what is actually
+on disk, and index/maintenance operations. Set `DESK_READONLY=1` to
+serve it publicly with mutations disabled.
 
-Three rankers vote and are fused by **reciprocal rank** — appearance (SigLIP),
-context (the clip's caption), and lexical (exact terms). Fusing by rank rather
-than by score means a hit has to convince more than one ranker, which is why
-`crossing red car` no longer returns everything with a person crossing.
-Full design, ablations, and the parts that do not work yet:
-[docs/CONTEXT.md](docs/CONTEXT.md).
+## Deploy the demo
+
+`deploy/` holds a verified Docker package that runs the full search
+stack read-only on two CPU cores (about 5 s per warm query), plus a
+one-command stager for a free Hugging Face Space. `site/` is the
+landing page. See [deploy/README.md](deploy/README.md).
+
+## The numbers that matter (measured, [BENCHMARKS.md](BENCHMARKS.md))
+
+- 2 s window over a **14.16 M-row** audio table: touches **4 MB of
+  286 MB (98.6 % elided)**, 165 ms.
+- Multimodal 2 s window across 15 tables: 10/56 files touched,
+  **98.9 % elided, 13.8 ms** (sensor-only).
+- Event search over 1,122 episodes: **seconds warm on two CPU
+  cores**, eight model channels fused, no GPU in the query path.
+- Retrieval precision and yield are tracked per commit on a frozen
+  truth set; the ledger in BENCHMARKS.md is appended by the benchmark
+  script, never by hand.
 
 ## Documentation
 
 | doc | what it covers |
 |---|---|
-| [docs/CONTEXT.md](docs/CONTEXT.md) | contextual retrieval: the caption index, RRF, the temporal tower, and its limits |
-| [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | step-by-step: install → create → add your data → query → browse |
+| [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | step-by-step: install, create, add data, query, browse |
 | [docs/API.md](docs/API.md) | every class, method, and CLI verb |
 | [DESIGN.md](DESIGN.md) | architecture + which idea came from which system (Delta, Spark, C-Store, warehouses) |
-| [notebooks/elidedb_demo.ipynb](notebooks/elidedb_demo.ipynb) | every query style, executed on real data with outputs baked in |
-| [BENCHMARKS.md](BENCHMARKS.md) | measured numbers on 28.5 GB of real captures |
-
-## ElideDB Desk
-
-`elidedb desk` (or double-click `desk/ElideDB Desk.app` on macOS) opens the
-database browser: every store's tables and timelines, a semantic map where
-hovering any point decodes its frame live, click-to-play clips (with the
-sensor's audio track when the store has one), and a query console for
-SQL / semantic / window queries.
-
-## The numbers that matter (measured, [BENCHMARKS.md](BENCHMARKS.md))
-
-- 2 s window over a **14.16 M-row** audio table: touches **4 MB of 286 MB
-  (98.6 % elided)**, 165 ms.
-- Multimodal 2 s window across 15 tables: 10/56 files touched, **98.9 %
-  elided, 13.8 ms** (sensor-only).
-- Semantic search: ranking is **microseconds** at thousands of windows;
-  end-to-end text query ≈ 2.8 s (model load dominates, then it stays warm).
-- Store is *smaller* than the raw input in both real corpora, while adding
-  random access, SQL, and search.
+| [deploy/README.md](deploy/README.md) | the cloud demo: container, costs, one-command staging |
+| [notebooks/elidedb_demo.ipynb](notebooks/elidedb_demo.ipynb) | query styles, executed on real data |
+| [BENCHMARKS.md](BENCHMARKS.md) | measured numbers and the per-commit retrieval ledger |
 
 ## Repository layout
 
 ```
-python/elidedb/     the database (store, log, video, embeddings, cli, desk)
+python/elidedb/     the database (store, log, video, retrieval, cli, desk)
+deploy/             cloud demo: Dockerfile, store builder, Space stager
+site/               landing page (static, single file)
 notebooks/          executed demo notebook
 desk/               macOS app bundle (thin launcher for elidedb.desk)
 src/, tests/        v1: the original C++20 engine with hand-built formats
-                    (SDX/SFI) — the mechanisms ElideDB now hosts on Parquet
-scripts/            dataset ETL adapters (REIP, Oxford RobotCar) + tooling
+                    (SDX/SFI), the mechanisms ElideDB now hosts on Parquet
+scripts/            ingest tooling, benchmark + fit scripts, ETL adapters
 ```
 
-Raw data (`data/`), generated databases (`lake/`, `store*/`), and build
-output are git-ignored — the repo carries code and docs only.
+Raw data (`data/`), generated databases (`lake/`), model weights
+(`models/`), evaluation ground truth (`eval/`), and build output are
+git-ignored: the repo carries code and docs only.
