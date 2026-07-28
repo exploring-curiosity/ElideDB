@@ -21,26 +21,50 @@ with all channels live. The demo-environment benchmark measured
 memory to spare can set ELIDEDB_DTYPE=float32). Maintenance and
 index mutations return 403.
 
-## Option A: Hugging Face Spaces (free)
+## Hosting options, priced honestly
 
-Free CPU basic hardware (2 vCPU, 16 GB RAM) is enough, and every
-model the demo loads is ungated, so no tokens or secrets are needed.
+Hugging Face now requires a PRO subscription (9 USD a month) to host
+Docker Spaces, even on free CPU hardware (verified 2026-07: repo
+create returns 402 without PRO). So the real choices are:
+
+### Option A: a small VPS (recommended, ~7 to 13 EUR a month)
+
+Better than a Space for a demo anyway: weights persist across
+restarts, so the 15 minute warm happens once, and you can point a
+custom domain at it. Hetzner CAX31 (ARM, 8 vCPU, 16 GB, ~13 EUR) or
+CAX21 (4 vCPU, 8 GB, ~7 EUR; workable since the query path resides
+in about 5.4 GB, but 16 GB is the comfortable choice). On the box:
+
+    apt install -y docker.io git git-lfs
+    git clone <your repo> && cd <repo>
+    python3 scripts/build_demo_store.py    # or scp deploy/demo/ over
+    docker build -f deploy/Dockerfile -t elidedb-demo .
+    docker run -d --restart unless-stopped -p 80:7860 elidedb-demo
+
+The store is not in git; either rebuild it on the box from the lake
+or copy `deploy/demo/` over with scp/rsync.
+
+### Option B: Hugging Face Spaces (9 USD a month for PRO)
+
+Zero ops once subscribed. The stager does everything:
 
     python scripts/build_demo_store.py      # once, if not built
     python deploy/stage_space.py            # assembles deploy/space/
 
-The stager prints the exact login, create, and push commands. First
-boot downloads about 5 GB of weights and warms the towers (about 15
-minutes); restarts refetch them (free Spaces have no persistent
-disk). That costs minutes at boot, nothing at query time.
+The stager prints the exact login, create, and push commands. Every
+model is ungated, so no tokens or secrets. Note: free Spaces have no
+persistent disk, so every restart repeats the 15 minute warm.
 
-## Option B: any Docker host (a few dollars a month)
+### Option C: Oracle Cloud Always Free (0 USD, more setup)
 
-Hetzner CX32 or an equivalent 4 GB box is too small; use 16 GB
-(about 12 EUR). Then:
+Oracle's Always Free tier includes an ARM VM with 4 OCPUs and 24 GB
+RAM, which fits this workload with room to spare. The demo image
+already builds and runs on ARM (the locally verified container is
+linux/arm64). Follow Option A's commands on that VM. The trade is
+Oracle's signup friction and capacity availability by region.
 
-    docker build -f deploy/Dockerfile -t elidedb-demo .
-    docker run -d -p 80:7860 elidedb-demo
+Whichever host: the landing page itself is static and free anywhere
+(Netlify Drop, Cloudflare Pages, GitHub Pages).
 
 ## Local verification (already run)
 
