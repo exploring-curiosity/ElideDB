@@ -162,6 +162,23 @@
   .final .lede { margin:0 auto 30px; }
   .final .cta { justify-content:center; }
 
+  /* demo launch modal */
+  .modal-back { position:fixed; inset:0; z-index:50; display:none;
+    background:rgba(1,5,3,.8); backdrop-filter:blur(3px);
+    align-items:center; justify-content:center; padding:24px; }
+  .modal-back.on { display:flex; }
+  .modal { width:min(480px, 94vw); border:1px solid var(--green-deep);
+    background:var(--bg); box-shadow:0 0 60px rgba(15,155,76,.25);
+    padding:26px 28px; }
+  .modal h3 { margin:0 0 10px; font-size:17px; color:var(--green);
+    letter-spacing:.04em; }
+  .modal p { margin:0 0 18px; color:var(--dim); font-size:13.5px;
+    line-height:1.7; }
+  .modal .row { display:flex; gap:12px; flex-wrap:wrap; }
+  .modal .status { color:var(--faint); font-size:12px;
+    margin-bottom:16px; }
+  .modal .status.ok { color:var(--green); }
+
   footer { border-top:1px solid var(--line); margin-top:70px;
     padding:32px 0 44px; color:var(--faint); font-size:11.5px; }
   footer .wrap { display:flex; gap:20px; flex-wrap:wrap; }
@@ -388,6 +405,24 @@ action, so it says so instead of guessing</span></pre>
   </section>
 </div>
 
+<div class="modal-back" id="demo-modal">
+  <div class="modal">
+    <h3>Opening the live demo</h3>
+    <div class="status" id="demo-status">checking whether the demo
+      is awake</div>
+    <p id="demo-msg">The demo sleeps between visitors to stay cheap
+      to run. If it is waking up right now, it loads the full model
+      stack first, which takes about 15 minutes; after that, queries
+      answer in seconds. Production deployments stay warm.</p>
+    <div class="row">
+      <a class="btn" id="demo-go"
+         href="https://sudharshanr-elidedb-demo.hf.space"
+         target="_blank" rel="noopener">Open anyway</a>
+      <a class="btn ghost" id="demo-cancel" href="#demo">Close</a>
+    </div>
+  </div>
+</div>
+
 <footer>
   <div class="wrap">
     <span>ELIDEDB</span>
@@ -452,13 +487,58 @@ action, so it says so instead of guessing</span></pre>
   }
 })();
 
-/* demo link: set once the deployment URL exists */
+/* demo launch: check whether the demo is awake before sending
+   anyone into a cold start */
 (() => {
   const DEMO_URL = "https://sudharshanr-elidedb-demo.hf.space";
-  for (const id of ["demo-link", "demo-link-2"]) {
-    const a = document.getElementById(id);
-    if (DEMO_URL) { a.href = DEMO_URL; a.removeAttribute("data-demo"); }
+  const back = document.getElementById("demo-modal");
+  const status = document.getElementById("demo-status");
+  const msg = document.getElementById("demo-msg");
+  const go = document.getElementById("demo-go");
+  go.href = DEMO_URL;
+
+  const COLD = "The demo sleeps between visitors to stay cheap to " +
+    "run. It is waking up right now: it loads the full model stack " +
+    "first, which takes about 15 minutes, and the page may not " +
+    "respond until then. After that, queries answer in seconds. " +
+    "Production deployments stay warm.";
+  const WARM = "It is warm and answering in seconds. Every result " +
+    "is a playable clip; try describing an action with an object " +
+    "and a direction.";
+
+  function openModal() {
+    back.classList.add("on");
+    status.textContent = "checking whether the demo is awake";
+    status.classList.remove("ok");
+    go.textContent = "Open anyway";
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 6000);
+    fetch(DEMO_URL + "/api/version", {signal: ctl.signal})
+      .then(r => { if (!r.ok) throw new Error(); })
+      .then(() => {
+        clearTimeout(timer);
+        status.textContent = "the demo is awake";
+        status.classList.add("ok");
+        msg.textContent = WARM;
+        go.textContent = "Open the demo";
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        status.textContent = "the demo is waking up";
+        msg.textContent = COLD;
+        go.textContent = "Open it while it warms";
+      });
   }
+  for (const id of ["demo-link", "demo-link-2"]) {
+    document.getElementById(id).addEventListener("click", e => {
+      e.preventDefault(); openModal();
+    });
+  }
+  const close = () => back.classList.remove("on");
+  document.getElementById("demo-cancel").addEventListener("click",
+    e => { e.preventDefault(); close(); });
+  back.addEventListener("click", e => { if (e.target === back) close(); });
+  addEventListener("keydown", e => { if (e.key === "Escape") close(); });
 })();
 </script>
 </body>
