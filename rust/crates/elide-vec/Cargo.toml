@@ -9,3 +9,4 @@ anyhow.workspace = true
 arrow-array = "59.1.0"
 memmap2 = "0.9"
 rayon = "1.12"
+arrow-schema = "59.1.0"

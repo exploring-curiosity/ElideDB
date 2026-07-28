@@ -32,9 +32,14 @@ def load_model():
 
         from .device import pick, strip_vision
         dev, dtype = pick()
-        m = AutoModel.from_pretrained(
-            MDIR, trust_remote_code=True, torch_dtype=dtype,
-            low_cpu_mem_usage=True).to(dev).eval()
+        import transformers
+        kw = dict(trust_remote_code=True, torch_dtype=dtype)
+        if int(transformers.__version__.split(".")[0]) < 5:
+            # the 8GB-container path; transformers>=5 meta-device init
+            # breaks this custom port's from_pretrained, and the fp16
+            # towers load fine without it there
+            kw["low_cpu_mem_usage"] = True
+        m = AutoModel.from_pretrained(MDIR, **kw).to(dev).eval()
         m = strip_vision(m, "vision_encoder")
         m._config.device = dev      # get_txt_feat routes tokens here
         _S["model"], _S["dev"], _S["dtype"] = m, dev, dtype

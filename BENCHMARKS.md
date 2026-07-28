@@ -443,3 +443,20 @@ ever runs concurrently.
 | 2026-07-27 20:19 | bddf2b1 | 27/65 returned true | mean prec 0.38 | mean yield 0.28 | q00:2/5 q01:2/7 q02:3/6 q03:2/3 q04:8/10 q05:9/10 q07:1/4 q08:0/5 q09:0/9 q10:0/6 |
 | 2026-07-27 20:20 | bddf2b1 | 35/91 returned true | mean prec 0.38 | mean yield 0.36 | q00:2/10 q01:2/10 q02:3/6 q03:9/10 q04:8/10 q05:9/10 q07:1/5 q08:1/10 q09:0/10 q10:0/10 |
 | 2026-07-27 22:56 | baf2b78 | 33/91 returned true | mean prec 0.36 | mean yield 0.33 | q00:1/10 q01:2/10 q02:3/6 q03:9/10 q04:7/10 q05:9/10 q07:1/5 q08:1/10 q09:0/10 q10:0/10 |
+| 2026-07-28 18:10 | 2f0684a | 10/92 returned true | mean prec 0.13 | mean yield 0.10 | q00:0/10 q01:0/10 q02:4/7 q03:2/7 q04:0/10 q05:1/10 q07:1/10 q08:2/8 q09:0/10 q10:0/10 |
+
+### 2026-07-28 - the 10/92 ledger row is an ENVIRONMENT regression, not a model change
+
+The `10/92, prec 0.13` row above ran after the local environment had
+drifted to transformers 5.14 (pulled in by an mlx-embeddings upgrade),
+whose new internals refuse the InternVideo2 port - the iv2 channel
+failed silently and search ran without its strongest lever. Proof it
+was the environment: the identical measurement on an fp16-compressed
+COPY of the store produced the same numbers query for query, and the
+fp32 original scored 0.13 in the same shell. transformers is now
+pinned at 4.57.6 (requirements-local.txt), matching the demo
+container. The row stays because the ledger is append-only; read it as
+"what happens when a fitted channel dies silently" - and that silence
+is now a recorded loophole to fix (channel-death must surface in
+result meta and block ledger appends).
+| 2026-07-28 18:19 | 2f0684a | 35/91 returned true | mean prec 0.38 | mean yield 0.36 | q00:2/10 q01:2/10 q02:3/6 q03:9/10 q04:8/10 q05:9/10 q07:1/5 q08:1/10 q09:0/10 q10:0/10 |

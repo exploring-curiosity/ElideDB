@@ -1,0 +1,19 @@
+# Local (macOS, Apple Silicon) environment pins for the FULL channel stack.
+# Not the deploy pins — deploy/requirements.txt is the container's set.
+#
+# Why this file exists (2026-07-28): an unpinned upgrade to
+# transformers 5.14 silently killed the InternVideo2 channel (the port's
+# custom PreTrainedModel subclasses predate v5 internals) and the frozen
+# benchmark collapsed 0.36 -> 0.13 with NO error surfaced. transformers
+# stays at the demo-proven 4.57.x until the IV2 port is reworked for v5.
+# (mlx-embeddings 0.1.0 declares transformers>=5 but runs fine on 4.57.6;
+# pip prints a resolver warning — expected, measured harmless.)
+transformers==4.57.6
+torch==2.9.1
+einops==0.8.2
+open_clip_torch
+timm==1.0.28
+mlx==0.32.0
+mlx-embeddings==0.1.0
+numpy==2.4.3
+pyarrow==24.0.0

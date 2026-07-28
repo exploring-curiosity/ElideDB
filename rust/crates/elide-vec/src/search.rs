@@ -43,8 +43,21 @@ impl VecTable {
                 .column(batch.schema().index_of("vector")?)
                 .as_fixed_size_list();
             dim = vec_col.value_length() as usize;
-            let vals = vec_col.values().as_primitive::<Float32Type>();
-            data.extend(vals.values().iter().copied());
+            // fp32 (legacy) or fp16 (post-compress) storage; search math is
+            // fp32 either way
+            match vec_col.values().data_type() {
+                arrow_schema::DataType::Float32 => {
+                    let vals = vec_col.values().as_primitive::<Float32Type>();
+                    data.extend(vals.values().iter().copied());
+                }
+                arrow_schema::DataType::Float16 => {
+                    let vals = vec_col
+                        .values()
+                        .as_primitive::<arrow_array::types::Float16Type>();
+                    data.extend(vals.values().iter().map(|v| v.to_f32()));
+                }
+                other => bail!("unsupported vector element type {other:?}"),
+            }
         }
         let n = ts.len();
         if n == 0 {

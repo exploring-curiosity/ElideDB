@@ -30,9 +30,106 @@ FILES = ["modeling_internvideo2.py", "config_bert_large.json",
 DIR = Path("models/iv2_stage2_1b")
 
 
+MARKER = "_tok_helpers_vendored"  # current patch level (patches 4+5)
+
+
 def patch(src):
-    if "_bc_cands" in src:
+    if MARKER in src:
         return src          # already at the current patch level
+    # patch 4: transformers>=5 removed the bert pruning/chunking helpers
+    # from pytorch_utils; extend the import chain with vendored reference
+    # implementations (see models/iv2_stage2_1b for the applied form)
+    src = src.replace(
+        "except ImportError:\n"
+        "    # transformers>=4.57\n"
+        "    from transformers.pytorch_utils import (\n"
+        "        apply_chunking_to_forward,\n"
+        "        find_pruneable_heads_and_indices,\n"
+        "        prune_linear_layer,\n"
+        "    )",
+        "except ImportError:\n"
+        "    try:\n"
+        "        # transformers 4.57..4.x\n"
+        "        from transformers.pytorch_utils import (\n"
+        "            apply_chunking_to_forward,\n"
+        "            find_pruneable_heads_and_indices,\n"
+        "            prune_linear_layer,\n"
+        "        )\n"
+        "    except ImportError:\n"
+        f"        # MPS port ({MARKER}): transformers>=5 removed\n"
+        "        # these; vendored reference implementations.\n"
+        "        def find_pruneable_heads_and_indices(heads, n_heads,\n"
+        "                                             head_size,\n"
+        "                                             already_pruned_heads):\n"
+        "            mask = torch.ones(n_heads, head_size)\n"
+        "            heads = set(heads) - already_pruned_heads\n"
+        "            for head in heads:\n"
+        "                head = head - sum(1 if h < head else 0\n"
+        "                                  for h in already_pruned_heads)\n"
+        "                mask[head] = 0\n"
+        "            mask = mask.view(-1).contiguous().eq(1)\n"
+        "            index = torch.arange(len(mask))[mask].long()\n"
+        "            return heads, index\n"
+        "\n"
+        "        def prune_linear_layer(layer, index, dim=0):\n"
+        "            index = index.to(layer.weight.device)\n"
+        "            W = layer.weight.index_select(dim, index)"
+        ".clone().detach()\n"
+        "            b = None\n"
+        "            if layer.bias is not None:\n"
+        "                b = (layer.bias if dim == 1\n"
+        "                     else layer.bias[index]).clone().detach()\n"
+        "            new_size = list(layer.weight.size())\n"
+        "            new_size[dim] = len(index)\n"
+        "            new_layer = nn.Linear(new_size[1], new_size[0],\n"
+        "                                  bias=layer.bias is not None)\n"
+        "            new_layer = new_layer.to(layer.weight.device)\n"
+        "            with torch.no_grad():\n"
+        "                new_layer.weight.copy_(W.contiguous())\n"
+        "                if b is not None:\n"
+        "                    new_layer.bias.copy_(b.contiguous())\n"
+        "            return new_layer\n"
+        "\n"
+        "        def apply_chunking_to_forward(forward_fn, chunk_size,\n"
+        "                                      chunk_dim, *input_tensors):\n"
+        "            if chunk_size > 0:\n"
+        "                num_chunks = (input_tensors[0].shape[chunk_dim]\n"
+        "                              // chunk_size)\n"
+        "                chunks = tuple(t.chunk(num_chunks, dim=chunk_dim)\n"
+        "                               for t in input_tensors)\n"
+        "                out = tuple(forward_fn(*c) for c in zip(*chunks))\n"
+        "                return torch.cat(out, dim=chunk_dim)\n"
+        "            return forward_fn(*input_tensors)")
+    # patch 5: transformers>=5 removed the private tokenizer
+    # character-class helpers as well
+    src = src.replace(
+        "from transformers.tokenization_utils import PreTrainedTokenizer, "
+        "_is_control, _is_punctuation, _is_whitespace",
+        "try:\n"
+        "    from transformers.tokenization_utils import (\n"
+        "        PreTrainedTokenizer, _is_control, _is_punctuation, "
+        "_is_whitespace)\n"
+        "except ImportError:\n"
+        f"    # MPS port ({MARKER}): transformers>=5 removed the\n"
+        "    # private character-class helpers; vendored versions.\n"
+        "    from transformers import PreTrainedTokenizer\n"
+        "\n"
+        "    def _is_whitespace(char):\n"
+        "        if char in (\" \", \"\\t\", \"\\n\", \"\\r\"):\n"
+        "            return True\n"
+        "        return unicodedata.category(char) == \"Zs\"\n"
+        "\n"
+        "    def _is_control(char):\n"
+        "        if char in (\"\\t\", \"\\n\", \"\\r\"):\n"
+        "            return False\n"
+        "        return unicodedata.category(char).startswith(\"C\")\n"
+        "\n"
+        "    def _is_punctuation(char):\n"
+        "        cp = ord(char)\n"
+        "        if (33 <= cp <= 47 or 58 <= cp <= 64\n"
+        "                or 91 <= cp <= 96 or 123 <= cp <= 126):\n"
+        "            return True\n"
+        "        return unicodedata.category(char).startswith(\"P\")")
     src = src.replace(
         "from flash_attn.flash_attn_interface import "
         "flash_attn_varlen_qkvpacked_func\n"
@@ -79,8 +176,11 @@ def patch(src):
 def main():
     DIR.mkdir(parents=True, exist_ok=True)
     mp = DIR / "modeling_internvideo2.py"
-    if mp.exists() and "_bc_cands" not in mp.read_text():
-        mp.unlink()          # stale patch level: refetch and repatch
+    if mp.exists() and MARKER not in mp.read_text():
+        src = mp.read_text()
+        if "_bc_cands" not in src:
+            mp.unlink()      # pre-v2: refetch and repatch from scratch
+        # v2 files just need the new patch applied in place below
     for f in FILES:
         p = DIR / f
         if not p.exists():
