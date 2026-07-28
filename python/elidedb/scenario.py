@@ -211,6 +211,19 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
         variants = [text]
 
     ch = {}
+    # CHANNEL DEATH MUST BE LOUD (2026-07-28). Every block below used
+    # to swallow its exception, so a broken dependency degraded search
+    # silently: a transformers upgrade killed iv2 and the frozen bench
+    # fell 0.38 -> 0.13 with no error anywhere, diagnosable only by
+    # bisecting the environment. Failures are now recorded per channel
+    # and returned in the result; the caller decides whether a
+    # degraded answer is acceptable (bench_truth refuses to record a
+    # ledger row, the Desk shows a warning).
+    failed = {}
+
+    def _fail(name, exc):
+        failed[name] = f"{type(exc).__name__}: {exc}"[:200]
+
     try:
         from .pe import pe_lookup
         vs = []
@@ -218,8 +231,8 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
             look, _ = pe_lookup(store, vtext)
             vs.append(np.array([look(*k) for k in keys]))
         ch["pe"] = variant_max(vs)
-    except Exception:
-        pass
+    except Exception as e:
+        _fail("pe", e)
     try:
         # act: text-mapped class weights onto the probe's own
         # vocabulary (contrast against the swap when one exists) —
@@ -227,8 +240,8 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
         from .action_channel import act_lookup
         look, _ = act_lookup(store, text)
         ch["act"] = np.array([look(*k) for k in keys])
-    except Exception:
-        pass
+    except Exception as e:
+        _fail('act', e)
     try:
         from .sig2 import conj_lookup, sig2_lookup
         vs = []
@@ -239,8 +252,8 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
         cl = conj_lookup(store, text)
         if cl is not None:
             ch["conj"] = np.array([cl(*k) for k in keys])
-    except Exception:
-        pass
+    except Exception as e:
+        _fail('sig2', e)
     try:
         # iv2: VIDEO-native text alignment (InternVideo2-Stage2 1B,
         # temporal modeling the frame-pooled channels lack) — the
@@ -251,8 +264,8 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
             look, _ = iv2_lookup(store, vtext)
             vs.append(np.array([look(*k) for k in keys]))
         ch["iv2"] = variant_max(vs)
-    except Exception:
-        pass
+    except Exception as e:
+        _fail('iv2', e)
     try:
         from .vid import vid_lookup
         vs = []
@@ -260,8 +273,8 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
             look, _ = vid_lookup(store, vtext)
             vs.append(np.array([look(*k) for k in keys]))
         ch["vid"] = variant_max(vs)
-    except Exception:
-        pass
+    except Exception as e:
+        _fail('vid', e)
     # OBJ channel — FastSAM crops matched against the query's noun
     # phrases (SigLIP space): the color/attribute binding the product
     # bench showed missing from the set path
@@ -282,8 +295,8 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
                 osc, omo = olook(*k)
                 return osc * (1.0 + omo) if osc == osc else float("nan")
             ch["obj"] = np.array([_obj(k) for k in keys])
-    except Exception:
-        pass
+    except Exception as e:
+        _fail('obj', e)
     # CONTRAST channels — direction EVIDENCE, computed only when the
     # lexicon yields a swap. Architectural principle replacing every
     # hand routing rule (ledger-derived, now task-free): contrast
@@ -300,8 +313,8 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
             mlook = motion_lookup(store, qv2[0], qv2[1])
             contrast_ch["mot"] = np.array([mlook(*k) for k in keys])
             ch["mot"] = contrast_ch["mot"]
-        except Exception:
-            pass
+        except Exception as e:
+            _fail('mot', e)
         try:
             # SELF-RECOGNIZED contrast: Rocchio anchors in the
             # domain-general video-native space — the corpus itself
@@ -314,8 +327,8 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
             contrast_ch["prf"] = prf_contrast(
                 store, keys, ch.get("pe"), pe_swap)
             ch["prf"] = contrast_ch["prf"]
-        except Exception:
-            pass
+        except Exception as e:
+            _fail('prf', e)
 
     directional = sq is not None
     weights = {c: 1.0 for c in ch}
@@ -373,6 +386,8 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
         return {"clips": [], "borderline": [], "audit": None,
                 "no_match": True, "reason": gate,
                 "direction_filtered": 0, "channels": sorted(ch),
+                "channels_failed": failed,
+                "degraded": sorted(failed),
                 "scored": len(keys), "ms": round(ms, 1)}
 
     # DIRECTION HARD FILTER — QUANTILE, NOT SIGN (AUC-validated
@@ -451,6 +466,13 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
         "audit": audit,
         "direction_filtered": dropped,
         "channels": sorted(ch),
+        # a channel the fitted configuration gives ordering or filter
+        # authority to, that failed to compute: the answer is degraded
+        # and the caller must be able to see it (see `failed` above)
+        "channels_failed": failed,
+        "degraded": sorted(c for c in failed
+                           if abs(weights.get(c, 1.0)) > 0
+                           or c in (fnames or ())),
         "scored": len(keys),
         "ms": round(ms, 1),
     }

@@ -42,10 +42,17 @@ def main():
         support[int(q)] = support.get(int(q), 0) + int(v)
     covered = sorted(support)
     rows = []
+    degraded = {}   # channel -> error, union over all queries
     for qi, q in enumerate(QUERIES):
         if qi not in covered and qi != 6:
             continue
         r = search_set(db, q, purity="fast", k_max=K)
+        # A dead channel silently cost 0.38 -> 0.13 once (2026-07-28,
+        # transformers 5 vs the IV2 port). The ledger is a record of
+        # the SYSTEM, so a run missing a fitted channel must never be
+        # written into it as if it were a model result.
+        for c in r.get("degraded", ()):
+            degraded[c] = r["channels_failed"][c]
         clips = r["clips"]
         if qi == 6:                       # fold: zero support, gate test
             ok = r.get("no_match", False) or not clips
@@ -88,6 +95,15 @@ def main():
             f"mean prec {mp:.2f} | mean yield {my:.2f} | "
             + " ".join(f"q{r[0]:02d}:{r[3]}/{r[2]}" for r in graded)
             + " |\n")
+    if degraded:
+        print(f"\n== mean precision {mp:.2f}, mean yield {my:.2f}, "
+              f"{tp}/{n} returned true — DEGRADED RUN, ledger NOT "
+              f"appended ==")
+        for c, err in sorted(degraded.items()):
+            print(f"   channel {c} failed: {err}")
+        print("   fix the channel (or its environment: see "
+              "requirements-local.txt) and rerun.")
+        raise SystemExit(2)
     if store_path != "lake/bench":
         print(f"\n== mean precision {mp:.2f}, mean yield {my:.2f}, "
               f"{tp}/{n} returned true — gate run on {store_path}, "
