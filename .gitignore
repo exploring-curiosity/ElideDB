@@ -72,3 +72,6 @@ nohup.out
 CLAUDE.md
 docs/memory/
 docs/logs/
+
+# ---- stale experiment cache: LanguageBind weights (never in git) -----------
+.cache_lb/
