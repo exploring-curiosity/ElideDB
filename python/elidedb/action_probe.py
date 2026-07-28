@@ -148,8 +148,9 @@ def _load():
         return _STATE
     import torch
     from transformers import AutoModel, AutoVideoProcessor
-    dev = "mps" if torch.backends.mps.is_available() else "cpu"
-    enc = AutoModel.from_pretrained(ENCODER_ID, dtype=torch.float16) \
+    from .device import pick
+    dev, dtype = pick()
+    enc = AutoModel.from_pretrained(ENCODER_ID, dtype=dtype) \
         .to(dev).eval()
     probe = _build_probe()
     sd = torch.load(PROBE_CKPT, map_location="cpu",
@@ -157,7 +158,7 @@ def _load():
     sd = {k.replace("module.", ""): v for k, v in sd.items()}
     probe.load_state_dict(sd, strict=True)
     probe = probe.to(dev).float().eval()
-    _STATE.update(model=enc, probe=probe, dev=dev,
+    _STATE.update(model=enc, probe=probe, dev=dev, dtype=dtype,
                   proc=AutoVideoProcessor.from_pretrained(ENCODER_ID))
     return _STATE
 
@@ -167,7 +168,7 @@ def clip_action_probs(frames_u8):
     import torch
     st = _load()
     px = st["proc"](videos=[list(frames_u8)], return_tensors="pt")[
-        "pixel_values_videos"].to(st["dev"], torch.float16)
+        "pixel_values_videos"].to(st["dev"], st["dtype"])
     with torch.no_grad():
         feats = st["model"](pixel_values_videos=px).last_hidden_state
         logits = st["probe"](feats.float())

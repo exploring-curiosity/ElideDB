@@ -23,32 +23,16 @@ index mutations return 403.
 
 ## Option A: Hugging Face Spaces (free)
 
-Free CPU basic hardware (2 vCPU, 16 GB RAM) is enough. Steps:
+Free CPU basic hardware (2 vCPU, 16 GB RAM) is enough, and every
+model the demo loads is ungated, so no tokens or secrets are needed.
 
-1. Create a Space, SDK type "Docker", visibility public.
-2. In the Space repo, place this repository's `python/`,
-   `scripts/get_iv2.py`, `deploy/` (including `deploy/demo/lake`,
-   built by `python scripts/build_demo_store.py`), and `.dockerignore`.
-   Copy `deploy/Dockerfile` to the repo root as `Dockerfile` and fix
-   its COPY paths accordingly, or keep the layout and set
-   `dockerfile_path: deploy/Dockerfile` in the Space README metadata.
-3. The Space README needs this front matter:
+    python scripts/build_demo_store.py      # once, if not built
+    python deploy/stage_space.py            # assembles deploy/space/
 
-       ---
-       title: ElideDB
-       emoji: "0"
-       sdk: docker
-       app_port: 7860
-       ---
-
-4. Push with git lfs for the store parquet and media files
-   (`git lfs track "*.parquet" "*.h264"`).
-5. First boot downloads about 5 GB of model weights from public
-   Hugging Face repos. No tokens or secrets are required; every model
-   the demo loads is ungated.
-
-Restarts refetch weights (free Spaces have no persistent disk). That
-costs minutes at boot, nothing at query time.
+The stager prints the exact login, create, and push commands. First
+boot downloads about 5 GB of weights and warms the towers (about 15
+minutes); restarts refetch them (free Spaces have no persistent
+disk). That costs minutes at boot, nothing at query time.
 
 ## Option B: any Docker host (a few dollars a month)
 
