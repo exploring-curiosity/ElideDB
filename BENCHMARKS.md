@@ -460,3 +460,4 @@ container. The row stays because the ledger is append-only; read it as
 is now a recorded loophole to fix (channel-death must surface in
 result meta and block ledger appends).
 | 2026-07-28 18:19 | 2f0684a | 35/91 returned true | mean prec 0.38 | mean yield 0.36 | q00:2/10 q01:2/10 q02:3/6 q03:9/10 q04:8/10 q05:9/10 q07:1/5 q08:1/10 q09:0/10 q10:0/10 |
+| 2026-07-28 18:22 | 299692a | 35/91 returned true | mean prec 0.38 | mean yield 0.36 | q00:2/10 q01:2/10 q02:3/6 q03:9/10 q04:8/10 q05:9/10 q07:1/5 q08:1/10 q09:0/10 q10:0/10 |

@@ -27,7 +27,12 @@ K = 10
 
 
 def main():
-    db = Store.open("lake/bench")
+    # ELIDEDB_BENCH_STORE points the SAME measurement at a store copy for
+    # migration gates (e.g. the fp16 rewrite); the ledger append is skipped
+    # then so BENCHMARKS.md rows always describe lake/bench itself.
+    import os
+    store_path = os.environ.get("ELIDEDB_BENCH_STORE", "lake/bench")
+    db = Store.open(store_path)
     t = pq.read_table("eval/truthsets/bridge4h.parquet").to_pydict()
     truth = {}
     support = {}
@@ -83,6 +88,11 @@ def main():
             f"mean prec {mp:.2f} | mean yield {my:.2f} | "
             + " ".join(f"q{r[0]:02d}:{r[3]}/{r[2]}" for r in graded)
             + " |\n")
+    if store_path != "lake/bench":
+        print(f"\n== mean precision {mp:.2f}, mean yield {my:.2f}, "
+              f"{tp}/{n} returned true — gate run on {store_path}, "
+              f"ledger NOT appended ==")
+        return
     led = Path("BENCHMARKS.md")
     txt = led.read_text() if led.exists() else "# Benchmarks\n"
     if "## Truthset ledger" not in txt:
