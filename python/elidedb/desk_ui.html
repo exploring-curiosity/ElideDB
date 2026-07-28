@@ -1331,6 +1331,11 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   drawScatter(); drawGeo(); });
 addEventListener("resize", () => { clearTimeout(window._rz);
   window._rz = setTimeout(() => { if (MAP) drawScatter(); drawGeo(); }, 150); });
+/* read-only deployments have no operations surface at all */
+j("/api/version").then(v => {
+  if (v.readonly)
+    document.querySelector('#views button[data-v="ops"]').style.display = "none";
+}).catch(() => {});
 loadStores();
 </script>
 

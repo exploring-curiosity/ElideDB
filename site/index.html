@@ -377,7 +377,10 @@ action, so it says so instead of guessing</span></pre>
     <h2>Ask real robot footage a real question</h2>
     <p class="lede">The demo is the actual product, read only, loaded
       with 1,122 robot manipulation episodes. Type a sentence, play
-      the clips it returns.</p>
+      the clips it returns. It runs on a small shared CPU instance,
+      the cheapest machine that can hold the whole model stack;
+      production deployments run on your own hardware, next to your
+      data, and move accordingly.</p>
     <div class="cta">
       <a class="btn" id="demo-link-2" href="#" data-demo="unset">Open the live demo</a>
       <a class="btn ghost" href="mailto:sr7431@nyu.edu?subject=ElideDB%20early%20access">Get early access</a>
@@ -451,7 +454,7 @@ action, so it says so instead of guessing</span></pre>
 
 /* demo link: set once the deployment URL exists */
 (() => {
-  const DEMO_URL = "";             /* paste the console URL here */
+  const DEMO_URL = "https://sudharshanr-elidedb-demo.hf.space";
   for (const id of ["demo-link", "demo-link-2"]) {
     const a = document.getElementById(id);
     if (DEMO_URL) { a.href = DEMO_URL; a.removeAttribute("data-demo"); }

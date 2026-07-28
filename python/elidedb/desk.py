@@ -1049,7 +1049,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "no frame"}, 404)
                 return self._send(200, jpg, "image/jpeg", cache=True)
             if u.path == "/api/version":
-                return self._json({"build": build_id()})
+                return self._json({"build": build_id(),
+                                   "readonly": READONLY})
             if u.path == "/api/clip":
                 mp4 = api_clip(q["store"], q.get("stream", ""),
                                int(q["t0"]), int(q["t1"]),
