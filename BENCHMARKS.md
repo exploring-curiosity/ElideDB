@@ -461,3 +461,35 @@ is now a recorded loophole to fix (channel-death must surface in
 result meta and block ledger appends).
 | 2026-07-28 18:19 | 2f0684a | 35/91 returned true | mean prec 0.38 | mean yield 0.36 | q00:2/10 q01:2/10 q02:3/6 q03:9/10 q04:8/10 q05:9/10 q07:1/5 q08:1/10 q09:0/10 q10:0/10 |
 | 2026-07-28 18:22 | 299692a | 35/91 returned true | mean prec 0.38 | mean yield 0.36 | q00:2/10 q01:2/10 q02:3/6 q03:9/10 q04:8/10 q05:9/10 q07:1/5 q08:1/10 q09:0/10 q10:0/10 |
+| 2026-07-28 20:58 | 45656e1 | 35/91 returned true | mean prec 0.38 | mean yield 0.36 | q00:2/10 q01:2/10 q02:3/6 q03:9/10 q04:8/10 q05:9/10 q07:1/5 q08:1/10 q09:0/10 q10:0/10 |
+
+### 2026-07-28 - bench-truthset compression, and a wrong-frames bug it uncovered
+
+All numbers are lake/bench (1,122 episodes), measured, source =
+the four BridgeData mp4 files the store was built from.
+
+| | bytes | GB | vs source |
+|---|---|---|---|
+| raw source (4 mp4) | 819,494,109 | 0.819 | 100% |
+| store tables (fp16+BSS, 10 tables) | 218,676,442 | 0.219 | 26.7% |
+| store media (h264 crf26, IDR per episode) | 210,798,343 | 0.211 | 25.7% |
+| **the database** | **429,474,785** | **0.429** | **52.4%** |
+| python whole-table caches (derived, rebuildable) | 354,552,656 | 0.355 | 43.3% |
+
+Retrieval after both migrations: 0.38 / 0.36, 35/91 - identical to the
+pre-migration reference row, query for query.
+
+The media rebuild uncovered a defect in the SHIPPED index: the old
+rendition carried B-frames, so packet (decode) order was not
+presentation order, while ingest paired presentation-ordered
+timestamps with decode-ordered packets. Decoded against the source,
+lake/bench returned 42 of 64 sampled frames at >8 mean abs error
+(mean 16.1, max 51.9) - visibly different scenes. The rebuilt store
+returns 0 of 80 (mean 1.15). Search was never affected because
+vectors are embedded from the source sequentially, but every decoded
+surface (Desk playback, thumbnails, clip export) was serving wrong
+pictures for roughly two thirds of episodes. Renditions now encode
+with -bf 0, so the frame index means what it says.
+
+Per-episode bytes read fell 323 KB -> 196 KB alongside, because the
+keyframe now sits at the episode start rather than every second.
