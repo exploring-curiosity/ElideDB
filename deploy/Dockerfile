@@ -21,13 +21,16 @@ COPY python /app/python
 COPY scripts/get_iv2.py /app/scripts/get_iv2.py
 COPY deploy/entrypoint.sh /app/deploy/entrypoint.sh
 COPY deploy/warm.py /app/deploy/warm.py
-COPY deploy/demo/lake /app/lake
+# the demo store arrives at boot from DEMO_STORE_DATASET when set
+# (Space git repos cap at 1 GB); local builds may bake it instead:
+#   COPY deploy/demo/lake /app/lake
 RUN chmod +x /app/deploy/entrypoint.sh
 
 ENV PYTHONPATH=/app/python \
     ELIDEDB_DEVICE=cpu \
     ELIDEDB_TEXT_BACKEND=torch \
     ELIDEDB_TEXT_ONLY=1 \
+    DEMO_STORE_DATASET=SudharshanR/elidedb-demo-store \
     DESK_READONLY=1 \
     DESK_HOST=0.0.0.0 \
     PORT=7860 \

@@ -19,7 +19,7 @@ OUT = ROOT / "deploy" / "space"
 SPACE_README = """\
 ---
 title: ElideDB
-emoji: "0"
+emoji: 🟢
 colorFrom: green
 colorTo: gray
 sdk: docker
@@ -53,10 +53,8 @@ def copy(src: Path, dst: Path):
 
 
 def main():
-    demo = ROOT / "deploy" / "demo" / "lake"
-    if not demo.exists():
-        sys.exit("demo store missing: run "
-                 "python scripts/build_demo_store.py first")
+    # the store itself ships as a public dataset (Space repos cap at
+    # 1 GB); the container downloads it at boot via DEMO_STORE_DATASET
     if OUT.exists():
         shutil.rmtree(OUT)
     OUT.mkdir(parents=True)
@@ -65,7 +63,6 @@ def main():
     copy(ROOT / "scripts" / "get_iv2.py", OUT / "scripts" / "get_iv2.py")
     for f in ("requirements.txt", "entrypoint.sh", "warm.py"):
         copy(ROOT / "deploy" / f, OUT / "deploy" / f)
-    copy(demo, OUT / "deploy" / "demo" / "lake")
     # the Dockerfile builds from the repo root with this exact layout
     copy(ROOT / "deploy" / "Dockerfile", OUT / "Dockerfile")
     copy(ROOT / ".dockerignore", OUT / ".dockerignore")
