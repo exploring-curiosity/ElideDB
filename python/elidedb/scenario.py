@@ -330,6 +330,17 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
         except Exception as e:
             _fail('prf', e)
 
+    # ABLATION HOOK: drop channels by name to measure what each one is
+    # actually worth. Reads the env so the live path is untouched when
+    # unset, and so an ablation runs through the SAME code as production
+    # rather than a reimplementation of it.
+    import os as _os
+    _drop = {c.strip() for c in _os.environ.get("ELIDEDB_DROP_CHANNELS", "").split(",") if c.strip()}
+    if _drop:
+        for c in _drop:
+            ch.pop(c, None)
+            contrast_ch.pop(c, None)
+
     directional = sq is not None
     weights = {c: 1.0 for c in ch}
     filter_q = 1 / 3
