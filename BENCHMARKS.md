@@ -495,3 +495,47 @@ Per-episode bytes read fell 323 KB -> 196 KB alongside, because the
 keyframe now sits at the episode start rather than every second.
 | 2026-07-28 21:49 | 80176c4 | 35/91 returned true | mean prec 0.38 | mean yield 0.36 | q00:2/10 q01:2/10 q02:3/6 q03:9/10 q04:8/10 q05:9/10 q07:1/5 q08:1/10 q09:0/10 q10:0/10 |
 | 2026-07-29 00:23 | 0da8b4f | 35/91 returned true | mean prec 0.38 | mean yield 0.36 | q00:2/10 q01:2/10 q02:3/6 q03:9/10 q04:8/10 q05:9/10 q07:1/5 q08:1/10 q09:0/10 q10:0/10 |
+
+### 2026-07-28 - Model bake-off: IV2 vs VideoPrism, and channel ablation
+
+Two questions settled on the frozen truthset, not on public leaderboards.
+
+**Which channels earn their ingest cost?** Leave-one-out through the
+production path (scripts/ablate_channels.py). Baseline 35 true / 91
+returned:
+
+| dropped | true results lost |
+|---|---|
+| iv2 | 19 |
+| mot | 7 |
+| conj | 5 |
+| act, vid, prf | 3 each |
+| pe, obj | 1 each |
+| sig2 | 0 |
+
+The video-native contextual channels carry the product. The
+appearance family (pe, sig2, obj) is worth ~2 of 35 results between
+them while costing three vision passes per episode; sig2 contributes
+nothing measurable and is deletable today.
+
+**Can a smaller model replace IV2?** Head-to-head over one 681-episode
+pool containing every graded-true episode, each model using its own
+text tower, all at 16 frames (VideoPrism's native clip length):
+
+| model | params | true/ret | precision |
+|---|---|---|---|
+| InternVideo2-Stage2 | 1B | 32/110 | **0.291** |
+| VideoPrism LvT-B | 248M | 17/110 | 0.155 |
+| VideoPrism LvT-L | 580M | 13/110 | 0.118 |
+
+No. IV2 is ~1.9x better than the best VideoPrism here, and the LARGER
+VideoPrism is worse than the smaller one - its edge on MSR-VTT does not
+transfer to fixed-camera manipulation, where the signal is direction and
+contact rather than scene variety. InternVideo3 was also considered and
+rejected on inspection: it is an 8B generative agent with no dual
+encoder, so it cannot do this job at all.
+
+Conclusion: IV2 stays as the contextual anchor AND becomes the
+distillation teacher for the single fast write-path channel. Speed was
+deliberately not compared - JAX ran CPU-only here while IV2 ran on GPU,
+so any such number would measure the backend, not the model.
