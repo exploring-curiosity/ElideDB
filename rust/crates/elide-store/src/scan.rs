@@ -24,6 +24,7 @@ use parquet::file::statistics::Statistics;
 use rayon::prelude::*;
 
 use crate::count::{ByteCounter, CountingFile};
+use crate::learned;
 use crate::predicate::{self, Predicate};
 use crate::store::Store;
 
@@ -38,6 +39,8 @@ pub struct ScanStats {
     pub row_groups_scanned: usize,
     pub pages_total: usize,
     pub pages_scanned: usize,
+    /// rows the learned ts index let the scan skip without reading `ts`
+    pub learned_rows_skipped: u64,
 }
 
 impl ScanStats {
@@ -104,6 +107,17 @@ pub fn scan_where(
         });
     }
     let page_preds: &[Predicate] = &all_preds;
+
+    // A learned index over ts, when one is built for this data version,
+    // turns the window into a ROW RANGE without reading the ts column at
+    // all (see learned.rs). It only ever bounds; the exact filter below
+    // still decides.
+    let tsidx = if t0.is_some() || t1.is_some() {
+        let p = learned::artifact_path(&log.dir, st.version);
+        learned::read(&p).ok()
+    } else {
+        None
+    };
 
     let counter = ByteCounter::new();
     let mut batches = Vec::new();
@@ -178,10 +192,38 @@ pub fn scan_where(
             None => ProjectionMask::all(),
         };
 
+        // layer 2.5: the learned index narrows to a row range in the
+        // FILE, which becomes a row range within each row group
+        let learned_range = tsidx
+            .as_ref()
+            .and_then(|m| m.get(&f.path))
+            .map(|m| m.range(t0, t1));
+        if let Some((lo, hi)) = learned_range {
+            stats.learned_rows_skipped +=
+                f.rows.saturating_sub(hi.saturating_sub(lo));
+        }
+
         // layer 3: page pruning inside each surviving row group
+        let mut rg_first_row: Vec<u64> = Vec::with_capacity(md.num_row_groups());
+        let mut acc = 0u64;
+        for rg in 0..md.num_row_groups() {
+            rg_first_row.push(acc);
+            acc += md.row_group(rg).num_rows() as u64;
+        }
         let selections: Vec<Option<RowSelection>> = keep
             .iter()
-            .map(|&rg| page_selection(&md, descr, rg, page_preds, &mut stats))
+            .map(|&rg| {
+                let page = page_selection(&md, descr, rg, page_preds, &mut stats);
+                let learned = learned_range.and_then(|(lo, hi)| {
+                    let base = rg_first_row[rg];
+                    let n = md.row_group(rg).num_rows() as u64;
+                    row_range_selection(base, n, lo, hi)
+                });
+                match (page, learned) {
+                    (Some(a), Some(b)) => Some(a.intersection(&b)),
+                    (a, b) => a.or(b),
+                }
+            })
             .collect();
 
         // decode surviving row groups in parallel; each task gets its own
@@ -300,6 +342,33 @@ fn page_selection(
     }
     if at < rg_rows {
         sel.push(RowSelector::skip(rg_rows - at));
+    }
+    Some(RowSelection::from(sel))
+}
+
+/// The learned index's file-level row range, clipped to one row group.
+/// None when the range covers the whole group (nothing to skip) or
+/// misses it entirely handled by an empty selection.
+fn row_range_selection(
+    base: u64,
+    n_rows: u64,
+    lo: u64,
+    hi: u64,
+) -> Option<RowSelection> {
+    let a = lo.saturating_sub(base).min(n_rows);
+    let b = hi.saturating_sub(base).min(n_rows);
+    if a == 0 && b == n_rows {
+        return None;
+    }
+    let mut sel = Vec::new();
+    if a > 0 {
+        sel.push(RowSelector::skip(a as usize));
+    }
+    if b > a {
+        sel.push(RowSelector::select((b - a) as usize));
+    }
+    if b < n_rows {
+        sel.push(RowSelector::skip((n_rows - b) as usize));
     }
     Some(RowSelection::from(sel))
 }
@@ -523,4 +592,45 @@ fn sort_by_ts(batches: Vec<RecordBatch>) -> Result<Vec<RecordBatch>> {
         .map(|c| Ok(arrow_select::take::take(c, &idx, None)?))
         .collect::<Result<Vec<_>>>()?;
     Ok(vec![RecordBatch::try_new(schema, cols)?])
+}
+
+
+/// Read one file of a table (used by index builders). Counted like any
+/// other read, but deliberately unpruned: an index is built from all of
+/// the data or it is not an index.
+pub fn scan_one_file(
+    store: &Store,
+    table: &str,
+    file: &str,
+    columns: Option<&[String]>,
+) -> Result<Vec<RecordBatch>> {
+    let log = store.log(table);
+    let path = log.dir.join(file);
+    let cf = CountingFile::open(&path, ByteCounter::new())?;
+    let meta = ArrowReaderMetadata::load(
+        &cf,
+        ArrowReaderOptions::new().with_page_index_policy(PageIndexPolicy::Skip),
+    )?;
+    let descr = meta.metadata().file_metadata().schema_descr();
+    let mask = match columns {
+        Some(cols) => {
+            let leaves: Vec<usize> = (0..descr.num_columns())
+                .filter(|&i| {
+                    let root = descr.column(i).path().parts()[0].to_string();
+                    cols.iter().any(|c| *c == root)
+                })
+                .collect();
+            ProjectionMask::leaves(descr, leaves)
+        }
+        None => ProjectionMask::all(),
+    };
+    let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(cf, meta.clone())
+        .with_projection(mask)
+        .with_batch_size(65_536)
+        .build()?;
+    let mut out = Vec::new();
+    for b in reader {
+        out.push(b?);
+    }
+    Ok(out)
 }

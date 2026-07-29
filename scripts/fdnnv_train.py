@@ -55,7 +55,9 @@ def _loss(student, teacher):
                         anchor_w=50.0)
 
 CACHE = Path("data/cache/fdnnv_train.npz")
-OUT = Path("lake/bridge/models/fdnnv")
+# NOT inside a store: a trained model is not store data, and keeping it
+# under lake/ is how it was lost when the stores were cleared (2026-07-28).
+OUT = Path("models/fdnnv")
 
 
 def load_split(val_frac=0.3):

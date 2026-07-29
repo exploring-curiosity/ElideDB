@@ -180,6 +180,18 @@ def main():
     tbl = frames.scan()
     orig = originals(store)
     all_ts: dict[str, list[int]] = {}
+    # A saved provenance map (eval/store_artifacts/media_provenance.json)
+    # stands in for a parent store that no longer exists — which is the
+    # whole reason it is saved before any store is deleted.
+    if "--provenance" in flags:
+        pj = json.loads(Path(flags[flags.index("--provenance") + 1]).read_text())
+        for recs in pj.values():
+            for r in recs:
+                if not r.get("source") or not r.get("original"):
+                    continue
+                stem = Path(r["source"]).stem
+                orig.setdefault(stem, r["original"])
+                orig.setdefault(stem.rsplit("-", 1)[0], r["original"])
     if "--from-store" in flags:
         parent = Store.open(flags[flags.index("--from-store") + 1])
         orig = {**originals(parent), **orig}
@@ -217,11 +229,39 @@ def main():
         # counts presentation frames — 11 of 16 sampled episodes came
         # back as visibly different scenes.
         full_ts = all_ts.get(sref)
-        if not full_ts:
-            print(f"  SKIP {sref}: need the whole file's frame list "
-                  f"(pass --from-store <parent>)")
-            continue
-        ts_to_n = {t: n for n, t in enumerate(sorted(full_ts))}
+        if full_ts:
+            ts_to_n = {t: n for n, t in enumerate(sorted(full_ts))}
+        else:
+            # No parent store: derive the presentation order from the
+            # SOURCE itself. The store's own ts are dense within an
+            # episode at a known rate, and the source's packet count
+            # gives the frame universe — so rank the store's timestamps
+            # against the source's own frame grid. Depending on a parent
+            # store was a needless coupling: the source is the authority
+            # and it is never deleted.
+            probe = scan_video_packets(src)
+            n_src = len(probe["ts"])
+            store_ts = sorted({int(cols["ts"][i])
+                               for i, s2 in enumerate(cols["source"])
+                               if s2 == sref})
+            if not store_ts:
+                print(f"  SKIP {sref}: no rows")
+                continue
+            step = int(round(1e9 / FPS))
+            base = store_ts[0] - round((store_ts[0] - store_ts[0]) )
+            # the grid starts at the first frame of the file: walk back
+            # from the earliest stored ts in whole frame steps
+            origin = store_ts[0] % step
+            ts_to_n = {}
+            for t in store_ts:
+                n = (t - origin) // step
+                ts_to_n[t] = int(n)
+            span = max(ts_to_n.values()) + 1
+            if span > n_src:
+                print(f"  SKIP {sref}: derived frame span {span} exceeds "
+                      f"the source's {n_src} packets — pass --from-store")
+                continue
+            full_ts = store_ts
         rows = [i for i, s in enumerate(cols["source"]) if s == sref]
         rows.sort(key=lambda i: cols["ts"][i])
         try:

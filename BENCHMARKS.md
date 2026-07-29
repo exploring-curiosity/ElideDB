@@ -493,3 +493,5 @@ with -bf 0, so the frame index means what it says.
 
 Per-episode bytes read fell 323 KB -> 196 KB alongside, because the
 keyframe now sits at the episode start rather than every second.
+| 2026-07-28 21:49 | 80176c4 | 35/91 returned true | mean prec 0.38 | mean yield 0.36 | q00:2/10 q01:2/10 q02:3/6 q03:9/10 q04:8/10 q05:9/10 q07:1/5 q08:1/10 q09:0/10 q10:0/10 |
+| 2026-07-29 00:23 | 0da8b4f | 35/91 returned true | mean prec 0.38 | mean yield 0.36 | q00:2/10 q01:2/10 q02:3/6 q03:9/10 q04:8/10 q05:9/10 q07:1/5 q08:1/10 q09:0/10 q10:0/10 |

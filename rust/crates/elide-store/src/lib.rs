@@ -4,12 +4,14 @@
 //! transaction log) that the Python engine writes; every read is counted.
 
 pub mod count;
+pub mod learned;
 pub mod log;
 pub mod predicate;
 pub mod scan;
 pub mod store;
 
 pub use count::{ByteCounter, CountingFile};
+pub use learned::{FileModel, Segment};
 pub use log::{FileEntry, TableLog, TableState};
 pub use predicate::{Op, Predicate, Value};
 pub use scan::{scan, scan_where, ScanResult, ScanStats};

@@ -47,6 +47,8 @@ enum Cmd {
     },
     /// Build the scan-tier codes sidecar for a vector table
     Vindex { store: PathBuf, table: String },
+    /// Build the learned ts index (PGM-style) for a table
+    Tsindex { store: PathBuf, table: String },
     /// Vector search: tiered (codes -> rerank) by default, --exact for flat
     Vsearch {
         store: PathBuf,
@@ -88,6 +90,17 @@ fn main() -> Result<()> {
                 .collect::<Result<Vec<_>>>()?;
             scan(&store, &table, t0, t1, cols.as_deref(), version, json, repeat,
                  &preds)
+        }
+        Cmd::Tsindex { store, table } => {
+            let s = Store::open(&store)?;
+            let (path, bytes, segs) = elide_store::learned::build_for(&s, &table)?;
+            let rows: u64 = s.log(&table).read_state(None)?.rows();
+            println!(
+                "built {path:?}  ({bytes} bytes, {segs} segments for {rows} rows \
+                 = {:.4} bytes/row)",
+                bytes as f64 / rows.max(1) as f64
+            );
+            Ok(())
         }
         Cmd::Vindex { store, table } => {
             let s = Store::open(&store)?;

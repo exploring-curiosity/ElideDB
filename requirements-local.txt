@@ -17,3 +17,4 @@ mlx==0.32.0
 mlx-embeddings==0.1.0
 numpy==2.4.3
 pyarrow==24.0.0
+nltk           # wordnet: vocab.py's dictionary half (tests/test_vocab.py)

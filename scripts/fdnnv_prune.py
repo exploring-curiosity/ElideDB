@@ -41,7 +41,7 @@ from elidedb.fdnnvideo import (FDNNVideoEncoder, distill_loss,  # noqa: E402
                                load_encoder, save_encoder)
 from fdnnv_train import eval_model, load_split, speed        # noqa: E402
 
-OUT = Path("lake/bridge/models/fdnnv")
+OUT = Path("models/fdnnv")
 
 
 # ---------------------------------------------------------------------------

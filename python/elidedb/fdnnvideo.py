@@ -421,6 +421,23 @@ def save_encoder(model, meta, path):
         {**meta, "cfg": model.cfg}, indent=2))
 
 
+def fdnnv_dir() -> Path:
+    """Where the FDNN-V encoder lives.
+
+    Repo-level `models/fdnnv`, NOT inside any store. The encoder used to
+    sit at `lake/bridge/models/fdnnv`, so clearing the stores deleted a
+    trained model along with the data (2026-07-28). A model is not store
+    data. The legacy path is still accepted for stores that predate the
+    move."""
+    here = Path("models/fdnnv")
+    if (here / "encoder.json").exists():
+        return here
+    legacy = Path("lake/bridge/models/fdnnv")
+    if (legacy / "encoder.json").exists():
+        return legacy
+    return here
+
+
 def load_encoder(path):
     from mlx.utils import tree_unflatten
     path = Path(path)

@@ -27,7 +27,7 @@ import mlx.core as mx                                        # noqa: E402
 
 from elidedb import Store                                    # noqa: E402
 from elidedb.embeddings import _embed_images, embed_text     # noqa: E402
-from elidedb.fdnnvideo import load_encoder                   # noqa: E402
+from elidedb.fdnnvideo import fdnnv_dir, load_encoder                   # noqa: E402
 from elidedb.video import FrameSet                           # noqa: E402
 
 WIDTH = 192
@@ -60,7 +60,7 @@ def embed_stream(db, model, stream, rows):
 
 def main():
     db = Store.open("lake/bridge")
-    model, meta = load_encoder("lake/bridge/models/fdnnv")
+    model, meta = load_encoder(fdnnv_dir())
     frames = db.table("frames").scan()
     streams = sorted(set(frames.column("stream").to_pylist()))
 

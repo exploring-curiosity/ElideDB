@@ -41,7 +41,7 @@ import mlx.core as mx                                        # noqa: E402
 
 from elidedb import Store                                    # noqa: E402
 from elidedb.embeddings import pool_windows                  # noqa: E402
-from elidedb.fdnnvideo import load_encoder                   # noqa: E402
+from elidedb.fdnnvideo import fdnnv_dir, load_encoder                   # noqa: E402
 from elidedb.fftools import find                             # noqa: E402
 
 ROOT = Path("data/bridge")
@@ -202,7 +202,7 @@ def main():
         import shutil
         shutil.rmtree(path)
     db = Store.create(path, "bridge-4h")
-    model, _ = load_encoder("lake/bridge/models/fdnnv")
+    model, _ = load_encoder(fdnnv_dir())
     # warm the GPU graph once so the first chunk is not paying compilation
     with GPU:
         e, _h = model(mx.array(np.zeros((1, 8, 144, 192, 3), np.float32)))

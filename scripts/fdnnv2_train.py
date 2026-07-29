@@ -31,7 +31,7 @@ import mlx.core as mx                                        # noqa: E402
 import mlx.nn as nn                                          # noqa: E402
 import mlx.optimizers as optim                               # noqa: E402
 
-from elidedb.fdnnvideo import load_encoder                   # noqa: E402
+from elidedb.fdnnvideo import fdnnv_dir, load_encoder                   # noqa: E402
 from elidedb.fdnnv2 import (CTX_DIM, FDNNv2, TextAdapter,    # noqa: E402
                             VERB_SWAPS, pool_event, save_v2, swap_verbs)
 
@@ -402,7 +402,7 @@ def main():
             mx.eval(model.parameters(), adapter.parameters())
             print("reset ctx-path heads + adapter", flush=True)
     else:
-        base, _ = load_encoder("lake/bridge/models/fdnnv")
+        base, _ = load_encoder(fdnnv_dir())
         model = FDNNv2(base)
         adapter = TextAdapter()
         mx.eval(model.parameters(), adapter.parameters())

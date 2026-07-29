@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "python"))
@@ -24,6 +25,13 @@ from elidedb import Store   # noqa: E402
 
 STORE = REPO / "lake/bridge"
 TRUTH = REPO / "eval/bridge_truth.parquet"
+
+# This guard asserts a property OF A STORE. With no store present it has
+# nothing to check, and a missing store is not a leak — so it skips
+# rather than failing, and runs again the moment one is built.
+pytestmark = pytest.mark.skipif(
+    not (STORE / "_store.json").exists(),
+    reason=f"no store at {STORE}: label-leak guard needs data to inspect")
 
 
 def _tasks():
