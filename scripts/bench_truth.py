@@ -23,10 +23,19 @@ from bench_product import QUERIES                            # noqa: E402
 from elidedb import Store                                    # noqa: E402
 from elidedb.scenario import search_set                      # noqa: E402
 
-# k is a CEILING, not a target: the confidence cut decides how many to
-# return, and a query with 2 true episodes should return 2, not k.
-# Overridable so the same harness can measure the product setting.
-K = int(__import__("os").environ.get("ELIDEDB_BENCH_K", "10"))
+# k SCALES WITH THE QUERY, it is not a global constant: a query with
+# 247 true episodes and one with 2 are not the same retrieval problem,
+# and a fixed k makes the metric mostly a statement about support. The
+# operating point is 1.5x support - enough headroom to return
+# everything true plus half again - and k stays a CEILING inside it:
+# the confidence cut decides how many actually come back.
+#
+#   yield = true / support          did it find everything that exists
+#   prec  = true / returned         is what came back worth reading
+#
+# ELIDEDB_BENCH_K still forces a fixed k for k-sweep diagnostics.
+K_MULT = float(__import__("os").environ.get("ELIDEDB_BENCH_KMULT", "1.5"))
+K_FIXED = __import__("os").environ.get("ELIDEDB_BENCH_K")
 
 
 def main():
@@ -65,6 +74,9 @@ def main():
     for qi, q in enumerate(QUERIES):
         if qi not in covered and qi != 6:
             continue
+        sup_q = support.get(qi, 0)
+        K = (int(K_FIXED) if K_FIXED
+             else max(1, int(-(-sup_q * K_MULT // 1))) if sup_q else 10)
         r = search_set(db, q, purity="fast", k_max=K,
                        cfg_override=(folds or {}).get(q))
         # A dead channel silently cost 0.38 -> 0.13 once (2026-07-28,
@@ -88,15 +100,15 @@ def main():
                 ung += 1
             elif v == 1:
                 tru += 1
-        sup = support.get(qi, 0)
+        sup = sup_q
         prec = tru / len(clips) if clips else None
-        yld = tru / min(K, sup) if sup else None
+        yld = tru / sup if sup else None
         rows.append((qi, q, len(clips), tru, ung, sup, prec, yld,
                      r["ms"]))
-        print(f"q{qi:02d} ret {len(clips):2d} true {tru:2d} "
-              f"ungraded {ung}  sup {sup:3d}  "
-              f"prec {prec if prec is None else f'{prec:.2f}'}  "
+        print(f"q{qi:02d} k {K:3d} ret {len(clips):3d} true {tru:3d} "
+              f"sup {sup:3d}  "
               f"yield {yld if yld is None else f'{yld:.2f}'}  "
+              f"prec {prec if prec is None else f'{prec:.2f}'}  "
               f"{r['ms']:5.0f}ms  {q}", flush=True)
 
     graded = [r for r in rows if len(r) == 9]
@@ -111,12 +123,12 @@ def main():
                             text=True).stdout.strip()
     stamp = datetime.datetime.now(datetime.UTC).strftime(
         "%Y-%m-%d %H:%M")
-    line = (f"| {stamp} | {commit} | {tp}/{n} returned true | "
-            f"mean prec {mp:.2f} | mean yield {my:.2f} | "
+    line = (f"| {stamp} | {commit} | k=1.5xsup | {tp}/{n} returned true | "
+            f"mean yield {my:.2f} | mean prec {mp:.2f} | "
             + " ".join(f"q{r[0]:02d}:{r[3]}/{r[2]}" for r in graded)
             + " |\n")
     if degraded:
-        print(f"\n== mean precision {mp:.2f}, mean yield {my:.2f}, "
+        print(f"\n== mean YIELD {my:.2f} (true/support), mean prec {mp:.2f}, "
               f"{tp}/{n} returned true — DEGRADED RUN, ledger NOT "
               f"appended ==")
         for c, err in sorted(degraded.items()):
@@ -125,19 +137,19 @@ def main():
               "requirements-local.txt) and rerun.")
         raise SystemExit(2)
     if store_path != "lake/bench":
-        print(f"\n== mean precision {mp:.2f}, mean yield {my:.2f}, "
+        print(f"\n== mean YIELD {my:.2f} (true/support), mean prec {mp:.2f}, "
               f"{tp}/{n} returned true — gate run on {store_path}, "
               f"ledger NOT appended ==")
         return
     led = Path("BENCHMARKS.md")
     txt = led.read_text() if led.exists() else "# Benchmarks\n"
     if "## Truthset ledger" not in txt:
-        txt += ("\n## Truthset ledger (lake/bench, k=10, strict: "
-                "ungraded=false)\n\n| when | commit | true/returned | "
-                "mean prec | mean yield | per-query |\n"
-                "|---|---|---|---|---|---|\n")
+        txt += ("\n## Truthset ledger (lake/bench, k=1.5x support, "
+                "strict: ungraded=false)\n\n| when | commit | k | "
+                "true/returned | mean yield | mean prec | per-query |\n"
+                "|---|---|---|---|---|---|---|\n")
     led.write_text(txt + line)
-    print(f"\n== mean precision {mp:.2f}, mean yield {my:.2f}, "
+    print(f"\n== mean YIELD {my:.2f} (true/support), mean prec {mp:.2f}, "
           f"{tp}/{n} returned true — ledger row appended ==")
 
 

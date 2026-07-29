@@ -29,12 +29,27 @@ from elidedb.setpath import (confidence_cut, event_positions,  # noqa: E402
 
 CH = ["pe", "act", "vid", "obj", "mot", "prf", "sig2", "conj", "iv2",
       "prf_q"]
-# THE OPERATING POINT, and it must match the one being evaluated. The
-# fitted artifact was tuned at K=10 and then read at k=100, where its
-# choices are actively wrong: a filter that vetoes 60% of candidates
-# costs nothing when only 10 slots exist and caps recall hard when 100
-# do. Same env var as the bench so the two cannot drift apart.
-K = int(__import__("os").environ.get("ELIDEDB_BENCH_K", "10"))
+# k IS THE USER'S, so the artifact may not depend on it. Fitting at
+# K=10 and serving k=100 was worth 0.26 of the metric, and "refit when
+# the user changes k" is not an answer - k arrives with the query. The
+# fit therefore scores every candidate config over a LADDER of k and
+# takes the mean, so one artifact is chosen for its behaviour across
+# the whole range rather than tuned to a point on it. The ladder
+# includes each query's own 1.5x support, which is the operating point
+# the product metric uses.
+K_LADDER = (10, 25, 50, 100, 200)
+# ...and relative rungs, because an absolute ladder is not neutral: for
+# a 247-support query every absolute rung sits below its 1.5x operating
+# point (371), so the fit only ever saw that query at k values where
+# early stopping is free. The rungs multiply support, so both a
+# 2-episode query and a 247-episode one are seen across the same
+# RATIOS of what exists.
+K_REL = (0.5, 1.0, 1.5, 2.0)
+
+
+def k_for(sup, mult=1.5):
+    """The product operating point: k scales with what exists."""
+    return max(1, int(np.ceil(sup * mult))) if sup else 1
 
 
 def capture(db, keys, text):
@@ -118,6 +133,14 @@ _SP = {}      # (sid, pos) store geometry, set once in main()
 
 
 def score_query(case, w, fq, fc, al=0.0, r=0):
+    """Mean objective over the k ladder plus this query's own 1.5x
+    support point — see K_LADDER."""
+    ks = set(K_LADDER) | {k_for(case["sup"], m) for m in K_REL}
+    return float(np.mean([_score_at(case, w, fq, fc, al, r, k)
+                          for k in sorted(ks)]))
+
+
+def _score_at(case, w, fq, fc, al, r, K):
     if case.get("gated"):
         # live returns empty for gated queries regardless of weights;
         # a constant removes them from the ascent so weights are never
@@ -155,7 +178,7 @@ def score_query(case, w, fq, fc, al=0.0, r=0):
         return 0.0
     tru = int((lab == 1).sum())
     prec = tru / n
-    yld = tru / min(K, case["sup"]) if case["sup"] else 0.0
+    yld = tru / case["sup"] if case["sup"] else 0.0
     # YIELD IS THE PRODUCT METRIC: true / min(k, support), stated as the
     # only one that counts. It led at 0.5 weight while precision led at
     # 1.0, which is why the fit kept buying precision with recall - at
