@@ -37,7 +37,19 @@ QUERIES = [
     "put the eggplant into the drawer",
     "put the banana on top of the drawer",
 ]
-CHANNELS = ["pe", "act", "sig2", "iv2", "vid", "obj", "mot", "prf", "conj"]
+CHANNELS = ["pe", "act", "iv2", "vid", "obj", "mot", "prf", "conj"]
+
+# Combinations worth asking about, beyond one-at-a-time. Redundancy only
+# shows up here: two channels can each look expendable alone while
+# together holding something nothing else covers (or vice versa - two
+# copies of the same evidence each look essential until both go).
+COMBOS = [
+    (["pe", "obj"], "the appearance pair together"),
+    (["act", "vid", "prf"], "the mid-tier trio"),
+    (["mot", "prf"], "both direction channels"),
+    (["pe", "obj", "act", "vid", "prf", "mot", "conj"], "everything but iv2"),
+    (["iv2", "mot"], "the two biggest contributors"),
+]
 K = 10
 
 
@@ -72,16 +84,17 @@ def main():
     os.environ.pop("ELIDEDB_DROP_CHANNELS", None)
     t0 = time.perf_counter()
     base_t, base_r, base_per = evaluate(db, truth, support, covered)
-    print(f"{'dropped':10s} {'true':>5} {'ret':>5} {'prec':>6}  "
-          f"{'delta true':>10}  verdict     ({time.perf_counter()-t0:.0f}s "
-          f"for the baseline)")
+    print(f"{'dropped':34s} {'true':>5} {'ret':>5} {'prec':>6}  "
+          f"{'delta':>7}  verdict     ({time.perf_counter()-t0:.0f}s baseline)")
     bp = base_t / max(base_r, 1)
-    print(f"{'(none)':10s} {base_t:>5} {base_r:>5} {bp:>6.3f}  "
-          f"{'-':>10}  baseline")
+    print(f"{'(none)':34s} {base_t:>5} {base_r:>5} {bp:>6.3f}  "
+          f"{'-':>7}  baseline", flush=True)
 
     rows = []
-    for c in CHANNELS:
-        os.environ["ELIDEDB_DROP_CHANNELS"] = c
+    trials = [([c], c) for c in CHANNELS] + [(g, lbl) for g, lbl in COMBOS]
+    for group, label in trials:
+        c = label if len(group) > 1 else group[0]
+        os.environ["ELIDEDB_DROP_CHANNELS"] = ",".join(group)
         tr, rr, _ = evaluate(db, truth, support, covered)
         d = tr - base_t
         p = tr / max(rr, 1)
@@ -89,7 +102,8 @@ def main():
                    "helps" if d < 0 else
                    "DEAD WEIGHT" if d == 0 else "HURTS")
         rows.append((c, tr, rr, p, d, verdict))
-        print(f"{c:10s} {tr:>5} {rr:>5} {p:>6.3f}  {d:>+10}  {verdict}")
+        print(f"{c:34s} {tr:>5} {rr:>5} {p:>6.3f}  {d:>+7}  {verdict}",
+              flush=True)
     os.environ.pop("ELIDEDB_DROP_CHANNELS", None)
 
     print("\nRemovable without losing a single true result:")

@@ -35,14 +35,67 @@ def confidence_cut(scores, alpha, k_max):
     removed. `scores` must be sorted descending."""
     s = np.asarray(scores, float)
     n = min(len(s), int(k_max))
-    if alpha <= 0 or n == 0:
-        return n
+    if n == 0:
+        return 0
+    bg = _unsupervised_cut(s, n)      # outliers above the background
+    if alpha <= 0:
+        # alpha=0 used to mean "return k_max". That is not abstention,
+        # it is the absence of it: measured at k_max=100 the directional
+        # queries (whose fitted alpha is 0) returned 100 results for a
+        # support of 2. k is a CEILING, not a target, so with no fitted
+        # alpha we fall back to the UNSUPERVISED knee of the query's own
+        # score curve — a property of the scores, needing no truthset.
+        return _unsupervised_cut(s, n)
     top = float(s[:min(5, len(s))].mean())
     if top <= 0:
         return n
-    return int(np.searchsorted(-s[:n], -alpha * top, side="right"))
+    head = int(np.searchsorted(-s[:n], -alpha * top, side="right"))
+    # The fitted alpha is a fraction of the query's OWN HEAD, so it stops
+    # early when the head is peaky: q03 returned 10 while 65 of its top
+    # 100 were true. Taking the larger of the two never returns less than
+    # the confidence floor allows, and no longer discards matches that
+    # clearly stand out from the corpus.
+    return max(head, bg)
 
 
+def _unsupervised_cut(s, n):
+    """Return everything that stands out from the BACKGROUND.
+
+    Two earlier rules both failed, in opposite directions, and the
+    reason is the same: they looked only at the head of the curve.
+
+      - largest relative drop (knee): the biggest gap on an RRF curve is
+        at the very top, so it returned 3 clips for a query with 196
+        true episodes.
+      - fraction of the top-5 mean (fitted alpha): a fixed fraction of
+        the head, so q03 returned 10 while 65 of its own top-100 were
+        true - it discarded 55 correct answers it had already ranked.
+
+    The right question is not "where does the head end" but "which
+    episodes score unlike the corpus". Most episodes are irrelevant to
+    any given query, so they form a background distribution; a match is
+    an outlier above it. Median + 3*MAD is the standard robust test for
+    that, and it is scale-free, so it works on uncalibrated RRF scores.
+    It also adapts to what is actually there: hundreds of outliers means
+    hundreds returned (up to the ceiling), two means two.
+
+    Uses only this query's own scores - no evaluation data informs it."""
+    x = np.asarray(s, float)
+    x = x[np.isfinite(x)]
+    if len(x) == 0:
+        return 0
+    if len(x) < 4:
+        return min(len(x), n)
+    med = float(np.median(x))
+    mad = float(np.median(np.abs(x - med)))
+    if mad <= 0:
+        # a degenerate spread (most scores identical): fall back to the
+        # positives above the median rather than returning everything
+        keep = int((x > med).sum())
+        return max(1, min(keep, n))
+    thr = med + 3.0 * 1.4826 * mad          # 1.4826 -> sigma-equivalent
+    keep = int((x >= thr).sum())
+    return max(1, min(keep, n))
 def event_positions(keys):
     """(stream_id, position-in-stream) per episode key — store
     geometry only (episodes are consecutive windows; position

@@ -62,10 +62,35 @@ def test_filter_empty_channels_no_crash():
     assert filter_mask({}, ["mot"], 0.5).shape == (0,)
 
 
-def test_cut_alpha_zero_is_plain_topk():
+def test_cut_alpha_zero_abstains_instead_of_filling_k():
+    """alpha=0 must NOT mean "return k_max".
+
+    It used to, and at k_max=100 that made directional queries return
+    100 clips for a support of 2 (measured 2026-07-28). k is a ceiling,
+    not a target, so with no fitted alpha the cut falls back to the
+    unsupervised knee of the query's own score curve."""
     s = np.array([5.0, 4.0, 3.0, 2.0, 1.0])
-    assert confidence_cut(s, 0.0, 3) == 3
-    assert confidence_cut(s, 0.0, 10) == 5
+    assert confidence_cut(s, 0.0, 3) <= 3          # never exceeds k_max
+    assert confidence_cut(s, 0.0, 100) < len(s)    # and does not fill it
+
+    # a curve with an obvious edge: three strong, then a cliff. Otsu
+    # thresholds on a histogram, so the boundary can land one bin either
+    # side of the true split; what must hold is that it isolates the
+    # strong head instead of returning everything.
+    cliff = np.array([9.0, 8.7, 8.4, 0.4, 0.3, 0.2, 0.1])
+    assert 3 <= confidence_cut(cliff, 0.0, 100) <= 4
+
+
+def test_cut_scales_with_the_size_of_the_real_population():
+    """k is a ceiling, not a target: a query with hundreds of genuine
+    matches must return hundreds (up to k), and one with two must
+    return two. A knee could not do this - it returned 3 for a query
+    with 196 true episodes."""
+    many = np.concatenate([np.linspace(9, 7, 120), np.linspace(1.0, 0.2, 900)])
+    assert confidence_cut(many, 0.0, 100) == 100      # fills the ceiling
+
+    few = np.concatenate([np.array([9.0, 8.8]), np.linspace(1.0, 0.2, 1000)])
+    assert confidence_cut(few, 0.0, 100) <= 4         # abstains
 
 
 def test_cut_drops_low_confidence_tail():

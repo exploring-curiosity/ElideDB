@@ -177,7 +177,8 @@ def _knee(sorted_desc):
     return min(floor_cut, knee)
 
 
-def search_set(store, text, purity="fast", k_max=400, audit_n=12):
+def search_set(store, text, purity="fast", k_max=400, audit_n=12,
+               return_ranking=False):
     """The robotics query: ALL matching clips, purity-first, VLM-free.
 
     purity="fast"    exact fused scan, direction filter, knee cut
@@ -243,12 +244,13 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
     except Exception as e:
         _fail('act', e)
     try:
-        from .sig2 import conj_lookup, sig2_lookup
-        vs = []
-        for vtext in variants:
-            look, _ = sig2_lookup(store, vtext)
-            vs.append(np.array([look(*k) for k in keys]))
-        ch["sig2"] = variant_max(vs)
+        from .sig2 import conj_lookup
+        # sig2 (SigLIP2 appearance) is NOT scored: leave-one-out on the
+        # frozen truthset measured its contribution at exactly zero
+        # (35 true with it, 35 without), while pe and obj answer the same
+        # "what does it look like" question. conj stays and is worth -5,
+        # and it reads sig2_vectors, so the SigLIP2 pass is still paid at
+        # INGEST - dropping the channel saves query work, not ingest.
         cl = conj_lookup(store, text)
         if cl is not None:
             ch["conj"] = np.array([cl(*k) for k in keys])
@@ -486,6 +488,11 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12):
                            or c in (fnames or ())),
         "scored": len(keys),
         "ms": round(ms, 1),
+        # full fused ordering, for diagnosis: it separates "the ranking
+        # never found the true episodes" from "it found them and the cut
+        # refused to return them" - two failures with opposite fixes.
+        **({"ranking": [(keys[i][0], keys[i][1], float(fused[i]))
+                        for i in order]} if return_ranking else {}),
     }
 
 

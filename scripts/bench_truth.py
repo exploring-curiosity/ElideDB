@@ -23,7 +23,10 @@ from bench_product import QUERIES                            # noqa: E402
 from elidedb import Store                                    # noqa: E402
 from elidedb.scenario import search_set                      # noqa: E402
 
-K = 10
+# k is a CEILING, not a target: the confidence cut decides how many to
+# return, and a query with 2 true episodes should return 2, not k.
+# Overridable so the same harness can measure the product setting.
+K = int(__import__("os").environ.get("ELIDEDB_BENCH_K", "10"))
 
 
 def main():

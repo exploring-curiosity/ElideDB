@@ -301,3 +301,78 @@ def object_candidates(store, qv, top=24):
             start = end
     out = sorted(rec_score.items(), key=lambda kv: -kv[1])[:top]
     return [(*k, v) for k, v in out]
+
+
+def bind_lookup(store, qv_mover, qv_landmark):
+    """ROLE-AWARE binding: does the MOVER move and the LANDMARK stay?
+
+    The obj channel asks "are both objects present" (min over atoms).
+    That is why "put the eggplant into the drawer" scores every episode
+    holding an eggplant and a drawer, and why the binding queries sit at
+    ~11% precision while direction queries reach 86%.
+
+    A relation has ROLES. In "put X into Y", X is the theme and moves; Y
+    is the landmark and largely does not. That asymmetry is already in
+    the store - object_vectors carries a per-crop `motion` scalar - it
+    was simply never used to tell the two roles apart. This scores:
+
+        min(sim_X, sim_Y)              both objects must really be there
+      * relu(motion_X - motion_Y)      and X must be the one that moved
+
+    so an episode where the drawer moves and the eggplant sits still
+    scores zero, which is exactly the confusion the flat conjunction
+    could not express. No new ingest: pure arithmetic over crops that
+    are already embedded.
+
+    MEASURED 2026-07-28 - THIS DOES NOT WORK, AND THE REASON MATTERS.
+    Wired as a channel it left the binding queries where it found them
+    (q09 best true rank 799 of 1122, q10 rank 441). The role logic is
+    not what fails: crop-level object identification is at noise. Across
+    all 51,101 crops the best cosine to "an eggplant" is 0.184 (mean
+    0.048), and in the two episodes that genuinely contain one the best
+    crop scores 0.147 and 0.161 - ranked 110th and 75th corpus-wide. The
+    detector cannot find the object, so nothing built on top of it can
+    bind it. Fixing binding needs better object GROUNDING (higher-res
+    crops, or an open-vocabulary detector), not better relation
+    reasoning. Kept, unwired, as the measurement behind that claim.
+
+    Returns lookup(stream, t0, t1) -> float (nan when the recording has
+    no crops)."""
+    from .embeddings import _vec_table
+    ver = store.table("object_vectors").state().version
+    key = (str(store.dir), ver)
+    if key not in _OBJ_IDX:
+        object_lookup(store, np.atleast_2d(np.asarray(qv_mover, np.float32)))
+    idx, mo = _OBJ_IDX[key]
+    _, vecs = _vec_table(store, "object_vectors")
+    m = np.asarray(qv_mover, np.float32).reshape(-1)
+    l = np.asarray(qv_landmark, np.float32).reshape(-1)
+    m /= np.linalg.norm(m) + 1e-8
+    l /= np.linalg.norm(l) + 1e-8
+    Sm = vecs @ m
+    Sl = vecs @ l
+
+    def lookup(s, a, b):
+        if s not in idx:
+            return float("nan")
+        t0s, t1s, rows = idx[s]
+        lo = int(np.searchsorted(t0s, a, side="right"))
+        j0 = lo - 1
+        if j0 < 0 or b > int(t1s[j0]) + 1:
+            return float("nan")
+        j = j0
+        while j >= 0 and t0s[j] == t0s[j0]:
+            j -= 1
+        run = rows[j + 1:lo]
+        if len(run) == 0:
+            return float("nan")
+        im = int(np.argmax(Sm[run]))
+        il = int(np.argmax(Sl[run]))
+        if im == il:
+            return 0.0          # one crop cannot play both roles
+        present = float(min(Sm[run][im], Sl[run][il]))
+        # the mover must out-move the landmark; ties and reversals are
+        # evidence AGAINST the relation, not neutral
+        delta = float(mo[run[im]] - mo[run[il]])
+        return present * max(delta, 0.0)
+    return lookup
