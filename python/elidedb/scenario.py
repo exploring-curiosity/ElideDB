@@ -299,6 +299,17 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
             ch["obj"] = np.array([_obj(k) for k in keys])
     except Exception as e:
         _fail('obj', e)
+    # NOT a channel: region identity from crops, measured dead at corpus
+    # scale. The hypothesis was that obj failed only because its crops
+    # were cut out of DOWNSCALED decodes. Recut at native 640x480 along
+    # common-fate tracks (scripts/track_ingest.py, 25,335 crops) it looked
+    # strong on an 80-episode pool — yield@10 of 1.00/1.00/0.75/0.50 on
+    # q10/q09/q00/q08 — and collapsed against the real 1,121: banana's two
+    # true episodes rank 280th and 534th, spoon's 21/38/49, standalone
+    # mean yield 0.08 against obj's 0.14 and iv2's 0.24. The pool was 14x
+    # easier and the separation was its artifact. Resolution was not the
+    # blocker; a crop asks a small patch what it is with the context that
+    # would answer the question cropped away.
     # CONTRAST channels — direction EVIDENCE, computed only when the
     # lexicon yields a swap. Architectural principle replacing every
     # hand routing rule (ledger-derived, now task-free): contrast

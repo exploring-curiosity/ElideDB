@@ -229,6 +229,15 @@ def main():
         in-sample objective monotone across refits."""
         cands = [({c: 1.0 for c in CH}, 1 / 3, list(fc0), 0.0, 0)]
         cands += list(starts)
+        # DELIBERATELY A WEAK SEARCH — measured, not assumed. Greedy
+        # ascent from one start is path-dependent, and that path
+        # dependence is what lost the shipped config when trk entered
+        # CH. The obvious fix, 12 seeded random restarts, was tried:
+        # it found a HIGHER in-sample optimum and the leave-one-query-
+        # out estimate FELL, 0.265 -> 0.151. With ten queries the
+        # search itself is the overfitting, so the limited search is
+        # the regularizer and stays. Recoverability comes from the
+        # backup rotation below instead.
         out = None
         for w0, fq0, fcs, al0, r0 in cands:
             got = ascend(subset, dict(w0), fq0, list(fcs), al0, r0)
@@ -304,6 +313,16 @@ def main():
            "fitted_on": "eval/truthsets/bridge4h.parquet",
            "loqo_mean": round(float(np.mean(loqo)), 3)}
     p = Path("lake/bench/_set_weights.json")
+    # ROTATE BEFORE OVERWRITING. _starts() has always read
+    # _set_weights.prev.json as a warm start, but nothing ever wrote
+    # it, so the safety net was decorative: adding the trk channel
+    # sent greedy ascent down a different path, the fit discarded the
+    # confidence cut (alpha 0.85 -> 0.0), the bench fell 0.38 -> 0.22,
+    # and the only copy of the good config was the one just
+    # overwritten (lake/ is gitignored; it came back off HF). A fit is
+    # a lossy write to an untracked artifact — it keeps a predecessor.
+    if p.exists():
+        Path("lake/bench/_set_weights.prev.json").write_text(p.read_text())
     p.write_text(json.dumps(out, indent=1))
     Path("lake/bench/_set_weights.loqo.json").write_text(json.dumps(folds, indent=1))
     print("wrote per-fold configs -> _set_weights.loqo.json "

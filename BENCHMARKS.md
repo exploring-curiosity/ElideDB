@@ -539,3 +539,6 @@ Conclusion: IV2 stays as the contextual anchor AND becomes the
 distillation teacher for the single fast write-path channel. Speed was
 deliberately not compared - JAX ran CPU-only here while IV2 ran on GPU,
 so any such number would measure the backend, not the model.
+| 2026-07-29 07:07 | b12fe2f | 22/100 returned true | mean prec 0.22 | mean yield 0.22 | q00:1/10 q01:1/10 q02:3/10 q03:7/10 q04:4/10 q05:4/10 q07:1/10 q08:1/10 q09:0/10 q10:0/10 |
+| 2026-07-29 07:10 | b12fe2f | 35/100 returned true | mean prec 0.35 | mean yield 0.35 | q00:1/10 q01:2/10 q02:3/10 q03:9/10 q04:8/10 q05:10/10 q07:1/10 q08:1/10 q09:0/10 q10:0/10 |
+| 2026-07-29 07:19 | b12fe2f | 35/100 returned true | mean prec 0.35 | mean yield 0.35 | q00:1/10 q01:1/10 q02:3/10 q03:9/10 q04:9/10 q05:10/10 q07:1/10 q08:1/10 q09:0/10 q10:0/10 |
