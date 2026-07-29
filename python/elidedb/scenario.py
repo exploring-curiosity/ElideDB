@@ -178,7 +178,7 @@ def _knee(sorted_desc):
 
 
 def search_set(store, text, purity="fast", k_max=400, audit_n=12,
-               return_ranking=False):
+               return_ranking=False, cfg_override=None):
     """The robotics query: ALL matching clips, purity-first, VLM-free.
 
     purity="fast"    exact fused scan, direction filter, knee cut
@@ -352,7 +352,10 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
     from pathlib import Path
     sw = Path(store.dir) / "_set_weights.json"
     try:
-        if sw.exists():
+        if cfg_override is not None:
+            # honest evaluation: weights fitted WITHOUT this query
+            cfg = dict(cfg_override)
+        elif sw.exists():
             # FITTED roles (scripts/fit_set_weights.py): ordering
             # weights for every channel INCLUDING contrasts, plus the
             # filter quantile — coordinate ascent on the truthset,
@@ -360,6 +363,7 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
             # rule's answer to hand role rules (the fit independently
             # rediscovered mot=0-in-ordering).
             cfg = json.loads(sw.read_text())
+        if cfg is not None:
             wk = ("set_weights_dir" if directional and
                   "set_weights_dir" in cfg else "set_weights")
             fk = ("filter_quantile_dir" if directional and

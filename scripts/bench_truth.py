@@ -36,6 +36,22 @@ def main():
     import os
     store_path = os.environ.get("ELIDEDB_BENCH_STORE", "lake/bench")
     db = Store.open(store_path)
+    # HONEST MODE: score every query with weights fitted WITHOUT it
+    # (leave-one-query-out). The shipped artifact was fitted on all ten
+    # truthset queries, so the default run is in-sample - useful as a
+    # diagnostic, not as a generalization claim. Research consensus on
+    # small query sets is nested CV: tune in an inner loop, report from
+    # an outer loop that never saw the tuning.
+    import json as _json
+    folds = None
+    if os.environ.get("ELIDEDB_BENCH_HONEST") == "1":
+        fp = Path(store_path) / "_set_weights.loqo.json"
+        if not fp.exists():
+            raise SystemExit(
+                f"honest mode needs {fp} - run scripts/fit_set_weights.py "
+                f"to produce the per-fold configs")
+        folds = _json.loads(fp.read_text())
+        print(f"HONEST (leave-one-query-out) mode: {len(folds)} folds")
     t = pq.read_table("eval/truthsets/bridge4h.parquet").to_pydict()
     truth = {}
     support = {}
@@ -49,7 +65,8 @@ def main():
     for qi, q in enumerate(QUERIES):
         if qi not in covered and qi != 6:
             continue
-        r = search_set(db, q, purity="fast", k_max=K)
+        r = search_set(db, q, purity="fast", k_max=K,
+                       cfg_override=(folds or {}).get(q))
         # A dead channel silently cost 0.38 -> 0.13 once (2026-07-28,
         # transformers 5 vs the IV2 port). The ledger is a record of
         # the SYSTEM, so a run missing a fitted channel must never be

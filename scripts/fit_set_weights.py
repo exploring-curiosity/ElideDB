@@ -269,11 +269,21 @@ def main():
     # QUERY TYPE (directional vs not) — routing is a lexicon property
     # (swap exists?), roles are data.
     loqo = []
+    folds = {}          # query text -> the config fitted WITHOUT it
     for i in range(len(cases)):
         train = [c for j, c in enumerate(cases) if j != i]
         same = [c for c in train if c["dir"] == cases[i]["dir"]]
         w, fq, fc, al, r = fit(same or train,
                                DIR0 if cases[i]["dir"] else CON0)
+        # Keeping ONLY the score made the honest estimate unusable: the
+        # benchmark had no way to evaluate a query with weights that had
+        # not seen it, so every reported number was in-sample. Persist
+        # the fold so the evaluation can actually be run that way.
+        suffix = "_dir" if cases[i]["dir"] else ""
+        folds[cases[i]["q"]] = {
+            f"set_weights{suffix}": w, f"filter_quantile{suffix}": fq,
+            f"filter_channels{suffix}": fc, f"cut_alpha{suffix}": al,
+            f"nms_r{suffix}": r}
         loqo.append(score_query(cases[i], w, fq, fc, al, r))
         print(f"LOQO holdout {cases[i]['q'][:44]:44s} "
               f"score {loqo[-1]:.2f}", flush=True)
@@ -295,6 +305,9 @@ def main():
            "loqo_mean": round(float(np.mean(loqo)), 3)}
     p = Path("lake/bench/_set_weights.json")
     p.write_text(json.dumps(out, indent=1))
+    Path("lake/bench/_set_weights.loqo.json").write_text(json.dumps(folds, indent=1))
+    print("wrote per-fold configs -> _set_weights.loqo.json "
+          "(each fitted WITHOUT the query it scores)")
     print(f"dir {json.dumps(w_dir)} fq={fq_dir:.2f} fc={fc_dir} "
           f"al={al_dir:.2f} r={r_dir}")
     print(f"con {json.dumps(w_con)} fq={fq_con:.2f} fc={fc_con} "
