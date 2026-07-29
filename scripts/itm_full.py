@@ -15,14 +15,18 @@ Two lessons from the first full pass are baked in here:
                         DESPITE scores of 0.94/0.99. Softmax destroyed
                         resolution exactly at the top of the list; the
                         raw logit margin keeps it.
-  3 windows, max        one 4-frame window can miss the object
+  3 windows, PER-WINDOW one 4-frame window can miss the object
                         entirely (q09's second true episode scored
-                        0.765 at rank 190 - the eggplant simply is not
-                        in those frames). Early/mid/late windows,
-                        max-pooled, ask "was it visible at ANY point".
+                        0.765 at rank 190). But max-pooling windows
+                        was measured WORSE (mean yield 0.40 -> 0.36,
+                        q00 0.38 -> 0.12): a negative gets three
+                        chances to fluke a high margin - the same
+                        extreme-value trap that killed patch MaxSim.
+                        So the matrix stores every window's score and
+                        the pooling is chosen by measurement, offline.
 
 Writes the raw (episodes x queries) logit-margin matrix to
-ml/itm_scores.npz. Evaluation is a separate script so re-scoring is
+ml/itm_scores3.npz. Evaluation is a separate script so re-scoring is
 never needed to re-analyze.
 
   python scripts/itm_full.py [--limit N]
@@ -78,7 +82,7 @@ def main():
                                 max_length=m._config.max_txt_l,
                                 return_tensors="pt").to(dev))
 
-    S = np.full((len(keys), len(QIDS)), np.nan, np.float32)
+    S3 = np.full((len(keys), len(QIDS), 3), np.nan, np.float32)
     t0 = time.time()
     done = 0
     for i, (s, a, b) in enumerate(keys):
@@ -100,7 +104,6 @@ def main():
         fr = [f for _, f in sorted(dec)]
         if len(fr) < 2:
             continue
-        best = np.full(len(toks), -np.inf, np.float32)
         for w0 in range(3):                              # early/mid/late
             lo = int(w0 * len(fr) / 3)
             hi = max(int((w0 + 1) * len(fr) / 3), lo + 1)
@@ -122,17 +125,16 @@ def main():
                         encoder_attention_mask=vam,
                         return_dict=True, mode="multi_modal")
                     lg = head(out.last_hidden_state[:, 0]).float()[0]
-                    best[j] = max(best[j], float(lg[1] - lg[0]))
-        S[i] = best
+                    S3[i, j, w0] = float(lg[1] - lg[0])
         done += 1
         if done % 50 == 0:
             el = time.time() - t0
             print(f"  {done}/{len(keys)}  {el:.0f}s  "
                   f"ETA {el / done * len(keys) / 60:.0f}min", flush=True)
 
-    out = ROOT / "ml/itm_scores.npz"
+    out = ROOT / "ml/itm_scores3.npz"
     out.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(out, S=S, qids=np.array(QIDS),
+    np.savez(out, S=np.nanmax(S3, axis=2), S3=S3, qids=np.array(QIDS),
              streams=np.array([k[0] for k in keys]),
              ts=np.array([k[1] for k in keys], np.int64),
              t1=np.array([k[2] for k in keys], np.int64))

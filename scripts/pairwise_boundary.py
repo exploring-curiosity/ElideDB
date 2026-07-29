@@ -95,8 +95,8 @@ def main():
         else 2
     W = int(argv[argv.index("--w") + 1]) if "--w" in argv else 15
 
-    d = np.load(ROOT / "ml/itm_scores.npz", allow_pickle=True)
-    S, qids = d["S"], [int(q) for q in d["qids"]]
+    d = np.load(ROOT / "ml/teacher_base.npz", allow_pickle=True)
+    B, qids = d["B"], [int(q) for q in d["qids"]]
     keys = list(zip([str(s) for s in d["streams"]],
                     [int(v) for v in d["ts"]], [int(v) for v in d["t1"]]))
     t = pq.read_table(ROOT / "eval/truthsets/bridge4h.parquet").to_pydict()
@@ -108,6 +108,7 @@ def main():
 
     db = Store.open("lake/bench")
     frames_tbl = db.table("frames").scan()
+
     fcache: dict = {}
 
     def frames_of(i):
@@ -135,10 +136,15 @@ def main():
         text = QUERIES[qi]
         lab = np.array([1 if truth.get((qi, s, a)) == 1 else 0
                         for s, a, _ in keys])
-        x = S[:, j].astype(float)
+        x = B[:, j].astype(float)
         order = list(np.argsort(-np.where(np.isfinite(x), x, -np.inf)))
         K = int(np.ceil(sup[qi] * 1.5))
-        lo, hi = 0, min(K + W, len(order))
+        # BUDGET policy, not a tuned constant: a boundary of K+W
+        # explores almost nothing when K is 3, so small-K queries get
+        # depth in place of breadth - examine at least 60, at most
+        # 160, else K+W. The judge itself never sees the truthset.
+        depth = min(max(K + W, 60), 160) if K < 60 else K + W
+        lo, hi = 0, min(depth, len(order))
 
         def yld(o):
             return int(lab[o[:K]].sum()) / sup[qi]
