@@ -9,14 +9,17 @@ initial->final state diff. Per demo:
                 last frames -> vanish-site (where something left) and
                 appear-site (where something arrived). The agent is
                 masked out of the diff where its track covers it.
-  P3 naming     the VANISH-site crop from the FIRST frame is the
-                cleanest look the whole demo offers at the moved
-                object - pre-grasp, unoccluded (L3: context kept, the
-                crop only focuses the namer). One constrained naming
-                question per site (L5: generator, never judge) +
-                SigLIP text vec of the name for query-time matching.
-                The appear-site is named from the LAST frame (often a
-                container: "drawer", "pot").
+  P3 naming     GENERATOR PROPOSES, DETECTOR VERIFIES. v1 named the
+                vanish-site crop blind and corpus scale exposed it:
+                true eggplant demos read "white paper"/"fire hydrant",
+                banana read "cheese slice" - diff blobs are not
+                object-centered and a 4-bit namer confabulates without
+                complaint. Now each site is named from BOTH frames
+                (the object is in one of them; the fragile side
+                classifier no longer decides which), every candidate
+                name is verified by Grounding-DINO confidence AT that
+                crop, the higher-verified side wins, and below 0.3
+                the namer ABSTAINS - a wrong name is worse than none.
   P4 verb       topology, not classification:
                   vanish A + appear B          -> moved / put
                   appear inside articulated rgn-> put_into
@@ -160,14 +163,52 @@ def articulation(frames, agent_union):
     return float(tot_dy if abs(tot_dy) >= abs(tot_dx) else tot_dx)
 
 
-def name_site(frames_idx_img, box, namer):
-    x0, y0, x1, y1, kind, _ = box
-    im = frames_idx_img
+def _crop(im, box):
+    x0, y0, x1, y1 = box[:4]
     H, W = im.shape[:2]
     px, py = int((x1 - x0) * PAD), int((y1 - y0) * PAD)
-    cx0, cy0 = max(x0 - px, 0), max(y0 - py, 0)
-    cx1, cy1 = min(x1 + px, W), min(y1 + py, H)
-    return namer(im[cy0:cy1, cx0:cx1])
+    return im[max(y0 - py, 0):min(y1 + py, H),
+              max(x0 - px, 0):min(x1 + px, W)]
+
+
+def name_site_verified(first, last, box, namer, verifier):
+    """Name from both frames; keep the side whose generated name the
+    detector actually finds in that crop; abstain otherwise."""
+    best = ("", 0.0, "")
+    for side, im in (("vanish", first), ("appear", last)):
+        crop = _crop(im, box)
+        if crop.shape[0] < 12 or crop.shape[1] < 12:
+            continue
+        nm = namer(crop)
+        if not nm or nm.startswith("<"):
+            continue
+        conf = verifier(crop, nm)
+        if conf > best[1]:
+            best = (nm, conf, side)
+    if best[1] < 0.30:
+        return "", 0.0, ""
+    return best
+
+
+def make_verifier():
+    import torch
+    from PIL import Image
+    from transformers import (AutoProcessor,
+                              GroundingDinoForObjectDetection)
+    dev = "mps" if torch.backends.mps.is_available() else "cpu"
+    mid = "IDEA-Research/grounding-dino-base"
+    proc = AutoProcessor.from_pretrained(mid)
+    model = GroundingDinoForObjectDetection.from_pretrained(
+        mid, dtype=torch.float32).to(dev).eval()
+
+    def verifier(crop_hwc, phrase):
+        im = Image.fromarray(crop_hwc)
+        inputs = proc(images=im, text=phrase + " .",
+                      return_tensors="pt").to(dev)
+        with torch.no_grad():
+            out = model(**inputs)
+        return float(out.logits[0].sigmoid().max())
+    return verifier
 
 
 def make_namer():
@@ -197,7 +238,7 @@ def make_namer():
     return namer
 
 
-def extract(db, frames_tbl, key, namer):
+def extract(db, frames_tbl, key, namer, verifier):
     """One demo -> event script dict."""
     from elidedb.video import FrameSet
     s, a, b = key
@@ -219,16 +260,16 @@ def extract(db, frames_tbl, key, namer):
 
     parts = []
     for box in sites[:2]:
-        # tiny diff blobs produced junk names ("triangle", "moon") -
-        # a namer needs enough pixels to see an object at all
-        if box[5] < 400:
+        if box[5] < 200:
             continue
-        src_img = first if box[4] == "vanish" else last
         try:
-            nm = name_site(src_img, box, namer)
-        except Exception as e:
-            nm = f"<namer failed: {type(e).__name__}>"
-        parts.append({"kind": box[4], "box": box[:4], "name": nm})
+            nm, conf, side = name_site_verified(first, last, box,
+                                                namer, verifier)
+        except Exception:
+            nm, conf, side = "", 0.0, ""
+        if nm:
+            parts.append({"kind": side, "box": box[:4], "name": nm,
+                          "conf": round(conf, 3)})
 
     vanish = [p for p in parts if p["kind"] == "vanish"]
     appear = [p for p in parts if p["kind"] == "appear"]
@@ -252,36 +293,111 @@ def main():
     n_want = int(argv[argv.index("--n") + 1]) if "--n" in argv else 20
     seed = int(argv[argv.index("--seed") + 1]) if "--seed" in argv else 0
     jout = argv[argv.index("--json") + 1] if "--json" in argv else None
+    write_all = "--all" in argv
 
     db = Store.open("lake/bench")
     ep = db.table("episodes").scan().to_pydict()
     keys = list(zip(ep["stream"], (int(v) for v in ep["ts"]),
                     (int(v) for v in ep["t1"])))
-    rng = np.random.default_rng(seed)
-    sample = [keys[i] for i in rng.choice(len(keys), n_want, replace=False)]
+    if write_all:
+        sample = keys
+    else:
+        rng = np.random.default_rng(seed)
+        sample = [keys[i] for i in
+                  rng.choice(len(keys), n_want, replace=False)]
     frames_tbl = db.table("frames").scan()
     namer = make_namer()
+    verifier = make_verifier()
 
     out, t0 = [], time.time()
     ok_agent = ok_name = 0
-    for k in sample:
-        r = extract(db, frames_tbl, k, namer)
+    for ki, k in enumerate(sample):
+        r = extract(db, frames_tbl, k, namer, verifier)
         if r is None:
             continue
+        r["t1"] = k[2]
         out.append(r)
         ok_agent += r["agent_span"] >= 0.4
         ok_name += any(p["name"] and not p["name"].startswith("<")
                        for p in r["participants"])
-        pl = "; ".join(f"{p['kind']}:{p['name']}" for p in r["participants"])
-        print(f"{r['stream'].split('/')[-1]} {str(r['ts'])[-8:]} "
-              f"{r['dur_s']:>4}s  agent {r['agent_span']:.0%}  "
-              f"verb {r['verb']:<8} art {r['articulation']:+.1f}  {pl}",
-              flush=True)
+        if not write_all:
+            pl = "; ".join(f"{p['kind']}:{p['name']}"
+                           for p in r["participants"])
+            print(f"{r['stream'].split('/')[-1]} {str(r['ts'])[-8:]} "
+                  f"{r['dur_s']:>4}s  agent {r['agent_span']:.0%}  "
+                  f"verb {r['verb']:<8} art {r['articulation']:+.1f}  {pl}",
+                  flush=True)
+        elif (ki + 1) % 100 == 0:
+            el = time.time() - t0
+            print(f"  {ki + 1}/{len(sample)}  {el:.0f}s  "
+                  f"ETA {el / (ki + 1) * len(sample) / 60:.0f}min",
+                  flush=True)
     dt = (time.time() - t0) / max(len(out), 1)
     print(f"\n{len(out)} demos  agent-found {ok_agent}/{len(out)}  "
           f"named {ok_name}/{len(out)}  {dt:.1f}s/demo")
     if jout:
         Path(jout).write_text(json.dumps(out, indent=1))
+
+    if write_all:
+        # answers table: one row per (demo, participant) plus a row for
+        # participant-less demos - verb and articulation always present.
+        # name_vec = SigLIP text embedding of the generated name, the
+        # SAME space the query's nouns embed into (matching = cosine in
+        # name space; strings never compared).
+        import pyarrow as pa
+
+        from elidedb.sig2 import _text_vec
+        rows = {"ts": [], "t1": [], "stream": [], "verb": [],
+                "articulation": [], "agent_span": [], "kind": [],
+                "name": [], "site_area": []}
+        vecs = []
+        cache = {}
+        for r in out:
+            parts = r["participants"] or [None]
+            for p in parts:
+                rows["ts"].append(int(r["ts"]))
+                rows["t1"].append(int(r["t1"]))
+                rows["stream"].append(r["stream"])
+                rows["verb"].append(r["verb"])
+                rows["articulation"].append(float(r["articulation"]))
+                rows["agent_span"].append(float(r["agent_span"]))
+                if p is None or p["name"].startswith("<"):
+                    rows["kind"].append("")
+                    rows["name"].append("")
+                    rows["site_area"].append(0)
+                    vecs.append(np.zeros(1152, np.float32))
+                else:
+                    rows["kind"].append(p["kind"])
+                    rows["name"].append(p["name"])
+                    x0, y0, x1, y1 = p["box"]
+                    rows["site_area"].append(int((x1 - x0) * (y1 - y0)))
+                    if p["name"] not in cache:
+                        cache[p["name"]] = np.asarray(
+                            _text_vec(p["name"]), np.float32)
+                    vecs.append(cache[p["name"]])
+        V = np.stack(vecs)
+        tbl = pa.table({
+            "ts": pa.array(rows["ts"], pa.int64()),
+            "t1": pa.array(rows["t1"], pa.int64()),
+            "stream": pa.array(rows["stream"]),
+            "verb": pa.array(rows["verb"]),
+            "articulation": pa.array(rows["articulation"], pa.float32()),
+            "agent_span": pa.array(rows["agent_span"], pa.float32()),
+            "kind": pa.array(rows["kind"]),
+            "name": pa.array(rows["name"]),
+            "site_area": pa.array(rows["site_area"], pa.int32()),
+            "name_vec": pa.FixedSizeListArray.from_arrays(
+                pa.array(np.ascontiguousarray(
+                    V.astype(np.float16)).reshape(-1), pa.float16()),
+                V.shape[1]),
+        })
+        import pyarrow.compute as _pc
+        tbl = tbl.take(_pc.sort_indices(tbl.column("ts")))
+        db.table("answers").append(
+            tbl, kind="events",
+            meta={"extractor": "state-diff-v1", "namer": JUDGE,
+                  "name_space": "siglip2-text"})
+        print(f"answers: {tbl.num_rows} rows written")
 
 
 if __name__ == "__main__":
