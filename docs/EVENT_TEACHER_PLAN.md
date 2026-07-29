@@ -132,6 +132,13 @@ LOQO reporting, warm-start rotation, one code path.
 
     V0  det×motion participation probe (the interrupted measurement) on
         q09/q10/q00 bands. Gate: trues inside top-5 by participation.
+        RESULT (2026-07-29): rejects the QUERY-TIME shortcut, not the
+        design. q09 improved (ranks 7/11 -> 5/9) but q10's noun
+        saturates the detector (true 0.92 / false 0.87) and q00's
+        attribute phrase means nothing to it (0.68 / 0.69). Query-
+        conditioned detection is dead as a reranker; the write-time
+        pipeline never uses it - regions come from structure, names
+        from generation, matching from name-vec space.
     V1  P1–P4 on 20 random demos: printed event scripts, cost/demo.
         Gate: agent found ≥90%, ≥1 participant with a plausible name
         ≥80%, cost ≤ 8 s/demo.
