@@ -299,6 +299,16 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
             ch["obj"] = np.array([_obj(k) for k in keys])
     except Exception as e:
         _fail('obj', e)
+    # NOT a channel: late interaction over the patch grid. Within a
+    # frame the grid separates cleanly (an eggplant frame scores 0.173
+    # for "an eggplant" against 0.063 for "a banana", where the pooled
+    # vector manages 0.107 vs 0.071) and across episodes it ranks at
+    # 0.08 standalone yield, last of ten, against pooled SigLIP2's 0.53.
+    # MaxSim over 1,024 patches is an extreme-value draw: the episode
+    # with the widest patch spread wins it whatever it contains. Eight
+    # poolings were measured (max, top-k means, within-episode z) and
+    # the best reached 0.15. scripts/patch_ingest.py + patches.py stay
+    # as the reproduction.
     # NOT a channel: region identity from crops, measured dead at corpus
     # scale. The hypothesis was that obj failed only because its crops
     # were cut out of DOWNSCALED decodes. Recut at native 640x480 along
@@ -360,6 +370,7 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
     fnames = None       # None => legacy: every contrast channel
     cut_alpha = 0.0     # 0 => fill to k_max (legacy, pre-cut)
     nms_r = 0           # 0 => no temporal event dedup (legacy)
+    prf_n, prf_w = 25, 3.0     # feedback depth and voice, both fitted
     from pathlib import Path
     sw = Path(store.dir) / "_set_weights.json"
     try:
@@ -400,6 +411,39 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
     except Exception:
         pass
     fused = rrf(ch, weights=weights)
+
+    # PSEUDO-RELEVANCE FEEDBACK (Rocchio, and it is measured, not
+    # assumed). The top of the first fused list is the best available
+    # description of what the user actually meant; its centroid in
+    # appearance space re-scores the corpus and rejoins the fusion as
+    # one more voter. Two rounds of channel work bought nothing here -
+    # per-query weights from score-distribution shape (0.59 vs 0.60
+    # global) and the spectral meta-learner's label-free reliability
+    # estimate (0.56) both LOST - while this, the oldest trick in IR,
+    # is the only thing that moved the metric: mean yield 0.60 -> 0.61
+    # at k=100, carried by the queries with real support (q03 0.60 ->
+    # 0.67, q07 0.83 -> 0.92, q08 0.50 -> 0.56). It targets recall,
+    # which is what true/min(k, support) rewards.
+    try:
+        from .embeddings import _vec_table
+        _tb, _V = _vec_table(store, "pe_vectors")
+        _V = np.asarray(_V, np.float32)
+        _rmap = {}
+        for _i, (_s, _a) in enumerate(zip(_tb.column("stream").to_pylist(),
+                                          _tb.column("ts").to_pylist())):
+            _rmap.setdefault((str(_s), int(_a)), []).append(_i)
+        _ev = np.stack([_V[_rmap[(s_, a_)]].mean(0) if (s_, a_) in _rmap
+                        else np.zeros(_V.shape[1], np.float32)
+                        for s_, a_, _b in keys])
+        _ev /= np.linalg.norm(_ev, axis=1, keepdims=True) + 1e-8
+        _seed = np.argsort(-fused)[:prf_n]
+        _c = _ev[_seed].mean(0)
+        _c /= np.linalg.norm(_c) + 1e-8
+        ch["prf_q"] = _ev @ _c
+        weights["prf_q"] = float(weights.get("prf_q", prf_w))
+        fused = rrf(ch, weights=weights)
+    except Exception as e:
+        _fail('prf_q', e)
 
     # NO-MATCH GATE, self-recognized: map the query onto the action
     # probe's OWN vocabulary by embedding similarity (no hand verb

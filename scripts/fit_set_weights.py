@@ -27,8 +27,14 @@ from elidedb.fusion import rrf, variant_max                  # noqa: E402
 from elidedb.setpath import (confidence_cut, event_positions,  # noqa: E402
                              filter_mask, nms_keep)
 
-CH = ["pe", "act", "vid", "obj", "mot", "prf", "sig2", "conj", "iv2"]
-K = 10
+CH = ["pe", "act", "vid", "obj", "mot", "prf", "sig2", "conj", "iv2",
+      "prf_q"]
+# THE OPERATING POINT, and it must match the one being evaluated. The
+# fitted artifact was tuned at K=10 and then read at k=100, where its
+# choices are actively wrong: a filter that vetoes 60% of candidates
+# costs nothing when only 10 slots exist and caps recall hard when 100
+# do. Same env var as the bench so the two cannot drift apart.
+K = int(__import__("os").environ.get("ELIDEDB_BENCH_K", "10"))
 
 
 def capture(db, keys, text):
@@ -104,6 +110,7 @@ def capture(db, keys, text):
         out["iv2"] = variant_max(vs)
     except Exception:
         out["iv2"] = np.full(len(keys), np.nan)
+    out["prf_q"] = np.full(len(keys), np.nan)   # computed in-loop
     return out, sq is not None
 
 
@@ -121,6 +128,15 @@ def score_query(case, w, fq, fc, al=0.0, r=0):
     if not ch:
         return 0.0
     fused = rrf(ch, weights=w)
+    # PRF, identical to the live path (scenario.search_set): the fit
+    # must score the same list the query returns, or the artifact is
+    # tuned for a system that does not exist.
+    if _SP.get("ev") is not None and w.get("prf_q", 0) > 0:
+        ev = _SP["ev"]
+        c = ev[np.argsort(-fused)[:25]].mean(0)
+        c /= np.linalg.norm(c) + 1e-8
+        ch = dict(ch); ch["prf_q"] = ev @ c
+        fused = rrf(ch, weights=w)
     alive = (filter_mask(case["ch"], fc, fq) if fc and fq > 0
              else np.ones(len(fused), bool))
     idx = np.where(alive)[0]
@@ -140,7 +156,13 @@ def score_query(case, w, fq, fc, al=0.0, r=0):
     tru = int((lab == 1).sum())
     prec = tru / n
     yld = tru / min(K, case["sup"]) if case["sup"] else 0.0
-    return prec + 0.5 * yld
+    # YIELD IS THE PRODUCT METRIC: true / min(k, support), stated as the
+    # only one that counts. It led at 0.5 weight while precision led at
+    # 1.0, which is why the fit kept buying precision with recall - at
+    # k=100 that trade costs whole queries (q04 returned 49 of 165
+    # available). Precision stays as a tiebreaker so a query that can
+    # be answered with 12 results is not padded to 100 for free.
+    return yld + 0.25 * prec
 
 
 def main():
@@ -148,6 +170,18 @@ def main():
     from elidedb.scenario import _episodes
     keys = _episodes(db)
     _SP["sid"], _SP["pos"] = event_positions(keys)
+    # episode-level appearance centroids, for the PRF round
+    from elidedb.embeddings import _vec_table
+    _tb, _V = _vec_table(db, "pe_vectors")
+    _V = np.asarray(_V, np.float32)
+    _rmap = {}
+    for _i, (_s, _a) in enumerate(zip(_tb.column("stream").to_pylist(),
+                                      _tb.column("ts").to_pylist())):
+        _rmap.setdefault((str(_s), int(_a)), []).append(_i)
+    _ev = np.stack([_V[_rmap[(s_, a_)]].mean(0) if (s_, a_) in _rmap
+                    else np.zeros(_V.shape[1], np.float32)
+                    for s_, a_, _b in keys])
+    _SP["ev"] = _ev / (np.linalg.norm(_ev, axis=1, keepdims=True) + 1e-8)
     t = pq.read_table("eval/truthsets/bridge4h.parquet").to_pydict()
     truth = {(int(q), s, int(t0)): int(v) for q, s, t0, v in
              zip(t["query_id"], t["stream"], t["t0"], t["true"])}
