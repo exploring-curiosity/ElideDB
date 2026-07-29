@@ -548,3 +548,4 @@ so any such number would measure the backend, not the model.
 | 2026-07-29 15:39 | 98f22ac | k=1.5xsup | 267/629 returned true | mean yield 0.25 | mean prec 0.24 | q00:2/12 q01:4/26 q02:2/21 q03:93/119 q04:89/221 q05:69/179 q07:4/18 q08:4/27 q09:0/3 q10:0/3 |
 | 2026-07-29 15:44 | 98f22ac | k=1.5xsup | 277/697 returned true | mean yield 0.28 | mean prec 0.24 | q00:2/12 q01:5/26 q02:5/21 q03:104/150 q04:78/213 q05:74/224 q07:6/18 q08:3/27 q09:0/3 q10:0/3 |
 | 2026-07-29 15:50 | 98f22ac | k=1.5xsup | 295/760 returned true | mean yield 0.29 | mean prec 0.23 | q00:2/12 q01:5/26 q02:7/21 q03:122/213 q04:78/213 q05:74/224 q07:3/18 q08:4/27 q09:0/3 q10:0/3 |
+| 2026-07-29 21:44 | 768574a | k=1.5xsup | 295/760 returned true | mean yield 0.29 | mean prec 0.23 | q00:2/12 q01:5/26 q02:7/21 q03:122/213 q04:78/213 q05:74/224 q07:3/18 q08:4/27 q09:0/3 q10:0/3 |

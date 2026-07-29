@@ -61,7 +61,11 @@ def main():
                 f"to produce the per-fold configs")
         folds = _json.loads(fp.read_text())
         print(f"HONEST (leave-one-query-out) mode: {len(folds)} folds")
-    t = pq.read_table("eval/truthsets/bridge4h.parquet").to_pydict()
+    # ELIDEDB_TRUTHSET: the demo-separation migration re-keys episodes
+    # (timeline gains gaps), so its gate run needs the remapped copy —
+    # the original truthset file is never modified.
+    t = pq.read_table(os.environ.get(
+        "ELIDEDB_TRUTHSET", "eval/truthsets/bridge4h.parquet")).to_pydict()
     truth = {}
     support = {}
     for q, s, t0, v in zip(t["query_id"], t["stream"], t["t0"],
