@@ -1369,9 +1369,22 @@ def api_query(key: str, body: dict):
         # query therefore gets a small pool; scoped+fast can afford 400.
         pool = (400 if not body.get("rerank") else max(4 * want, 40)) \
             if scoped else want
-        r = search_set(db, body["text"],
-                       purity="audited" if body.get("rerank") else "fast",
-                       k_max=pool)
+        # ENGINE. The Desk called search_set unconditionally, which is
+        # the TEACHER: 59 s cold, 8.4 s for a warm NEW query, because it
+        # loads PE + SigLIP2 + IV2 + V-JEPA + X-CLIP and runs every
+        # channel over the corpus. The teacher is a LABELLER, not a
+        # serving path. The student answers the same question in ~27 ms
+        # from precomputed columns and is now the default.
+        from .student import available as _st_ok, search_student
+        engine = body.get("engine") or ("student" if _st_ok()
+                                        else "teacher")
+        if engine == "student" and _st_ok() and not body.get("rerank"):
+            r = search_student(db, body["text"], k_max=pool)
+        else:
+            engine = "teacher"
+            r = search_set(db, body["text"],
+                           purity="audited" if body.get("rerank") else "fast",
+                           k_max=pool)
         hits = [{"stream": c["stream"], "t0": c["t0"], "t1": c["t1"],
                  "score": c["score"]} for c in r["clips"]]
         if body.get("streams"):
@@ -1386,6 +1399,7 @@ def api_query(key: str, body: dict):
                  "scored": r.get("scored", 0),
                  "direction_filtered": r.get("direction_filtered", 0),
                  "no_match": bool(r.get("no_match")),
+                 "engine": engine,
                  "set_ms": r.get("ms")}
         return {"hits": hits, "stats": stats,
                 "ms": round((time.perf_counter() - t_start) * 1e3, 1)}
@@ -1564,6 +1578,19 @@ def _warm():
     try:
         from elidedb.embeddings import embed_text
         embed_text("warmup")
+    except Exception:
+        pass
+    # the STUDENT is the serving path, so warm what it needs: the PE
+    # text tower and its own weights. Measured cold 10.2 s (almost all
+    # of it the text encoder), warm 25-41 ms - so this thread is the
+    # difference between the first UI query feeling broken and feeling
+    # instant.
+    try:
+        from elidedb.student import available, search_student
+        if available():
+            for _k, _db in list(STORES.items()):
+                search_student(_db, "the robot opens the drawer", k_max=5)
+                break
     except Exception:
         pass
     for key, db in list(STORES.items()):
