@@ -1859,7 +1859,10 @@ function drawArch() {
      distill is the retrain. Click a step for what it does. */
   const TR = ARCH.training || [];
   if (TR.length) {
-    const TY = 1440, TW = 230, TG = 26;
+    // BELOW WHATEVER THE LANES ACTUALLY REACH. A fixed y collided with
+    // the RAW TABLES lane, whose height depends on how many tables the
+    // store has - the one thing that varies per store.
+    const TY = Math.max(...laneY, cy, sy) + 78, TW = 230, TG = 26;
     txt(LANE_X[0], TY - 22, "TRAINING / RETRAINING LOOP", "an-lane");
     TR.forEach((t, i) => {
       const x = LANE_X[0] + i * (TW + TG);
