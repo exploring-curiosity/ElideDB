@@ -28,7 +28,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from bench_product import QUERIES                            # noqa: E402
 from elidedb import Store                                    # noqa: E402
-from elidedb.scenario import _query_transitions               # noqa: E402
+from elidedb.scenario import (_anchor_boost,                  # noqa: E402
+                              _query_transitions)
 
 
 def main():
@@ -122,8 +123,15 @@ def main():
         does better CONSUMING the gate's evidence than overriding it.
         Faithfulness to the teacher's pipeline is not automatically
         faithfulness to its behaviour, so the student keeps the order
-        that measures better: PRF -> gate -> cascade."""
+        that measures better: PRF -> gate -> cascade.
+
+        The gate's membership mask says an episode HAS the transition;
+        the anchor says which DIRECTION it went. The mask alone cannot
+        separate q04 from q05 - 'close' covers 58% of the corpus and
+        'open' 80%, lift 1.6x and 1.2x - which is why the mask left q04
+        at 0.22 while the direction term takes it to 0.82."""
         need = _query_transitions(qi_text.lower())
+        sc, _ = _anchor_boost(db, keys, need, sc)
         if need:
             if qi_text not in have_of:
                 have_of[qi_text] = np.array(
@@ -148,7 +156,13 @@ def main():
         sup[q] = sup.get(q, 0) + v
 
     from elidedb.pe import _text_vec as pe_text
+    from elidedb.scenario import _transition_anchors
     pe_text("warm the text tower")                 # exclude model load
+    ta = time.perf_counter()
+    _transition_anchors(db, keys)                  # corpus stat, built once
+    print(f"transition anchors built in "
+          f"{(time.perf_counter()-ta)*1000:.0f} ms (once per store version, "
+          f"cached - not per query)")
 
     print(f"{'q':>4} {'sup':>4} {'K':>4} | {'yield':>6} {'prec':>6} "
           f"| {'ms':>7}")

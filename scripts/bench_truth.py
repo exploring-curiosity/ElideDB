@@ -10,6 +10,7 @@ diffs in a ledger, not narratives.
 from __future__ import annotations
 
 import datetime
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -127,7 +128,19 @@ def main():
                             text=True).stdout.strip()
     stamp = datetime.datetime.now(datetime.UTC).strftime(
         "%Y-%m-%d %H:%M")
-    line = (f"| {stamp} | {commit} | k=1.5xsup | {tp}/{n} returned true | "
+    # WHICH STAGES WERE ON. Two ledger rows a commit apart read as a
+    # regression when they were really two different systems: the same
+    # code scored 0.42 with ELIDEDB_ITM=1 and 0.32 without, and the row
+    # recorded only the commit, so an hour went into diffing a store
+    # that had never changed. Cost-gated stages are off by default on
+    # purpose; a row that does not say which ones ran is not a
+    # measurement of anything.
+    stages = ",".join(s for s, on in (
+        ("itm", os.environ.get("ELIDEDB_ITM") == "1"),
+        ("anchor", float(os.environ.get("ELIDEDB_ANCHOR_W", "8.0")) > 0),
+    ) if on) or "base"
+    line = (f"| {stamp} | {commit} | k=1.5xsup [{stages}] | "
+            f"{tp}/{n} returned true | "
             f"mean yield {my:.2f} | mean prec {mp:.2f} | "
             + " ".join(f"q{r[0]:02d}:{r[3]}/{r[2]}" for r in graded)
             + " |\n")

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -46,14 +47,30 @@ def main():
         "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "commit": commit,
         "store": "lake/bench",
+        # WITHOUT THIS THE MANIFEST IS NOT A SNAPSHOT. v1 listed the ITM
+        # cascade among its stages but not the flag that turns it on,
+        # and ITM is off by default because it costs 0.4s/episode. Re-
+        # running "the versioned teacher" therefore scored 0.32, not the
+        # recorded 0.42, against a store whose every table digest still
+        # matched - an hour of bisecting an identical store. Pinning the
+        # artifacts is only half of reproducibility; the switches that
+        # decide which stages execute are the other half.
+        "env": {"ELIDEDB_ITM": os.environ.get("ELIDEDB_ITM", "0"),
+                "ELIDEDB_ANCHOR_W": os.environ.get("ELIDEDB_ANCHOR_W",
+                                                   "8.0")},
+        "reproduce": "ELIDEDB_ITM=1 python scripts/bench_truth.py",
         "metric": {
             "definition": "yield=true/support, prec=true/returned, "
                           "k=ceil(1.5*support)",
-            "mean_yield": 0.42, "mean_prec": 0.30,
+            "mean_yield": 0.45, "mean_prec": 0.32,
             "per_query_yield": {"q00": 0.38, "q01": 0.41, "q02": 0.50,
-                                "q03": 0.62, "q04": 0.72, "q05": 0.58,
+                                "q03": 0.62, "q04": 0.92, "q05": 0.76,
                                 "q07": 0.58, "q08": 0.39, "q09": 0.00,
                                 "q10": 0.00},
+            "per_query_prec": {"q00": 0.25, "q01": 0.27, "q02": 0.33,
+                               "q03": 0.62, "q04": 0.61, "q05": 0.51,
+                               "q07": 0.39, "q08": 0.26, "q09": 0.00,
+                               "q10": 0.00},
             "no_match_gate": "q06 PASS",
         },
         "stages": [
@@ -63,6 +80,10 @@ def main():
             "weighted channel: as a channel it cost 0.38 -> 0.27)",
             "routed event-transition filter (unsupervised corroboration "
             "gate) + motion-space density",
+            "transition ANCHOR: corpus-derived motion direction per "
+            "transition kind, weighted by a self-supervised reliability "
+            "the kind earns without labels (q04 0.72 -> 0.92, q05 0.58 "
+            "-> 0.76, every other query bit-identical)",
             "fitted filter / NMS / confidence cut",
         ],
         "models": {

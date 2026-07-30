@@ -29,6 +29,7 @@ v2 after the visual calibration (2026-07-24) tore v1 down:
 from __future__ import annotations
 
 import json
+import os
 import time
 
 import numpy as np
@@ -196,6 +197,163 @@ def _demo_transitions(store, keys):
     _EVK.clear()
     _EVK[ck] = out
     return out
+
+
+def _keysig(keys):
+    """Cache identity for a key ORDER, not just a table version. The
+    teacher passes (stream, t0, t1) and the student (stream, t0); both
+    resolve to the same rows, but a row-aligned matrix cached under one
+    ordering and served to the other would be a silent wrong answer
+    rather than an error, so the ordering is part of the key."""
+    return (len(keys), keys[0][0], int(keys[0][1]), int(keys[-1][1]))
+
+
+def _motion_pool(store, keys):
+    """Per-demo unit motion vector, cached per table version."""
+    ver = store.table("motion_vectors").state().version
+    ck = (str(store.dir), ver, "pool", _keysig(keys))
+    if ck not in _EVK:
+        from .embeddings import _vec_table
+        tb, V = _vec_table(store, "motion_vectors")
+        V = np.asarray(V, np.float32)
+        em = {}
+        for r, (s_, a_) in enumerate(zip(tb.column("stream").to_pylist(),
+                                         tb.column("ts").to_pylist())):
+            em.setdefault((str(s_), int(a_)), []).append(r)
+        M = np.stack([V[em[(k[0], k[1])]].mean(0) if (k[0], k[1]) in em
+                      else np.zeros(V.shape[1], np.float32) for k in keys])
+        _EVK[ck] = M / (np.linalg.norm(M, axis=1, keepdims=True) + 1e-8)
+    return _EVK[ck]
+
+
+def _auc(s, y):
+    o = np.argsort(s)
+    r = np.empty(len(s))
+    r[o] = np.arange(1, len(s) + 1)
+    n1 = int(y.sum())
+    n0 = len(y) - n1
+    if n1 == 0 or n0 == 0:
+        return 0.5
+    return float((r[y == 1].sum() - n1 * (n1 + 1) / 2) / (n1 * n0))
+
+
+def _transition_anchors(store, keys):
+    """A motion PROTOTYPE per transition kind, with a weight the kind has
+    to earn on corpus statistics alone.
+
+    WHY THIS EXISTS. The text tower cannot ask for a direction. Measured
+    on bridge4h: cos(pe_text("opens the drawer"), pe_text("closes the
+    drawer")) = 0.957, and after the student's query tower still 0.905,
+    so the two queries return the SAME list - 221 of 248 shared - even
+    though their truth sets are disjoint (0 episodes in common). Yet the
+    direction itself is not missing from the store: held-out open-vs-
+    close accuracy is 0.983 in motion space, against 0.65 in PE, 0.56 in
+    SigLIP2 and 0.57 in IV2. The signal is on the video side and only
+    the QUESTION is blind, so the corpus supplies what the sentence
+    cannot: the query names a transition (closed-class English), and the
+    episodes the store itself flagged with that transition define its
+    direction, Rocchio-style against the complement.
+
+    EARNING THE WEIGHT. A flat weight is wrong, and measurably so: at
+    w=4 this takes q04 from 0.20 to 0.74, but it also drives q08 from
+    0.33 to 0.00, because 'close' is attested by 654 episodes and
+    'put_on' by 5, and a centroid over 5 events is noise. So each kind
+    proves itself WITHOUT LABELS: split the class in half, build the
+    prototype on one half, and measure whether it ranks the held-out
+    half above the complement. Bootstrapped, with a 2-sigma lower bound,
+    so a tiny class collapses to chance on its own variance rather than
+    on a hand-set minimum count. Measured reliabilities: close 0.52,
+    open 0.35, put_into 0.02, contact/release/adjust 0.06-0.07, and
+    put_on / take_out exactly 0.00 - the two that did the damage.
+
+    No truthset, no metadata, no per-dataset vocabulary: the transitions
+    come from cavity/articulation geometry over pixels, and the only
+    English involved is the same closed-class verb map already used to
+    route the gate."""
+    if "motion_vectors" not in store.tables() or "events" not in \
+            store.tables():
+        return {}
+    ck = (str(store.dir), store.table("events").state().version,
+          store.table("motion_vectors").state().version, "anchor",
+          _keysig(keys))
+    if ck in _EVK:
+        return _EVK[ck]
+    # kinds FIRST: _demo_transitions evicts the whole cache on a miss,
+    # so building the pool before it would throw the pool away and make
+    # every later query recompute it.
+    kinds = _demo_transitions(store, keys)
+    M = _motion_pool(store, keys)
+    pos_of = {}
+    for i, ks in kinds.items():
+        for k in ks:
+            pos_of.setdefault(k, set()).add(i)
+    n = len(keys)
+    rng = np.random.default_rng(0)
+    out = {}
+    for kd, pos in pos_of.items():
+        p = np.array(sorted(pos))
+        comp = np.array(sorted(set(range(n)) - pos))
+        if len(p) < 4 or len(comp) < 4:
+            continue
+        a = M[p].mean(0) - M[comp].mean(0)
+        a /= np.linalg.norm(a) + 1e-8
+        scores = []
+        for _ in range(16):
+            q = rng.permutation(p)
+            h = len(q) // 2
+            c = M[q[:h]].mean(0) - M[comp].mean(0)
+            c /= np.linalg.norm(c) + 1e-8
+            pool = np.concatenate([q[h:], comp])
+            y = np.concatenate([np.ones(len(q) - h), np.zeros(len(comp))])
+            scores.append(_auc(M[pool] @ c, y))
+        lcb = float(np.mean(scores) - 2 * np.std(scores))
+        out[kd] = (a, max(0.0, 2.0 * (lcb - 0.5)))
+    _EVK[ck] = out
+    return out
+
+
+# How loud a fully-earned anchor is allowed to be, in units of the
+# current score's own spread. Swept 0-12 on the student pipeline: the
+# objective is flat across 6-12 (0.356 / 0.356 / 0.353) so 8 sits mid
+# plateau rather than on a spike. LOQO over the ten queries: 8 of 10
+# folds choose it unprompted; honest held-out mean 0.323 against 0.298
+# with the anchor off. Reliability already scales each kind, so this is
+# the only free constant the mechanism has.
+_ANCHOR_W = float(os.environ.get("ELIDEDB_ANCHOR_W", "8.0"))
+
+
+def _anchor_score(store, keys, need):
+    """Corpus direction term for the transitions a query asks for,
+    already scaled by how much each kind earned. Returns None when no
+    asked-for kind is trustworthy, which is the common case for the
+    thinly-attested ones."""
+    if not need:
+        return None
+    try:
+        anc = _transition_anchors(store, keys)
+    except Exception:
+        return None
+    M = None
+    acc = None
+    for kd in need:
+        a_rel = anc.get(kd)
+        if a_rel is None or a_rel[1] <= 0.0:
+            continue
+        if M is None:
+            M = _motion_pool(store, keys)
+        term = a_rel[1] * (M @ a_rel[0])
+        acc = term if acc is None else acc + term
+    return acc
+
+
+def _anchor_boost(store, keys, need, sc):
+    """Add the direction term to a running score. One call site's worth
+    of arithmetic, kept in one place so the teacher path and the student
+    path cannot drift apart on it."""
+    a = _anchor_score(store, keys, need)
+    if a is None:
+        return sc, None
+    return sc + _ANCHOR_W * float(np.std(sc)) * a, a
 
 
 def _motion_density(store, keys, fused, k_max):
@@ -577,6 +735,13 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
         if "events" in store.tables():
             from .itm import _S as _itm_unused        # noqa: F401
             need = _query_transitions(tl)
+            # membership first (DOES this episode have the transition),
+            # then direction (which WAY it went). Membership alone is
+            # weak - 'close' covers 58% of this corpus, 'open' 80% - so
+            # the mask can gate but cannot rank the two apart.
+            fused, anc = _anchor_boost(store, keys, need, fused)
+            if anc is not None:
+                ch["anchor"] = anc
             if need:
                 kinds = _demo_transitions(store, keys)
                 have = np.array([1.0 if (kinds.get(i) or set()) & need
