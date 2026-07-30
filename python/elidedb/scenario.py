@@ -445,6 +445,47 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
     except Exception as e:
         _fail('prf_q', e)
 
+    # ITM CASCADE — the cross-encoder rerank, cost-gated by depth.
+    # Measured at k=1.5xsupport: shipped RRF 0.29/0.23, this store's
+    # cosine ensemble under z-fusion 0.32/0.21, ITM alone 0.38/0.25,
+    # cosine+ITM 0.40/0.27. Reranking the top-N of the cheap ranking
+    # reaches the full-scan number exactly (N=500 -> 0.40/0.27), so ITM
+    # enters as EVIDENCE INSIDE A CANDIDATE SET (L7), never a corpus
+    # scan: its vision pass is 0.4s/episode and its tokens are 3.24 GB
+    # corpus-wide (unpoolable - 4x reduction drops rank correlation to
+    # 0.18), so a scan is neither affordable nor storable.
+    # Off by default: ELIDEDB_ITM=1 enables, because the cost is real.
+    import os as _os2
+    if _os2.environ.get("ELIDEDB_ITM") == "1":
+        try:
+            from .itm import itm_scores, rerank_depth
+            n_re = rerank_depth(k_max, len(keys))
+            cand = np.argsort(-fused)[:n_re]
+            sc = itm_scores(store, text, [keys[i] for i in cand])
+            if np.isfinite(sc).any():
+                zc = np.zeros(len(keys))
+                ok = np.isfinite(sc)
+                v = sc[ok]
+                zc[cand[ok]] = (v - v.mean()) / (v.std() + 1e-9)
+                # SCORE-DISTRIBUTION-PRESERVING RESCORE. Writing
+                # z-scores into `fused` broke the confidence cut, which
+                # is fitted against RRF's own scale (bounded sums of
+                # w/(60+rank)): q03 returned 83 of a 371 ceiling,
+                # yield 0.87 -> 0.28. The cut is downstream and must
+                # keep seeing the distribution it was fitted on, so the
+                # rerank PERMUTES the candidates and hands back the
+                # same sorted score values in the new order. Order
+                # changes, scale does not.
+                zf = fused[cand]
+                zf = (zf - zf.mean()) / (zf.std() + 1e-9)
+                new = np.argsort(-(zf + zc[cand]))
+                f = fused.copy()
+                f[cand[new]] = np.sort(fused[cand])[::-1]
+                fused = f
+                ch["itm"] = zc
+        except Exception as e:
+            _fail('itm', e)
+
     # NO-MATCH GATE, self-recognized: map the query onto the action
     # probe's OWN vocabulary by embedding similarity (no hand verb
     # list) and ask whether ANY episode in this corpus expresses those
