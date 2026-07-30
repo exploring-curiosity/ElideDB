@@ -1539,12 +1539,38 @@ function drawArch() {
     sy += 66;
   });
 
+  /* the five elements: what a clip is decomposed into. Rendered only
+     when this store actually carries them, so an un-elemented store
+     shows nothing rather than a promise. */
+  const els = ARCH.elements || [];
+  const elemHtml = els.length ? (
+    `<div class="rule"></div><b>FIVE ELEMENTS</b><br>` +
+    els.map(e => `${esc(e.label)}&nbsp;<span style="opacity:.6">` +
+      `${fmtN(e.n)}</span><br><span style="opacity:.55;font-size:10px">` +
+      `${esc(e.note)}</span>`).join("<br>")) : "";
+  const mods = ARCH.models || [];
+  const modHtml = mods.length ? (
+    `<div class="rule"></div><b>MODELS</b><br>` +
+    mods.map(m => {
+      const head = m.kind === "teacher"
+        ? `${esc(m.id)} · yield ${m.yield} / prec ${m.prec}`
+        : `${esc(m.id)} · ${m.params_M}M · ${m.read_ms}ms read · ` +
+          `${m.write_s_per_demo}s/demo write`;
+      const env = m.env && Object.keys(m.env).length
+        ? `<br><span style="opacity:.55;font-size:10px">env ` +
+          Object.entries(m.env).map(([k, v]) => `${esc(k)}=${esc(String(v))}`)
+            .join(" ") + `</span>` : "";
+      return `${head}${env}<br><span style="opacity:.55;font-size:10px">` +
+             `${esc(m.note)}</span>`;
+    }).join("<br>")) : "";
+
   $("arch-title").innerHTML =
     `<b>ELIDEDB · STORE SCHEMATIC</b><div class="rule"></div>` +
     `store&nbsp;&nbsp;&nbsp;${esc(ARCH.store)}<br>` +
     `tables&nbsp;&nbsp;${ARCH.totals.tables} · ` +
     `${fmtN(ARCH.totals.rows)} rows · ${fmtB(ARCH.totals.bytes)}<br>` +
     `channels ${ARCH.channels.map(c => c.id).join(" · ")}` +
+    elemHtml + modHtml +
     `<div class="rule"></div>drawn from live state · ` +
     new Date().toISOString().slice(0, 16).replace("T", " ");
 

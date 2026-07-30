@@ -197,11 +197,20 @@ def tables_track():
 def main():
     t0 = time.time()
     stamp = {}
-    path = Path("lake/bridge4h")
+    # --out names the target so a rebuild cannot silently destroy an
+    # existing store: this script rmtree's its target, and the default
+    # used to be the only option.
+    argv = sys.argv
+    path = Path(argv[argv.index("--out") + 1] if "--out" in argv
+                else "lake/bridge4h")
     if path.exists():
+        if "--force" not in argv:
+            raise SystemExit(f"{path} exists; pass --force to replace it")
         import shutil
         shutil.rmtree(path)
-    db = Store.create(path, "bridge-4h")
+    # name follows the path, or two --out stores show up in Desk under
+    # one identical label and the list becomes unreadable
+    db = Store.create(path, path.name if "--out" in argv else "bridge-4h")
     model, _ = load_encoder(fdnnv_dir())
     # warm the GPU graph once so the first chunk is not paying compilation
     with GPU:
@@ -265,7 +274,7 @@ def main():
 
     total = time.time() - t0
     n_frames = len(fvt)
-    print(f"\nstore lake/bridge4h: {n_frames:,} frames "
+    print(f"\nstore {path}: {n_frames:,} frames "
           f"({n_frames / FPS / 3600:.2f} h), {n_eps} episodes, "
           f"{n_tasks} distinct tasks (labels OUTSIDE the store)")
     last = 0.0

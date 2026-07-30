@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import sys
 import threading
 import time
@@ -420,6 +421,16 @@ def api_architecture(key: str):
          "delta appearance against the antonym")
     chan("prf", "feedback", "vjepa_vectors",
          "Rocchio anchors mined from this corpus")
+    chan("itm", "cross-encoder", lambda: (
+        os.environ.get("ELIDEDB_ITM") == "1"
+        and (db.dir / "_cache/itm_tokens").exists()),
+        "InternVideo2 1B, rerank STAGE over the top-N - never a channel "
+        "(as a weighted voter it cost 0.38 -> 0.27, RRF discards the "
+        "margin's scale). Cost-gated: 0.4s/episode")
+    chan("anchor", "transition anchor", "motion_vectors",
+         "the query names a transition, the corpus defines its DIRECTION "
+         "in motion space. Text cannot ask for it: cos(opens, closes) = "
+         "0.957. Motion separates them 0.983 held-out")
 
     # selection pipeline: the fitted stages every result passes
     # through, in order. Fitted values come from the per-store
@@ -434,6 +445,20 @@ def api_architecture(key: str):
     pipeline = [
         {"id": "fuse", "label": "Fitted fusion",
          "note": "weighted rank consensus, per-store weights"},
+        {"id": "prf", "label": "Pseudo-relevance",
+         "note": "the head of pass 1 re-queries the corpus"},
+        {"id": "itm", "label": "Cross-encoder cascade",
+         "note": "distribution-preserving: it PERMUTES the candidates "
+                 "and returns the same sorted scores in the new order, "
+                 "because the cut downstream is fitted to RRF's scale"},
+        {"id": "anchor", "label": "Transition anchor",
+         "note": "direction from the corpus, weighted by a reliability "
+                 "each kind earns unsupervised (close 0.52, open 0.35, "
+                 "put_on 0.00 - so it cannot damage what it cannot help)"},
+        {"id": "evk", "label": "Event corroboration",
+         "note": "does this demo carry the asked-for transition at all"},
+        {"id": "dens", "label": "Motion density",
+         "note": "15-NN agreement in motion space"},
         {"id": "gate", "label": "No-match gate",
          "note": "abstains when the corpus lacks the action"},
         {"id": "filter", "label": "Contrast filter",
@@ -446,10 +471,81 @@ def api_architecture(key: str):
          "note": "SAM 3 tracker verification, opt-in tier"},
     ]
 
+    # THE FIVE ELEMENTS — what a clip is decomposed into. Each renders
+    # only if the table that carries it exists in THIS store, so an
+    # un-elemented store shows an empty list rather than a promise.
+    def _rows(t):
+        try:
+            return db.table(t).scan().num_rows if t in have else 0
+        except Exception:
+            return 0
+
+    ev_t = "events" if "events" in have else (
+        "events_s" if "events_s" in have else None)
+    elements = []
+    if ev_t:
+        import collections as _c
+        kinds = _c.Counter(db.table(ev_t).scan().column("kind").to_pylist())
+        elements = [
+            {"id": "scene", "label": "scene", "note": "demo gist vector",
+             "n": _rows("answers2")},
+            {"id": "agent", "label": "agent",
+             "note": "the self-moving thing, from flow",
+             "n": kinds.get("agent", 0)},
+            {"id": "participants", "label": "participants",
+             "note": "what the agent contacts, in order - by CAUSALITY "
+                     "(motion onset adjacent to the agent), not pixel "
+                     "change", "n": kinds.get("contact", 0)},
+            {"id": "events", "label": "events",
+             "note": "typed, TIMESTAMPED transitions: " + ", ".join(
+                 f"{k} {v}" for k, v in kinds.most_common()
+                 if k not in ("agent", "contact", "release")),
+             "n": sum(v for k, v in kinds.items()
+                      if k not in ("agent", "contact", "release"))},
+            {"id": "answer", "label": "answer",
+             "note": "initial -> final diff, attributed to the agent",
+             "n": _rows("answers2")},
+        ]
+
+    # MODELS — the manifest is the authority, and it records the env
+    # needed to reproduce its own numbers (see teacher_v2.json).
+    models = []
+    for tag in ("teacher_v2", "teacher_v1"):
+        p = Path(__file__).resolve().parents[2] / f"models/{tag}.json"
+        if p.exists():
+            try:
+                m = json.loads(p.read_text())
+                models.append({
+                    "id": tag, "kind": "teacher",
+                    "yield": m["metric"].get("mean_yield"),
+                    "prec": m["metric"].get("mean_prec"),
+                    "env": m.get("env", {}),
+                    "reproduce": m.get("reproduce", ""),
+                    "note": "cosine channels -> RRF -> PRF -> ITM cascade "
+                            "-> anchor + event gate + density -> cut"})
+                break
+            except Exception:
+                pass
+    sp = Path(__file__).resolve().parents[2] / "models/student_v1/meta.json"
+    if sp.exists():
+        try:
+            sm = json.loads(sp.read_text())
+            models.append({
+                "id": "student_v1", "kind": "student",
+                "params_M": round(sm.get("params", 0) / 1e6, 2),
+                "read_ms": 27, "write_s_per_demo": 0.85,
+                "note": "two-tower bi-encoder + listwise rerank head. "
+                        "Produces the five elements ITSELF; stage order "
+                        "PRF -> gate -> cascade was measured, not "
+                        "inherited (the teacher's order scored worse)"})
+        except Exception:
+            pass
+
     total_rows = sum(n.get("rows") or 0 for n in nodes)
     total_bytes = sum(n.get("bytes") or 0 for n in nodes)
     return {"store": db.name, "key": key, "nodes": nodes, "edges": edges,
             "channels": channels, "pipeline": pipeline,
+            "elements": elements, "models": models,
             "fitted": {k: fitted[k] for k in
                        ("set_weights_dir", "set_weights", "cut_alpha_dir",
                         "cut_alpha", "nms_r_dir", "nms_r", "loqo_mean")

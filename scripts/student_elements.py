@@ -163,7 +163,10 @@ def main():
     proc = AutoProcessor.from_pretrained(MID)
     sig = AutoModel.from_pretrained(MID, dtype=dtype,
                                     low_cpu_mem_usage=True).to(dev).eval()
-    db = Store.open("lake/bench")
+    # --store lets the write path run against any store, not just
+    # the benchmark one; the elements are corpus-independent.
+    db = Store.open(argv[argv.index("--store") + 1]
+                    if "--store" in argv else "lake/bench")
     keys = _episodes(db)
     frames_tbl = db.table("frames").scan()
 

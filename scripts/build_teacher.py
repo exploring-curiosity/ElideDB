@@ -251,7 +251,10 @@ def main():
     write_all = "--all" in argv
     n_want = int(argv[argv.index("--n") + 1]) if "--n" in argv else 20
 
-    db = Store.open("lake/bench")
+    # --store lets the write path run against any store, not just
+    # the benchmark one; the elements are corpus-independent.
+    db = Store.open(argv[argv.index("--store") + 1]
+                    if "--store" in argv else "lake/bench")
     ep = db.table("episodes").scan().to_pydict()
     keys = list(zip(ep["stream"], (int(v) for v in ep["ts"]),
                     (int(v) for v in ep["t1"])))
