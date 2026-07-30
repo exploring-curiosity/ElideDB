@@ -200,7 +200,10 @@ def main():
     print(f"\nSTUDENT  mean yield {np.mean(ys):.2f}  prec {np.mean(ps):.2f}"
           f"  |  read {np.mean(ms):.1f} ms/query "
           f"(p50 {np.median(ms):.1f})")
-    print(f"TEACHER  mean yield 0.42  prec 0.30"
+    # teacher_v2: ELIDEDB_ITM=1, transition anchor on. Hardcoded here so
+    # the two columns sit side by side; it is the manifest's number, and
+    # models/teacher_v2.json carries the env needed to reproduce it.
+    print(f"TEACHER  mean yield 0.45  prec 0.32"
           f"  |  read 2,000-75,000 ms/query (ITM cascade)")
     print(f"student {meta['params']/1e6:.2f}M params, "
           f"episode side {E.nbytes/1e6:.2f} MB for {len(keys)} demos, "
