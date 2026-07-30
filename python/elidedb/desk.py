@@ -541,11 +541,85 @@ def api_architecture(key: str):
         except Exception:
             pass
 
+    # ARTIFACTS lane: the model files and fitted state this store's query
+    # path actually loads. It was empty because nothing ever emitted a
+    # node of kind "model" - the lane existed with nothing to put in it.
+    RT = Path(__file__).resolve().parents[2]
+
+    def _sz(p):
+        p = Path(p)
+        if p.is_dir():
+            return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+        return p.stat().st_size if p.exists() else 0
+
+    for path, label, note in (
+        ("models/teacher_v2.json", "teacher_v2", "manifest: tables, "
+         "digests, stages, env, measured yield/prec"),
+        ("models/student_v1", "student_v1", "student.pt (two-tower + "
+         "rerank head), episode_emb.npz, namer.pt"),
+        ("models/iv2_stage2_1b", "iv2_stage2_1b", "InternVideo2-Stage2 "
+         "1B — the ITM cross-encoder, cost-gated"),
+        ("models/fdnnv", "fdnnv", "FDNN-V encoder — embeds every frame "
+         "at ingest, 1,109 fps"),
+        ("ml/verbs_v2.json", "verbs_v2", "geometry verb partition"),
+        ("ml/cavity.json", "cavity", "cavity/articulation thresholds"),
+    ):
+        b = _sz(RT / path)
+        if b:
+            nodes.append({"id": label, "kind": "model", "rows": None,
+                          "bytes": b, "note": note, "path": path})
+    for a, note in (("_set_weights.json", "fitted selection weights "
+                     "(+ .prev rotation, .loqo holdout)"),
+                    ("_channel_weights.json", "per-channel fusion weights"),
+                    ("_vocab.json", "corpus-attested vocabulary cache")):
+        b = _sz(db.dir / a)
+        if b:
+            nodes.append({"id": a, "kind": "model", "rows": None,
+                          "bytes": b, "note": note, "path": a})
+
+    # THE TRAINING / RETRAINING LOOP — how more data becomes a better
+    # model. This is a closed loop and the store is inside it.
+    training = [
+        {"id": "ingest", "label": "1 · INGEST",
+         "note": "raw video → frames (byte-range index) + FDNN-V vectors "
+                 "for EVERY frame. 63.5 s for 3.91 h, 1,109 fps. No "
+                 "labels, no metadata: the store never ingests task "
+                 "strings."},
+        {"id": "elements", "label": "2 · WRITE-PATH ELEMENTS",
+         "note": "geometry over the frames produces the five elements "
+                 "per demo — agent from flow, participants by causality, "
+                 "events from cavity + displacement, answer rollup. The "
+                 "student's Namer head predicts the participant NAME "
+                 "VECTOR the 7B VLM would have produced."},
+        {"id": "teacher", "label": "3 · TEACHER RANKS",
+         "note": "the expensive path (channels → RRF → PRF → ITM 1B "
+                 "cross-encoder → anchor + gate) ranks the corpus for "
+                 "generated queries. 2–75 s/query, so it is never the "
+                 "serving path — it exists to produce labels."},
+        {"id": "distill", "label": "4 · DISTILL",
+         "note": "teacher rankings over 200 corpus-vocabulary queries "
+                 "become listwise targets for the student's two-tower "
+                 "+ rerank head. 645 s to label, 8 s to train, 3.28M "
+                 "params. The eval truthset is NEVER trained on."},
+        {"id": "serve", "label": "5 · SERVE",
+         "note": "student answers in 27 ms: one text forward + one "
+                 "matmul over precomputed episode vectors, then the "
+                 "structural gate reads columns the write path already "
+                 "produced."},
+        {"id": "grow", "label": "6 · MORE DATA → BETTER MODEL",
+         "note": "adding episodes widens every corpus statistic the "
+                 "system is built on: the transition anchors get more "
+                 "attesting episodes so their earned reliability rises, "
+                 "PRF anchors sharpen, the attested vocabulary grows, "
+                 "and the teacher has more to label. Re-running step 3–4 "
+                 "is the retrain; nothing here needs human annotation."},
+    ]
+
     total_rows = sum(n.get("rows") or 0 for n in nodes)
     total_bytes = sum(n.get("bytes") or 0 for n in nodes)
     return {"store": db.name, "key": key, "nodes": nodes, "edges": edges,
             "channels": channels, "pipeline": pipeline,
-            "elements": elements, "models": models,
+            "elements": elements, "models": models, "training": training,
             "fitted": {k: fitted[k] for k in
                        ("set_weights_dir", "set_weights", "cut_alpha_dir",
                         "cut_alpha", "nms_r_dir", "nms_r", "loqo_mean")
@@ -783,7 +857,7 @@ def api_dbinternals(key: str, table: str | None = None):
                 "copied in."},
         {"id": "lake", "label": "LAKE",
          "n": f"{n_stores} store{'' if n_stores == 1 else 's'}",
-         "sub": str(lake_dir),
+         "sub": "lake/  (" + lake_dir.name + ")",
          "meta": "plain directories — no catalog service",
          "why": "Many stores side by side. Nothing above this is "
                 "needed: the format is open, so any engine (DuckDB, "

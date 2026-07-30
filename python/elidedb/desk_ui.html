@@ -1356,15 +1356,15 @@ loadStores();
 /* never shrink below legibility: scroll the pane instead of scaling the
    diagram down until the labels are unreadable */
 #db-svg { display:block; width:1400px; min-width:1400px; }
-#db-info { position:sticky; bottom:0; margin-top:8px;
+#db-info { position:sticky; bottom:0; margin-top:10px;
   background:rgba(13,17,23,.96); border:1px solid var(--line);
-  border-radius:4px; padding:8px 11px; font:11px/1.6 var(--mono);
-  color:var(--dim); max-width:104ch; }
+  border-radius:4px; padding:9px 12px; font:12px/1.65 var(--mono);
+  color:#dce8f2; max-width:110ch; }
 #db-info b { color:var(--accent); letter-spacing:.06em; }
-text.db-lane { fill:var(--dim); font:600 9.5px var(--mono);
+text.db-lane { fill:#9fb4c8; font:600 10px var(--mono);
   letter-spacing:.11em; }
-text.db-t { fill:var(--ink); font:600 10.5px var(--mono); }
-text.db-s { fill:var(--dim); font:9.5px var(--mono); }
+text.db-t { fill:#ffffff; font:600 12px var(--mono); }
+text.db-s { fill:#cfe0ee; font:11px var(--mono); }
 .db-node rect { transition:filter .12s; }
 .db-node:hover rect { filter:brightness(1.55); }
 rect.db-b { stroke-width:1; }
@@ -1379,6 +1379,7 @@ rect.db-l7 { fill:#2a2418; stroke:#c99a5b; }        /* value */
 rect.db-commitband { fill:#241f2e; stroke:#a07fd4; }
 rect.db-footerband { fill:#1a2733; stroke:#7fb0ff; stroke-dasharray:3 2; }
 rect.db-prune  { fill:#2a2418; stroke:#c99a5b; }
+.an-train { fill:#1d2a24; stroke:#5accb9; stroke-width:1; }
 #db-head { padding:4px 0 8px; }
 #db-info .mk { color:#a07fd4; }
 path.db-link { fill:none; stroke:#4a6076; stroke-width:1; opacity:.5; }
@@ -1447,11 +1448,13 @@ button.mini.on { background:var(--accent); color:#0d1117;
 .an-chan-t { fill:#9fded1; font-size:10px; font-weight:600; }
 .an-chan-n { fill:#68727e; font-size:8.5px; }
 .an-stage { fill:#171c25; stroke:#3fb9a5; }
-#arch-title { position:absolute; right:18px; bottom:16px;
-  border:1px solid #39424f; background:rgba(17,21,28,.94);
-  font-family:ui-monospace, Menlo, monospace; color:#8b96a4;
-  font-size:10px; line-height:1.55; padding:8px 12px; min-width:240px;
-  pointer-events:none; }
+/* the panel now carries the elements, the models and the training
+   loop, so it needs to scroll and to keep clear of the pan hint */
+#arch-title { position:absolute; right:18px; bottom:36px; top:14px;
+  width:430px; overflow:auto; pointer-events:auto;
+  border:1px solid #39424f; background:rgba(17,21,28,.96);
+  font-family:ui-monospace, Menlo, monospace; color:#b8c4d2;
+  font-size:11px; line-height:1.6; padding:9px 13px; }
 #arch-title b { color:#e3e8ee; font-size:11.5px; letter-spacing:.12em; }
 #arch-title .rule { border-top:1px solid #2a323d; margin:5px -12px; }
 #arch-hint { position:absolute; left:18px; bottom:16px; color:#535e6b;
@@ -1495,7 +1498,13 @@ async function loadArch() {
     const db = b.dataset.p === "db";
     $("arch-pane-db").style.display = db ? "" : "none";
     $("arch-pane-model").style.display = db ? "none" : "";
-    if (!db) drawArch();
+    if (!db) {
+      // the pane was display:none on first draw, so getBBox() returned
+      // zeros and the fit was skipped - fit once, now that it is visible
+      const sv = $("arch-svg");
+      if (!sv._fitted) { sv._view = null; sv._fitted = true; }
+      drawArch();
+    }
   });
 }
 
@@ -1605,20 +1614,26 @@ function drawDb() {
   };
 
   const N = levels.length;
-  const innerH = 46;
-  const H = innerH + 2 * N * 0 + N * (HEAD + 12) + 30;
+  // bottoms stagger by BSTEP so each nested box visibly ends inside its
+  // parent - without it the TABLE and the FILE ended within 6px of each
+  // other and their two bands (commit, footer) drew on top of one another
+  const BSTEP = 26, BASE = 14 + N * (HEAD + 6) + 150;
+  const H = BASE + 14;
   let bandY = [];
   levels.forEach((id, i) => {
     const x = PAD + i * PAD, w = W - 2 * (PAD + i * PAD);
     const y = 14 + i * (HEAD + 6);
-    const h = H - y - (i * 6) - 14;
+    const h = (BASE - i * BSTEP) - y;
     const g = el("g", { class: "db-node" });
     const r = el("rect", { x, y, width: w, height: h, rx: 4,
       class: "db-b db-l" + i }, g);
     hover(r, id);
     const it = by[id] || {};
     txt(x + 11, y + 19, it.label || id.toUpperCase(), "db-t", g);
-    txt(x + w - 11, y + 19, `${it.n || ""}   ${it.sub || ""}`,
+    // right-hand stats are anchored to the right edge, so an over-long
+    // string grows leftward and collides with the label - cap it
+    const stat = `${it.n || ""}   ${it.sub || ""}`;
+    txt(x + w - 11, y + 19, stat.length > 62 ? stat.slice(0, 61) + "…" : stat,
         "db-s", g, "end");
     bandY.push({ x, y, w, h });
   });
@@ -1628,22 +1643,22 @@ function drawDb() {
      footer (inside the file, after the row groups) */
   const tb = bandY[2], fb = bandY[3];
   const cg = el("g", { class: "db-node" });
-  const cr = el("rect", { x: tb.x + 12, y: tb.y + tb.h - 44,
-    width: tb.w - 24, height: 30, rx: 3, class: "db-b db-commitband" }, cg);
+  const cr = el("rect", { x: tb.x + 12, y: tb.y + tb.h - 34,
+    width: tb.w - 24, height: 26, rx: 3, class: "db-b db-commitband" }, cg);
   hover(cr, "commit");
   const lc = by["commit"] || {}, ll = by["log"] || {};
-  txt(tb.x + 22, tb.y + tb.h - 24,
+  txt(tb.x + 22, tb.y + tb.h - 16,
       `${lc.label || "COMMIT"} — ${lc.n || ""} · ${ll.sub || ""}`,
       "db-s", cg);
-  txt(tb.x + tb.w - 22, tb.y + tb.h - 24,
+  txt(tb.x + tb.w - 22, tb.y + tb.h - 16,
       `${lc.sub || ""}`, "db-s", cg, "end");
 
   const fg = el("g", { class: "db-node" });
-  const fr = el("rect", { x: fb.x + 12, y: fb.y + fb.h - 44,
-    width: fb.w - 24, height: 30, rx: 3, class: "db-b db-footerband" }, fg);
+  const fr = el("rect", { x: fb.x + 12, y: fb.y + fb.h - 34,
+    width: fb.w - 24, height: 26, rx: 3, class: "db-b db-footerband" }, fg);
   hover(fr, "footer");
   const ft = by["footer"] || {};
-  txt(fb.x + 22, fb.y + fb.h - 24,
+  txt(fb.x + 22, fb.y + fb.h - 16,
       `${ft.label || "FOOTER"} — ${ft.n || ""} · ${ft.meta || ""}`,
       "db-s", fg);
 
@@ -1838,17 +1853,76 @@ function drawArch() {
              `${esc(m.note)}</span>`;
     }).join("<br>")) : "";
 
+  /* TRAINING / RETRAINING LOOP — drawn as a cycle, because it is one:
+     serving produces no labels, but more DATA widens the corpus
+     statistics the whole system is built on, and re-running teacher →
+     distill is the retrain. Click a step for what it does. */
+  const TR = ARCH.training || [];
+  if (TR.length) {
+    const TY = 1440, TW = 230, TG = 26;
+    txt(LANE_X[0], TY - 22, "TRAINING / RETRAINING LOOP", "an-lane");
+    TR.forEach((t, i) => {
+      const x = LANE_X[0] + i * (TW + TG);
+      const g = el("g", { transform: `translate(${x},${TY})` });
+      const r = el("rect", { width: TW, height: 46, rx: 3,
+        class: "an-train" }, g);
+      r.style.cursor = "pointer";
+      r.onclick = () => archNote(t.label, t.id, t.note);
+      txt(10, 18, t.label, "an-chan-t", g);
+      txt(10, 33, (t.note || "").slice(0, 34) + "…", "an-chan-n", g);
+      if (i) {
+        const d0 = `M${x - TG},${TY + 23} L${x},${TY + 23}`;
+        el("path", { d: d0, class: "an-trace" }, g_edges);
+        el("path", { d: d0, class: "an-flow" }, g_edges);
+      }
+    });
+    // the loop closes: step 6 feeds step 3 again
+    const x0 = LANE_X[0] + (TR.length - 1) * (TW + TG) + TW / 2;
+    const x1 = LANE_X[0] + 2 * (TW + TG) + TW / 2;
+    el("path", { class: "an-trace",
+      d: `M${x0},${TY + 46} C${x0},${TY + 96} ${x1},${TY + 96} ${x1},${TY + 46}` },
+      g_edges);
+    txt((x0 + x1) / 2, TY + 92, "more data → relabel → retrain",
+        "an-chan-n", g_edges, "middle");
+  }
+
+  const TRH = (ARCH.training || []).length ? (
+    `<div class="rule"></div><b>TRAINING / RETRAINING LOOP</b><br>` +
+    ARCH.training.map(t =>
+      `<span style="color:#5accb9">${esc(t.label)}</span><br>` +
+      `<span style="opacity:.62;font-size:10px">${esc(t.note)}</span>`)
+      .join("<br>") +
+    `<br><span style="color:#5accb9">↻ step 6 feeds step 3</span>` +
+    `<span style="opacity:.62;font-size:10px"> — nothing here needs ` +
+    `human annotation</span>`) : "";
+
   $("arch-title").innerHTML =
     `<b>ELIDEDB · STORE SCHEMATIC</b><div class="rule"></div>` +
     `store&nbsp;&nbsp;&nbsp;${esc(ARCH.store)}<br>` +
     `tables&nbsp;&nbsp;${ARCH.totals.tables} · ` +
     `${fmtN(ARCH.totals.rows)} rows · ${fmtB(ARCH.totals.bytes)}<br>` +
     `channels ${ARCH.channels.map(c => c.id).join(" · ")}` +
-    elemHtml + modHtml +
+    elemHtml + modHtml + TRH +
     `<div class="rule"></div>drawn from live state · ` +
     new Date().toISOString().slice(0, 16).replace("T", " ");
 
-  let view = svg._view || { x: 0, y: 0, k: 0.82 };
+  // FIT THE WHOLE SCHEMATIC ON FIRST DRAW. The fixed 0.82 zoom left the
+  // training loop (drawn below the lanes) off screen entirely, so the
+  // one part that explains how the models are PRODUCED was invisible
+  // unless you knew to pan for it.
+  let view = svg._view;
+  if (!view) {
+    view = { x: 0, y: 0, k: 0.82 };
+    try {
+      const bb = cam.getBBox(), r = svg.getBoundingClientRect();
+      if (bb.width && bb.height && r.width && r.height) {
+        view.k = Math.max(0.45, Math.min(r.width / (bb.width + 60),
+                          r.height / (bb.height + 60), 1));
+        view.x = 24 - bb.x * view.k;
+        view.y = 16 - bb.y * view.k;
+      }
+    } catch (e) { /* keep the default */ }
+  }
   svg._view = view;
   const apply = () => cam.setAttribute("transform",
     `translate(${view.x},${view.y}) scale(${view.k})`);
