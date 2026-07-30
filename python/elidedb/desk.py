@@ -674,6 +674,85 @@ def api_architecture(key: str):
                                       ("media", "model")])}}
 
 
+def api_bytes(key: str):
+    """WHERE THE BYTES ACTUALLY ARE, and how much compression bought.
+
+    `du` on this store says 3.9 GB while the tables hold 249 MB, and the
+    gap is not a compression failure - it is three different things that
+    a single directory size silently adds together:
+
+      live      the parquet the LOG currently points at. The database.
+      orphaned  parquet superseded by a replace/compact commit. Removed
+                from the active set, still on disk until vacuum.
+      media     managed video renditions, byte-range decoded.
+      cache     _cache/ - the ITM cross-encoder's vision tokens, 3 GB
+                of it. DISPOSABLE: deleting it costs recompute time and
+                never correctness, and it is not the database.
+
+    Models are NOT in the store. They live in models/ at the repo root
+    (iv2_stage2_1b alone is 2.8 GB), which is why "the store" and "what
+    this system needs on disk" are different questions.
+    """
+    import pyarrow.parquet as pq
+    db = STORES[key]
+    live = orphan = on_disk = 0
+    rows = []
+    for t in sorted(db.tables()):
+        st = db.table(t).state()
+        keep = {f.path for f in st.files}
+        c = u = 0
+        encs = set()
+        comp = set()
+        d = db.dir / "tables" / t
+        for f in d.glob("*.parquet"):
+            b = f.stat().st_size
+            on_disk += b
+            if f.name not in keep:
+                orphan += b
+                continue
+            try:
+                md = pq.ParquetFile(f).metadata
+                for g in range(md.num_row_groups):
+                    rg = md.row_group(g)
+                    for j in range(rg.num_columns):
+                        col = rg.column(j)
+                        c += col.total_compressed_size
+                        u += col.total_uncompressed_size
+                        for e in (col.encodings or ()):
+                            encs.add(str(e))
+                        if col.compression:
+                            comp.add(str(col.compression))
+            except Exception:
+                pass
+        live += st.bytes
+        rows.append({"table": t, "rows": st.rows, "compressed": c,
+                     "uncompressed": u,
+                     "ratio": round(u / max(c, 1), 2),
+                     "encodings": sorted(encs), "codec": sorted(comp),
+                     "files": len(st.files), "version": st.version})
+    rows.sort(key=lambda r: -r["compressed"])
+    media = sum(p.lstat().st_size for p in (db.dir / "media").glob("*")
+                if p.is_file()) if (db.dir / "media").is_dir() else 0
+    cdir = db.dir / "_cache"
+    cache = sum(f.stat().st_size for f in cdir.rglob("*")
+                if f.is_file()) if cdir.is_dir() else 0
+    cparts = ([{"name": p.name,
+                "bytes": sum(f.stat().st_size for f in p.rglob("*")
+                             if f.is_file())}
+               for p in cdir.iterdir() if p.is_dir()] if cdir.is_dir()
+              else [])
+    tc = sum(r["compressed"] for r in rows)
+    tu = sum(r["uncompressed"] for r in rows)
+    raw = _raw_source_bytes(db, db.describe())
+    return {"store": db.name, "key": key, "tables": rows,
+            "live": live, "orphaned": orphan, "on_disk": on_disk,
+            "media": media, "cache": cache, "cache_parts": cparts,
+            "total": on_disk + media + cache,
+            "compressed": tc, "uncompressed": tu,
+            "ratio": round(tu / max(tc, 1), 2),
+            "raw_source": raw["bytes"], "raw_files": raw["files"]}
+
+
 def api_dbinternals(key: str, table: str | None = None):
     """The storage engine, as it actually is on disk.
 
@@ -1509,6 +1588,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json([store_summary(k) for k in STORES])
             if u.path == "/api/architecture":
                 return self._json(api_architecture(q["store"]))
+            if u.path == "/api/bytes":
+                return self._json(api_bytes(q["store"]))
             if u.path == "/api/dbinternals":
                 return self._json(api_dbinternals(q["store"],
                                                   q.get("table")))

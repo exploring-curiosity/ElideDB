@@ -296,8 +296,7 @@
       <button data-v="overview" class="on">Overview</button>
       <button data-v="analytics">Analytics</button>
       <button data-v="search">Search</button>
-      <button data-v="data">Data</button>
-      <button data-v="storage">Storage</button>
+      <button data-v="data">Data &amp; Storage</button>
       <button data-v="arch">Architecture</button>
       <button data-v="map">Map</button>
       <button data-v="geo" id="geo-btn" style="display:none">Geo</button>
@@ -791,6 +790,59 @@ function renderStorageTabs() {
     }));
 }
 
+async function drawBytes() {
+  const host = $("bytes-panel"); if (!host) return;
+  if (!BYTES) {
+    host.innerHTML = `<div class="panel"><div class="bd">
+      <div class="empty">measuring bytes</div></div></div>`;
+    try { BYTES = await j(`/api/bytes?store=${CUR.key}`); }
+    catch (e) { host.innerHTML = ""; return; }
+  }
+  const B = BYTES, tot = B.total || 1;
+  const seg = (label, v, cls, note) => v <= 0 ? "" : `
+    <div class="byrow"><div class="bylab ${cls}">${label}</div>
+      <div class="bybar"><i class="${cls}" style="width:${
+        Math.max(0.4, 100 * v / tot)}%"></i></div>
+      <div class="byval">${fmtB(v)} <span>${(100 * v / tot).toFixed(1)}%</span></div>
+      <div class="bynote">${note}</div></div>`;
+  host.innerHTML = `<div class="panel"><div class="hd">
+    <h2>Bytes on disk</h2><span class="note">a directory size adds
+    together four different things; only the first is the database</span>
+    </div><div class="bd">
+    ${seg("live", B.live, "b-live",
+      "parquet the LOG points at — this IS the database")}
+    ${seg("orphaned", B.orphaned, "b-orph",
+      "superseded by a replace/compact commit; still on disk until vacuum")}
+    ${seg("media", B.media, "b-media",
+      "managed video renditions, byte-range decoded, never copied raw")}
+    ${seg("cache", B.cache, "b-cache",
+      "_cache/ — ITM cross-encoder vision tokens. DISPOSABLE: deleting it "
+      + "costs recompute time, never correctness")}
+    <div class="bynote" style="margin-top:9px">
+      models are <b>not</b> in the store — they live in models/ at the repo
+      root (iv2_stage2_1b alone is 2.8 GB), which is why “store size” and
+      “what this system needs on disk” are different numbers.
+    </div>
+    <div class="dbsec" style="margin-top:14px">COMPRESSION</div>
+    <div class="bynote">${fmtB(B.compressed)} stored for
+      ${fmtB(B.uncompressed)} of column data — <b>${B.ratio}×</b> overall.
+      The ratio is low because <b>vectors dominate and vectors do not
+      compress</b>: they are already fp16-packed high-entropy floats, and
+      that halving happened at write time so it never shows here.
+      Structural tables do compress — see the ratio column.</div>
+    <table class="dbt"><tr><th>table</th><th class="n">rows</th>
+      <th class="n">stored</th><th class="n">raw cols</th>
+      <th class="n">ratio</th><th>codec · encodings</th></tr>` +
+    B.tables.map(r => `<tr><td>${esc(r.table)}</td>
+      <td class="n">${fmtN(r.rows)}</td>
+      <td class="n">${fmtB(r.compressed)}</td>
+      <td class="n">${fmtB(r.uncompressed)}</td>
+      <td class="n"${r.ratio >= 2 ? ' style="color:#5accb9"' : ''}>${r.ratio}×</td>
+      <td style="color:var(--dim)">${esc((r.codec[0] || "") + " · " +
+        r.encodings.join(" ").replace(/RLE_DICTIONARY/g, "RLE_DICT"))}</td>
+      </tr>`).join("") + `</table></div></div>`;
+}
+
 async function loadStorage(table) {
   table = table || document.querySelector("#storage-tables button.on")?.dataset.t;
   if (!table) return;
@@ -1161,12 +1213,16 @@ async function runQuery() {
 }
 
 /* data: schema and sample rows */
+let BYTES = null;
 async function loadData(table) {
   const el = $("v-data");
   if (!table) {
-    el.innerHTML = `<div class="panel"><div class="hd"><h2>Data</h2>
-      <span class="note">columns, types, and real rows</span></div>
+    el.innerHTML = `<div id="bytes-panel"></div>
+      <div class="panel"><div class="hd"><h2>Tables</h2>
+      <span class="note">columns, types, real rows — and what each one
+      costs on disk</span></div>
       <div class="bd"><div class="empty">reading schema</div></div></div>`;
+    drawBytes();
     const all = await j(`/api/schema?store=${CUR.key}`).catch(e => ({error: e.message}));
     if (all.error) {
       el.querySelector(".bd").innerHTML = `<div class="err">${esc(all.error)}</div>`;
@@ -1324,7 +1380,6 @@ async function buildIx(btn, spec) {
 function routeView(v) {
   if (v === "map") loadMap();
   if (v === "arch") loadArch();
-  if (v === "storage") loadStorage();
   if (v === "geo") drawGeo();
   if (v === "data") loadData();
   if (v === "ops") loadOps();
@@ -1411,6 +1466,23 @@ table.dbt td.n, table.dbt th.n { text-align:right;
 .dbkpi div { font:11px/1.4 var(--mono); color:var(--dim); }
 .dbkpi b { display:block; font:600 19px/1.3 var(--mono); color:var(--ink);
   font-variant-numeric:tabular-nums; }
+.byrow { display:grid; grid-template-columns:78px 1fr 132px 2fr;
+  gap:10px; align-items:center; margin:5px 0;
+  font:11px/1.5 var(--mono); }
+.bylab { font-weight:600; text-transform:uppercase; letter-spacing:.07em; }
+.bybar { height:12px; background:rgba(120,150,170,.10); border-radius:2px;
+  overflow:hidden; }
+.bybar i { display:block; height:100%; }
+.byval { text-align:right; color:var(--ink);
+  font-variant-numeric:tabular-nums; }
+.byval span { color:var(--dim); }
+.bynote { color:var(--dim); font:10.5px/1.55 var(--mono); }
+.b-live  { color:#5accb9; background:#5accb9; }
+.b-orph  { color:#c99a5b; background:#c99a5b; }
+.b-media { color:#7fb0ff; background:#7fb0ff; }
+.b-cache { color:#a07fd4; background:#a07fd4; }
+.bylab.b-live, .bylab.b-orph, .bylab.b-media, .bylab.b-cache
+  { background:transparent; }
 .dbpath { color:var(--ink); background:rgba(120,150,170,.10);
   padding:1px 5px; border-radius:2px; }
 button.mini { border:1px solid var(--line); background:transparent;
