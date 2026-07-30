@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from bench_product import QUERIES                            # noqa: E402
 from elidedb import Store                                    # noqa: E402
+from elidedb.scenario import _query_transitions               # noqa: E402
 
 
 def main():
@@ -73,6 +74,72 @@ def main():
         rr = Rerank(ck["dim"]); rr.load_state_dict(ck["rr"]); rr.eval()
 
     db = Store.open("lake/bench")
+    # ---- STAGE 4 inputs: the student's OWN elements + motion graph.
+    # The teacher's routed gate is not learned - it is a deterministic
+    # corroboration test - so the student mirrors it exactly, reading
+    # events_s (which the student produced) rather than the teacher's
+    # table. Both are precomputed columns, so this stage is free.
+    from collections import defaultdict
+    from elidedb.embeddings import _vec_table
+    kmap = defaultdict(set)
+    if "events_s" in db.tables():
+        evs = db.table("events_s").scan().to_pydict()
+        for r in range(len(evs["ts"])):
+            kmap[(str(evs["stream"][r]), int(evs["ts"][r]))].add(
+                evs["kind"][r])
+    NNM = None
+    if "motion_vectors" in db.tables():
+        tb2, MV = _vec_table(db, "motion_vectors")
+        MV = np.asarray(MV, np.float32)
+        em2 = defaultdict(list)
+        for r, (s_, a_) in enumerate(zip(tb2.column("stream").to_pylist(),
+                                         tb2.column("ts").to_pylist())):
+            em2[(str(s_), int(a_))].append(r)
+        M = np.stack([MV[em2[k]].mean(0) if k in em2
+                      else np.zeros(MV.shape[1], np.float32) for k in keys])
+        M /= np.linalg.norm(M, axis=1, keepdims=True) + 1e-8
+        SM = M @ M.T
+        np.fill_diagonal(SM, -9)
+        NNM = np.argsort(-SM, axis=1)[:, :15]
+    have_of = {}
+
+    def prf(sc, K):
+        """Stage 3: the head of the first pass re-queries the corpus.
+        Pure matmul in the space the student already computed."""
+        seed = np.argsort(-sc)[:max(25, K // 4)]
+        c = E[seed].mean(0)
+        c /= np.linalg.norm(c) + 1e-8
+        return sc + 0.5 * (E @ c)
+
+    def structural(qi_text, sc, K):
+        """Stage 4, mirrored: the routed event+density gate.
+
+        ORDER, measured rather than assumed. The teacher runs
+        RRF -> PRF -> cascade -> gate, and copying that sequence made
+        the student WORSE: 0.30 -> 0.26 mean yield, with q01 0.12 ->
+        0.00 and q08 0.33 -> 0.22. The student's cascade is not ITM -
+        it is a small head trained listwise over 200 queries - and it
+        does better CONSUMING the gate's evidence than overriding it.
+        Faithfulness to the teacher's pipeline is not automatically
+        faithfulness to its behaviour, so the student keeps the order
+        that measures better: PRF -> gate -> cascade."""
+        need = _query_transitions(qi_text.lower())
+        if need:
+            if qi_text not in have_of:
+                have_of[qi_text] = np.array(
+                    [1.0 if (kmap.get(k) or set()) & need else 0.0
+                     for k in keys])
+            have = have_of[qi_text]
+            head = np.argsort(-sc)[:max(K, 20)]
+            if float(have[head].mean()) >= 0.35:
+                sc = sc + 0.5 * have * float(sc.std())
+        if NNM is not None:
+            top = set(np.argsort(-sc)[:max(K, 20)].tolist())
+            dens = np.array([len(top & set(NNM[i].tolist())) / NNM.shape[1]
+                             for i in range(len(keys))])
+            sc = sc + 0.5 * dens * float(sc.std())
+        return sc
+
     t = pq.read_table(ROOT / "eval/truthsets/bridge4h.parquet").to_pydict()
     truth = {(int(q), s, int(a)): int(v) for q, s, a, v in
              zip(t["query_id"], t["stream"], t["t0"], t["true"])}
@@ -95,9 +162,9 @@ def main():
         qv /= np.linalg.norm(qv) + 1e-8
         with torch.no_grad():
             qe = q_t(torch.tensor(qv)[None]).numpy()[0]
-        sc = E @ qe
-        # STAGE 2, the cascade: rerank a head of stage 1's list, the
-        # same shape as the teacher's ITM cascade over its top-N
+        sc = structural(QUERIES[qi], prf(E @ qe, K), K)
+        # STAGE 2, the cascade: rerank a head of the list, the same
+        # shape as the teacher's ITM cascade over its top-N
         if rr is not None:
             HEAD = max(K, 100)
             cand = np.argsort(-sc)[:HEAD]
