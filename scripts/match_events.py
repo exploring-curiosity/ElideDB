@@ -78,6 +78,19 @@ def main():
     NV = NV / np.maximum(nrm, 1e-8)
     has_name = (nrm[:, 0] > 1e-6)
 
+    # NAME SPECIFICITY, corpus-derived: "black object" passes detector
+    # verification in any crop, so vague names flooded v2. A name that
+    # appears on half the corpus carries no information about any one
+    # demo; classic IDF downweights it without a single hand rule.
+    from collections import Counter
+    cnt = Counter(nm for nm in ans["name"] if nm)
+    n_named = max(sum(cnt.values()), 1)
+    import math
+    idf = {nm: math.log(n_named / c) / math.log(n_named)
+           for nm, c in cnt.items()}
+    row_idf = np.array([idf.get(nm, 0.0) for nm in ans["name"]],
+                       np.float32)
+
     # group answer rows per demo
     keys = sorted({(s, int(a), int(b)) for s, a, b in
                    zip(ans["stream"], ans["ts"], ans["t1"])})
@@ -152,7 +165,8 @@ def main():
                 rr = [r for r in rows_of[i] if has_name[r]]
                 if rr:
                     sims = NV[rr] @ np.stack(qv).T      # (rows, atoms)
-                    ns[i] = float(sims.max())
+                    w = row_idf[rr][:, None]
+                    ns[i] = float((sims * (0.3 + 0.7 * w)).max())
         cells = []
         for m in modes:
             if m == "full":

@@ -71,21 +71,28 @@ def agent_track(frames):
         mv = (mag > max(1.0, med + 4 * 1.4826 * mad)).astype(np.uint8)
         masks[i] |= mv.astype(bool)
         nlab, lab, stats, cents = cv2.connectedComponentsWithStats(mv, 8)
-        blobs = [(tuple(cents[j]), float(stats[j, cv2.CC_STAT_AREA]))
-                 for j in range(1, nlab)
-                 if stats[j, cv2.CC_STAT_AREA] >= 40]
+        blobs = []
+        for j in range(1, nlab):
+            if stats[j, cv2.CC_STAT_AREA] < 40:
+                continue
+            bb = (int(stats[j, cv2.CC_STAT_LEFT]),
+                  int(stats[j, cv2.CC_STAT_TOP]),
+                  int(stats[j, cv2.CC_STAT_LEFT] + stats[j, cv2.CC_STAT_WIDTH]),
+                  int(stats[j, cv2.CC_STAT_TOP] + stats[j, cv2.CC_STAT_HEIGHT]))
+            blobs.append((tuple(cents[j]),
+                          float(stats[j, cv2.CC_STAT_AREA]), bb))
         nxt = []
-        for c, a in blobs:
+        for c, a, bb in blobs:
             best, bd = None, 1e9
             for tr in live:
                 dd = float(np.hypot(*(np.array(tr[-1][1]) - np.array(c))))
                 if dd < bd:
                     best, bd = tr, dd
             if best is not None and bd < 40:
-                best.append((i, c, a))
+                best.append((i, c, a, bb))
                 nxt.append(best)
             else:
-                tr = [(i, c, a)]
+                tr = [(i, c, a, bb)]
                 tracks.append(tr)
                 nxt.append(tr)
         live = nxt
@@ -96,7 +103,41 @@ def agent_track(frames):
     # DISTINCT frame pairs, capped at 1
     span = (len({e[0] for e in main}) / max(len(frames) - 1, 1)
             if main else 0.0)
-    return main, min(span, 1.0), masks
+    return main, min(span, 1.0), masks, tracks
+
+
+def causal_participants(tracks, main, n_pairs):
+    """P2 BY CAUSALITY, not pixel change. The participant is the
+    region that STARTS MOVING when the agent reaches it: a non-agent
+    track whose onset is (a) after the demo begins, (b) adjacent to
+    the agent's position at that moment. Its bbox at onset is its
+    REST FOOTPRINT - the region was static from frame 0 until touched,
+    so frame 0 at that bbox is a clean, unoccluded view of the object.
+    The track's last bbox is the destination. Returns
+    [(origin_bbox, dest_bbox, onset_pair, lifespan, area)]."""
+    if main is None:
+        return []
+    agent_at = {}
+    for e in main:
+        agent_at.setdefault(e[0], []).append(np.array(e[1]))
+    out = []
+    for tr in tracks:
+        if tr is main or len(tr) < 2:
+            continue
+        i0 = tr[0][0]
+        if i0 < 1 or i0 > n_pairs - 1:
+            continue                      # moving from the start: not
+                                          # caused by the agent here
+        near = agent_at.get(i0) or agent_at.get(i0 - 1)
+        if not near:
+            continue
+        d = min(float(np.hypot(*(np.array(tr[0][1]) - c))) for c in near)
+        if d > 110:
+            continue                      # onset far from the agent
+        area = float(np.mean([e[2] for e in tr]))
+        out.append((tr[0][3], tr[-1][3], i0, len(tr), area))
+    out.sort(key=lambda r: -(r[3] * r[4]))
+    return out[:2]
 
 
 def state_diff(first, last, agent_union):
@@ -252,13 +293,33 @@ def extract(db, frames_tbl, key, namer, verifier):
     pick = np.unique(np.linspace(0, n - 1, min(12, n)).round().astype(int))
     dec = sorted(FrameSet(db, "frames", sel.take(pick)).decode())
     frames = [f for _, f in dec]
-    tr, span, masks = agent_track(frames)
+    tr, span, masks, all_tracks = agent_track(frames)
     agent_union = masks.any(0)
     first, last = frames[0], frames[-1]
-    sites = state_diff(first, last, agent_union)
     art = articulation(frames, agent_union)
 
     parts = []
+    caus = causal_participants(all_tracks, tr, len(frames) - 1)
+    for origin, dest, onset, life, area in caus:
+        try:
+            crop = _crop(first, origin)
+            nm = namer(crop) if crop.shape[0] >= 12 and                 crop.shape[1] >= 12 else ""
+            conf = verifier(crop, nm) if nm else 0.0
+        except Exception:
+            nm, conf = "", 0.0
+        if nm and conf >= 0.30:
+            parts.append({"kind": "origin", "box": list(origin),
+                          "name": nm, "conf": round(conf, 3)})
+        try:
+            crop = _crop(last, dest)
+            nm2 = namer(crop) if crop.shape[0] >= 12 and                 crop.shape[1] >= 12 else ""
+            conf2 = verifier(crop, nm2) if nm2 else 0.0
+        except Exception:
+            nm2, conf2 = "", 0.0
+        if nm2 and conf2 >= 0.30:
+            parts.append({"kind": "dest", "box": list(dest),
+                          "name": nm2, "conf": round(conf2, 3)})
+    sites = [] if parts else state_diff(first, last, agent_union)
     for box in sites[:2]:
         if box[5] < 200:
             continue
@@ -271,8 +332,8 @@ def extract(db, frames_tbl, key, namer, verifier):
             parts.append({"kind": side, "box": box[:4], "name": nm,
                           "conf": round(conf, 3)})
 
-    vanish = [p for p in parts if p["kind"] == "vanish"]
-    appear = [p for p in parts if p["kind"] == "appear"]
+    vanish = [p for p in parts if p["kind"] in ("vanish", "origin")]
+    appear = [p for p in parts if p["kind"] in ("appear", "dest")]
     if abs(art) > 1.5 and not (vanish and appear):
         verb = "open" if art > 0 else "close"
     elif vanish and appear:
