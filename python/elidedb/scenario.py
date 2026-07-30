@@ -346,6 +346,104 @@ def _anchor_score(store, keys, need):
     return acc
 
 
+# OFF BY DEFAULT — MEASURED NEGATIVE, kept as a reproduction.
+# Fusing this term cost yield at every weight tried: 0.45/0.32 at w=0,
+# 0.37/0.30 at 1, 0.28/0.25 at 2, 0.22/0.21 at 4. Only q10 ever gained
+# (0.00 -> 0.50, one document) while q05 collapsed 0.76 -> 0.02.
+#
+# The isolated signal was real - identity alone scores AUC 0.862 on
+# banana and 0.790 on eggplant - so what failed is the COMBINER, not
+# the evidence. Two faults, both visible in the numbers above:
+#   1. the conjunction below takes a min over nouns, so the weakest
+#      noun governs, and "the drawer" appears in nearly every query
+#      while matching nothing in particular - one noisy term drags the
+#      whole demo down;
+#   2. tail concentration did not suppress the uninformative nouns
+#      hard enough - 'a green object' still scored at 0.531 AUC and
+#      still got a vote.
+# The fix is a per-noun trust gate of the kind the transition anchor
+# uses (earn it or score zero), not a bigger or smaller weight; a
+# sweep cannot rescue a term that is wrong on most queries.
+_NOUN_W = float(os.environ.get("ELIDEDB_NOUN_W", "0.0"))
+
+
+def _participant_match(store, keys, text):
+    """Do this demo's PARTICIPANTS answer the nouns the query asks for?
+
+    The transition anchor fixed direction; it cannot touch the queries
+    that are about identity - lid, spoon, eggplant, banana - and those
+    are exactly the ones still failing. Measured: for every failing
+    query most or all of the truth already sits in the top 18% of the
+    corpus (q07 all 12, q09/q10 both, q08 13 of 18), so recall is not
+    the problem and ITM already reranks the top 150. What is missing is
+    a reason to prefer one candidate over another, and identity is it.
+
+    The store carries 5,079 named participant events with SigLIP2 name
+    vectors, and identity alone scores AUC 0.862 on banana and 0.790 on
+    eggplant - while scoring at or below chance on 'a green object'
+    (0.531) and 'a red object' (0.466), because the namer writes
+    'black object' / 'white object' and the colour never matches.
+
+    So the noun has to earn its say, and the corpus statistic that
+    decides is concentration: a noun whose match mass spreads evenly
+    over every demo distinguishes nothing (this is IDF, and it is
+    ordinary IR rather than a prior about drawers), while one with a
+    separated tail is naming something real. No labels, no per-dataset
+    vocabulary - the names came from pixels."""
+    if "events" not in store.tables():
+        return None
+    ck = (str(store.dir), store.table("events").state().version,
+          "pnames", _keysig(keys))
+    if ck not in _EVK:
+        ev = store.table("events").scan().to_pydict()
+        NV = np.asarray(ev["name_vec"], np.float32)
+        NV = NV / (np.linalg.norm(NV, axis=1, keepdims=True) + 1e-8)
+        kidx = {(k[0], k[1]): i for i, k in enumerate(keys)}
+        per = {}
+        for r in range(len(ev["ts"])):
+            if ev["name"][r]:
+                i = kidx.get((str(ev["stream"][r]), int(ev["ts"][r])))
+                if i is not None:
+                    per.setdefault(i, []).append(r)
+        _EVK[ck] = (NV, per)
+    NV, per = _EVK[ck]
+    if not per:
+        return None
+    from .sig2 import atoms_of, _text_vec
+    nouns = list(atoms_of(text.lower()))
+    if not nouns:
+        return None
+    terms = []
+    for nn in nouns:
+        qv = np.asarray(_text_vec(nn), np.float32)
+        qv /= np.linalg.norm(qv) + 1e-8
+        s = np.full(len(keys), np.nan, np.float32)
+        for i, rows in per.items():
+            s[i] = float((NV[rows] @ qv).max())
+        ok = ~np.isnan(s)
+        if ok.sum() < 8:
+            continue
+        v = s[ok]
+        q01, q50, q99 = np.percentile(v, [1, 50, 99])
+        spec = float((q99 - q50) / (q99 - q01 + 1e-6))    # tail concentration
+        z = np.zeros(len(keys), np.float32)
+        z[ok] = (v - q50) / (v.std() + 1e-6)
+        terms.append(spec * z)
+    if not terms:
+        return None
+    # every asked-for noun must be answered: the weakest one governs
+    return np.min(np.stack(terms), axis=0)
+
+
+def _participant_boost(store, keys, text, sc):
+    if _NOUN_W <= 0:                      # see _NOUN_W: measured negative
+        return sc, None
+    t = _participant_match(store, keys, text)
+    if t is None or float(np.std(t)) <= 0:
+        return sc, None
+    return sc + _NOUN_W * float(np.std(sc)) * (t / (np.std(t) + 1e-6)), t
+
+
 def _anchor_boost(store, keys, need, sc):
     """Add the direction term to a running score. One call site's worth
     of arithmetic, kept in one place so the teacher path and the student
@@ -742,6 +840,9 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
             fused, anc = _anchor_boost(store, keys, need, fused)
             if anc is not None:
                 ch["anchor"] = anc
+            fused, pmt = _participant_boost(store, keys, text, fused)
+            if pmt is not None:
+                ch["pname"] = pmt
             if need:
                 kinds = _demo_transitions(store, keys)
                 have = np.array([1.0 if (kinds.get(i) or set()) & need
