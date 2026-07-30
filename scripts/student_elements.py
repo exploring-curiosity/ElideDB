@@ -38,7 +38,7 @@ sys.path.insert(0, str(ROOT / "python"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from build_teacher import (articulated_box, cavity_series,     # noqa: E402
-                           CAV_MIN, DISP_MIN, NFRAMES)
+                           CAV_MIN, REL_MIN, NFRAMES)
 from elidedb import Store                                      # noqa: E402
 from extract_events import (_crop, agent_track,                # noqa: E402
                             causal_participants)
@@ -82,7 +82,6 @@ def structure(db, frames_tbl, key):
     if len(frames) < 4:
         return None
     H, W = frames[0].shape[:2]
-    diag = float(np.hypot(W, H))
     tr, span, masks, all_tracks = agent_track(frames)
     abox = articulated_box(frames, masks.any(0))
     ev = []
@@ -120,12 +119,17 @@ def structure(db, frames_tbl, key):
         c0 = np.array([(origin[0] + origin[2]) / 2,
                        (origin[1] + origin[3]) / 2])
         c1 = np.array([(dest[0] + dest[2]) / 2, (dest[1] + dest[3]) / 2])
-        disp = float(np.linalg.norm(c1 - c0)) / diag
+        # object-relative, exactly as the teacher: see build_teacher's
+        # REL_MIN note - a frame-relative threshold was measuring track
+        # truncation, not motion, and typed 82% of everything "adjust".
+        odiag = float(np.hypot(origin[2] - origin[0],
+                               origin[3] - origin[1]))
+        disp = float(np.linalg.norm(c1 - c0)) / max(odiag, 1.0)
 
         def inside(c, rgn):
             return (rgn is not None and rgn[0] <= c[0] <= rgn[2]
                     and rgn[1] <= c[1] <= rgn[3])
-        k = ("adjust" if disp < DISP_MIN else
+        k = ("adjust" if disp < REL_MIN else
              "take_out" if (inside(c0, abox) and not inside(c1, abox))
              else "put_into" if inside(c1, abox) else "put_on")
         ev.append({"kind": "contact", "role": "participant",
@@ -290,8 +294,8 @@ def main():
                      pa.float16()), 1152),
     })
     tbl = tbl.take(pc.sort_indices(tbl.column("ts")))
-    db.table("events_s").append(tbl, kind="events",
-                                meta={"producer": "student-v1"})
+    db.table("events_s").replace(tbl, kind="events",
+                                 meta={"producer": "student-v1"})
     print(json.dumps({"demos": len(spans), "events": tbl.num_rows,
                       "seconds": round(wall, 1),
                       "s_per_demo": round(wall / max(len(spans), 1), 3),

@@ -33,6 +33,30 @@ luck and the containment test is not yet a real relation detector.
 The honest fix is to identify the CONTAINER as an entity - not to
 threshold a motion blob - and that is unbuilt.
 
+THREE MORE ROUTES TO THAT SPLIT ARE NOW ALSO MEASURED DEAD, so the
+container really is the binding constraint and not a threshold:
+  - persistence via state_diff (an object put INTO something stops
+    being visible, one put ON something does not): only 1.87 diff
+    sites per demo against 1.52 transitions, 3.5% of participant
+    origins carry a vanish site, 91% of transitions type as neither.
+    Starved, not wrong - there are not enough sites to type with.
+  - temporal bracket (containment needs the container OPEN during the
+    transfer, and the events are timestamped for exactly this):
+    put_into 22.7% bracketed vs adjust 25.4%. Identical rates - no
+    discrimination whatsoever.
+  - fixing the displacement threshold below and letting the existing
+    containment branch sort the survivors: adjust 82% -> 51% as
+    intended, but the freed transitions all funnel into put_into
+    (321 -> 799) because inside() is 97% trivially true, and the
+    benchmark did not move (0.45/0.32 before and after, 481 vs 483
+    true documents). The transition ANCHOR then scores put_into at
+    0.000 reliability - it cannot retrieve its own members - which is
+    the mechanism correctly refusing a label the geometry never
+    earned. put_on reached 17 events and take_out 10.
+Net: the displacement fix is kept because it corrects a demonstrated
+measurement error (see REL_MIN), NOT because it improved retrieval.
+It did not.
+
   python scripts/build_teacher.py [--n 20]   sample, prints scripts
   python scripts/build_teacher.py --all      writes events + answers
 """
@@ -56,7 +80,25 @@ from elidedb import Store                                    # noqa: E402
 from extract_events import agent_track, causal_participants  # noqa: E402
 
 NFRAMES = 12
-DISP_MIN = 0.05
+# MOVED, RELATIVE TO THE OBJECT - not to the frame.
+#
+# DISP_MIN was a fraction of the frame diagonal, and it silently made
+# "did this object move" a question about the TRACKER instead. Measured
+# on 150 demos / 228 participant transitions: median displacement 0.025
+# of the diagonal, so the 0.05 threshold sat at the ~80th percentile and
+# 82% of all participant motion was typed "adjust". The reason is
+# truncation, not stillness - median track lifespan is 3.5 of 12 sampled
+# frames, 35% die at <=2 frames, and corr(lifespan, displacement) =
+# +0.487. A two-frame track cannot exhibit displacement, so the object
+# was being called static because we stopped watching it.
+#
+# An object's own size is the scale-free reference: half its own
+# diagonal means its finish does not sit on top of its start. That is a
+# statement about the object leaving where it was, and it holds for a
+# spoon and for a pot. Not tuned to produce a rate - the measured median
+# lands at 0.469x, near the cut, which is what "half moved, half did
+# not" should look like for robot demos full of reaching and adjusting.
+REL_MIN = 0.5
 CAV_MIN = 0.015
 
 
@@ -117,7 +159,6 @@ def build(db, frames_tbl, key, names):
     if len(frames) < 4:
         return None, []
     H, W = frames[0].shape[:2]
-    diag = float(np.hypot(W, H))
 
     tr, span, masks, all_tracks = agent_track(frames)
     agent_union = masks.any(0)
@@ -174,13 +215,15 @@ def build(db, frames_tbl, key, names):
                        (origin[1] + origin[3]) / 2])
         c1 = np.array([(dest[0] + dest[2]) / 2,
                        (dest[1] + dest[3]) / 2])
-        disp = float(np.linalg.norm(c1 - c0)) / diag
+        odiag = float(np.hypot(origin[2] - origin[0],
+                               origin[3] - origin[1]))
+        disp = float(np.linalg.norm(c1 - c0)) / max(odiag, 1.0)
 
         def inside(c, rgn):
             return (rgn is not None and rgn[0] <= c[0] <= rgn[2]
                     and rgn[1] <= c[1] <= rgn[3])
 
-        if disp < DISP_MIN:
+        if disp < REL_MIN:
             k = "adjust"
         elif inside(c0, abox) and not inside(c1, abox):
             k = "take_out"
@@ -286,8 +329,8 @@ def main():
                 NVv.astype(np.float16)).reshape(-1), pa.float16()), 1152),
     })
     etbl = etbl.take(pc.sort_indices(etbl.column("ts")))
-    db.table("events").append(etbl, kind="events",
-                              meta={"extractor": "teacher-v3"})
+    db.table("events").replace(etbl, kind="events",
+                               meta={"extractor": "teacher-v3"})
     print(f"events: {etbl.num_rows} rows")
 
     SV = np.stack([
@@ -311,8 +354,8 @@ def main():
             SV.shape[1]),
     })
     atbl = atbl.take(pc.sort_indices(atbl.column("ts")))
-    db.table("answers2").append(atbl, kind="events",
-                                meta={"extractor": "teacher-v3"})
+    db.table("answers2").replace(atbl, kind="events",
+                                 meta={"extractor": "teacher-v3"})
     print(f"answers2: {atbl.num_rows} rows")
 
 

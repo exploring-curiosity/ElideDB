@@ -205,6 +205,42 @@ class Table:
         return self.log.commit(op="append", kind=kind,
                                schema=str(schema), add=adds, meta=meta)
 
+    def replace(self, table: pa.Table, *, kind="timeseries", meta=None,
+                evolve=False) -> int:
+        """REBUILD IN PLACE: these rows become the table, in one commit.
+
+        Derived tables — events, answers, anything recomputed from the
+        frames — need this and `append` is wrong for them. Recomputing
+        the teacher's events with `append` took the table from 8,263 to
+        16,526 rows, with `agent` at exactly 2x the demo count, and left
+        every demo holding BOTH the old and the new typing of the same
+        transition. Nothing errored; consumers that read a demo's kinds
+        as a set just started seeing contradictions.
+
+        Old files are removed in the same transaction that adds the new
+        ones, so readers see one or the other and never the union, and
+        the previous version stays addressable through the log."""
+        st = self.state()
+        prev = [f.path for f in st.files]
+        self.dir.mkdir(parents=True, exist_ok=True)
+        if len(table) == 0:
+            raise ValueError("replace() with an empty table would drop "
+                             "the table; use delete_range to truncate")
+        self._validate(table, evolve)
+        table = self._sorted(table)
+        fname = f"part-{uuid.uuid4().hex[:12]}.parquet"
+        path = self.dir / fname
+        write_parquet(table, path)
+        tsv = table.column("ts")
+        add = [FileEntry(fname, len(table), path.stat().st_size,
+                         tsv[0].as_py(), tsv[-1].as_py())]
+        return self.log.commit(op="replace", kind=kind,
+                               schema=str(table.schema), add=add,
+                               remove=prev,
+                               meta=dict(meta or {},
+                                         rows_before=st.rows,
+                                         files_replaced=len(prev)))
+
     def compact(self, target_rows_per_file: int = 8_000_000) -> dict:
         """OPTIMIZE: rewrite the active file set into few large, ts-sorted,
         delta-encoded files — one atomic replace-commit. Fixes the many-
