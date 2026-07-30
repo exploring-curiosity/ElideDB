@@ -287,6 +287,47 @@ def api_map(key: str):
             {"version": st.version, "xy": np.round(xy, 3).tolist()}))
     labels = (t.column("cluster").to_pylist()
               if "cluster" in t.column_names else None)
+    # NO cluster column: every point got c=0 and the map was one flat
+    # colour with a legend reading "cluster 0 · 3891" - information-free.
+    # Cluster the 2D LAYOUT for display, cached beside the UMAP cache.
+    # DISPLAY ONLY, and the UI says so: UMAP preserves neighbourhoods,
+    # not distances, so these coordinates never touch a retrieval
+    # decision - that rule is why the store has no cluster column in the
+    # first place.
+    kmeans_display = False
+    if labels is None and len(xy) >= 24:
+        kc = db.dir / "tables" / "embeddings" / "_desk_kmeans.json"
+        got = None
+        if kc.exists():
+            try:
+                j = json.loads(kc.read_text())
+                if j.get("version") == st.version and len(j["lab"]) == n:
+                    got = j["lab"]
+            except Exception:
+                got = None
+        if got is None:
+            P = np.asarray(xy, np.float32)
+            K = min(10, max(2, len(P) // 40))
+            rng = np.random.default_rng(0)
+            C = P[rng.choice(len(P), K, replace=False)]
+            for _ in range(25):                     # Lloyd, few rounds
+                d2 = ((P[:, None, :] - C[None]) ** 2).sum(-1)
+                a = d2.argmin(1)
+                for k in range(K):
+                    m = a == k
+                    if m.any():
+                        C[k] = P[m].mean(0)
+            sub = a.astype(int).tolist()
+            got = [0] * n
+            for j, i in enumerate(idx):
+                got[i] = sub[j]
+            try:
+                kc.write_text(json.dumps({"version": st.version,
+                                          "lab": got}))
+            except Exception:
+                pass
+        labels = got
+        kmeans_display = True
     ss = t.column("stream").to_pylist()
     ta = t.column("ts").to_pylist()
     tb = t.column("t1").to_pylist()
@@ -295,7 +336,10 @@ def api_map(key: str):
          "c": int(labels[i]) if labels else 0,
          "s": ss[i], "t0": ta[i], "t1": tb[i]}
         for j, i in enumerate(idx)],
-        "sampled_of": n, "stride": int(stride)}
+        "sampled_of": n, "stride": int(stride),
+        "cluster_source": ("stored cluster column" if not kmeans_display
+                           else "k-means over the 2D layout — DISPLAY "
+                                "ONLY, never a retrieval decision")}
     _CACHE[ck] = out
     return out
 

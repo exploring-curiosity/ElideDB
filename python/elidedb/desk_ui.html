@@ -410,7 +410,7 @@
       <div class="panel">
         <div class="hd"><h2>Embedding map</h2>
           <span class="note">2D layout for browsing only; retrieval ranks
-            in the full vector space</span></div>
+            in the full vector space<span id="map-src"></span></span></div>
         <div class="bd">
           <div class="mapgrid">
             <div class="canvasbox">
@@ -838,6 +838,12 @@ async function loadMap() {
     try { MAP = await j(`/api/map?store=${CUR.key}`); }
     catch (e) { $("legend").innerHTML = `<div class="err">${esc(e.message)}</div>`; return; }
   }
+  // say WHERE the colours come from: a store with no cluster column
+  // gets k-means over the 2D layout, and that must never be mistaken
+  // for retrieval structure
+  const ms = $("map-src");
+  if (ms && MAP && MAP.cluster_source)
+    ms.innerHTML = ` · colours: ${esc(MAP.cluster_source)}`;
   drawScatter();
 }
 
