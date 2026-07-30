@@ -20,10 +20,24 @@ crossed with generic English templates - the same construction the
 vocab channel uses, no dataset metadata. The truthset queries are held
 out entirely and only ever scored.
 
-FDNN principles: the student is deliberately small (two 2-layer MLPs,
-~1.1M params), trained with a listwise ranking loss against the
-teacher's ORDER rather than its raw scores, because the teacher's
-scale is RRF-arbitrary while its ordering is the thing measured.
+SAME METHODOLOGY, FASTER - the student is a PIPELINE, not a model.
+A single bi-encoder cannot imitate this teacher no matter how it is
+trained, because a dot product is one bilinear form and the teacher is
+five sequential stages (channels->RRF, a PRF pass conditioned on the
+first pass, an ITM cross-encoder cascade over the top-N, a routed
+event+density gate, then the cut). That is a representational gap, and
+the measurement showed its exact shape: the one-tower student tracked
+the teacher where the teacher wins by CHANNELS (q03 0.71 vs 0.62, q01
+0.53 vs 0.41) and collapsed to zero where it wins by a STAGE (q07
+0.58 -> 0.00, the ITM stage; q02 0.50 -> 0.07, the event structure).
+
+So the student mirrors the stages:
+    stage 1  bi-encoder recall     one matmul over the corpus
+    stage 2  interaction reranker  a small head over [q, e, q*e, |q-e|]
+                                   on the top-N only - the same cascade
+                                   shape as ITM, at ~1e-4 of its cost
+Both are distilled from the teacher's ORDER, not its scores, because
+the teacher's scale is RRF-arbitrary while its ordering is measured.
 
   python scripts/distill_student.py [--nq 200] [--epochs 60]
 """
@@ -179,10 +193,27 @@ def main():
             y = self.f(x)
             return y / (y.norm(dim=-1, keepdim=True) + 1e-8)
 
+    class Rerank(nn.Module):
+        """Stage 2: the cascade, distilled. Sees the query and the
+        episode TOGETHER (concat, product, absolute difference), which
+        is the interaction a dot product structurally cannot express."""
+        def __init__(self, d=DIM):
+            super().__init__()
+            self.f = nn.Sequential(nn.Linear(4 * d, 256), nn.GELU(),
+                                   nn.Linear(256, 64), nn.GELU(),
+                                   nn.Linear(64, 1))
+
+        def forward(self, qe, ee):
+            q = qe.unsqueeze(1).expand_as(ee)
+            return self.f(torch.cat([q, ee, q * ee, (q - ee).abs()],
+                                    -1)).squeeze(-1)
+
     ep_t, q_t = Tower(X.shape[1]).to(dev), Tower(QT.shape[1]).to(dev)
+    rr_t = Rerank().to(dev)
     nparam = sum(p.numel() for p in list(ep_t.parameters())
                  + list(q_t.parameters()))
-    opt = torch.optim.AdamW(list(ep_t.parameters()) + list(q_t.parameters()),
+    opt = torch.optim.AdamW(list(ep_t.parameters()) + list(q_t.parameters())
+                            + list(rr_t.parameters()),
                             lr=3e-4, weight_decay=1e-2)
     print(f"student {nparam/1e6:.2f}M params, training on {len(Y)} queries")
 
@@ -206,7 +237,15 @@ def main():
             cand = order[b]
             ee = ep_t(Xt[cand.reshape(-1)]).reshape(len(b), TOP, DIM)
             logits = torch.einsum("bd,bkd->bk", qe, ee) * 20.0
+            # stage 1 learns recall over the whole slice; stage 2 learns
+            # to ORDER the head of it, which is where the teacher's
+            # cascade does its work
             loss = -(tgt[b] * torch.log_softmax(logits, 1)).sum(1).mean()
+            HEAD = 50
+            r2 = rr_t(qe, ee[:, :HEAD])
+            t2 = tgt[b][:, :HEAD]
+            t2 = t2 / t2.sum(1, keepdim=True)
+            loss = loss - (t2 * torch.log_softmax(r2, 1)).sum(1).mean()
             opt.zero_grad(); loss.backward(); opt.step()
             tot += float(loss)
         if (e + 1) % 20 == 0:
@@ -217,6 +256,7 @@ def main():
     out = ROOT / "models/student_v1"
     out.mkdir(parents=True, exist_ok=True)
     torch.save({"ep": ep_t.state_dict(), "q": q_t.state_dict(),
+                "rr": rr_t.state_dict(),
                 "d_ep": X.shape[1], "d_q": QT.shape[1], "dim": DIM},
                out / "student.pt")
     # the episode side is WRITE-TIME work: materialize it now

@@ -53,9 +53,24 @@ def main():
             y = self.f(x)
             return y / (y.norm(dim=-1, keepdim=True) + 1e-8)
 
+    class Rerank(nn.Module):
+        def __init__(self, d):
+            super().__init__()
+            self.f = nn.Sequential(nn.Linear(4 * d, 256), nn.GELU(),
+                                   nn.Linear(256, 64), nn.GELU(),
+                                   nn.Linear(64, 1))
+
+        def forward(self, qe, ee):
+            q = qe.unsqueeze(1).expand_as(ee)
+            return self.f(torch.cat([q, ee, q * ee, (q - ee).abs()],
+                                    -1)).squeeze(-1)
+
     q_t = Tower(ck["d_q"], ck["dim"])
     q_t.load_state_dict(ck["q"])
     q_t.eval()
+    rr = None
+    if "rr" in ck:
+        rr = Rerank(ck["dim"]); rr.load_state_dict(ck["rr"]); rr.eval()
 
     db = Store.open("lake/bench")
     t = pq.read_table(ROOT / "eval/truthsets/bridge4h.parquet").to_pydict()
@@ -81,7 +96,17 @@ def main():
         with torch.no_grad():
             qe = q_t(torch.tensor(qv)[None]).numpy()[0]
         sc = E @ qe
-        top = np.argsort(-sc)[:K]
+        # STAGE 2, the cascade: rerank a head of stage 1's list, the
+        # same shape as the teacher's ITM cascade over its top-N
+        if rr is not None:
+            HEAD = max(K, 100)
+            cand = np.argsort(-sc)[:HEAD]
+            with torch.no_grad():
+                r2 = rr(torch.tensor(qe)[None],
+                        torch.tensor(E[cand])[None]).numpy()[0]
+            top = cand[np.argsort(-r2)][:K]
+        else:
+            top = np.argsort(-sc)[:K]
         dt = (time.perf_counter() - t0) * 1000
         lab = np.array([1 if truth.get((qi, k[0], k[1])) == 1 else 0
                         for k in keys])
