@@ -117,20 +117,33 @@ def cavity_series(frames, box):
     return np.array([float((c < thr).mean()) for c in crops])
 
 
-def articulated_box(frames, agent_union):
-    """Largest coherent non-agent moving region across the demo."""
+def articulated_box(frames, agent_union, mags=None):
+    """Largest coherent non-agent moving region across the demo.
+
+    Runs at FLOW_SCALE like agent_track: this was the other half of the
+    write cost (227 of 537 ms/demo). Area threshold scales by s^2, the
+    returned box by s, so the region selected is the same one."""
     import cv2
-    grey = [cv2.cvtColor(f, cv2.COLOR_RGB2GRAY) for f in frames]
+    from extract_events import motion_mags
+    if mags is None:
+        mags, up = motion_mags(frames)
+    else:
+        mags, up = mags
+    au = agent_union
+    if au.shape != mags.shape[1:]:
+        au = cv2.resize(agent_union.astype(np.uint8),
+                        (mags.shape[2], mags.shape[1]),
+                        interpolation=cv2.INTER_NEAREST).astype(bool)
+    area_min = 800.0 / (up * up)
     best = None
-    for i in range(len(grey) - 1):
-        flow = cv2.calcOpticalFlowFarneback(
-            grey[i], grey[i + 1], None, 0.5, 3, 21, 3, 5, 1.2, 0)
-        mag = np.linalg.norm(flow, axis=2)
-        m = (mag > max(1.0, 3 * float(np.median(mag)))) & (~agent_union)
-        if m.sum() < 800:
+    for i in range(len(mags)):
+        mag = mags[i]
+        m = (mag > max(1.0, 3 * float(np.median(mag)))) & (~au)
+        if m.sum() < area_min:
             continue
         ys, xs = np.where(m)
-        bb = (int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max()))
+        bb = (int(xs.min() * up), int(ys.min() * up),
+              int(xs.max() * up), int(ys.max() * up))
         if best is None or ((bb[2] - bb[0]) * (bb[3] - bb[1])
                             > (best[2] - best[0]) * (best[3] - best[1])):
             best = bb
@@ -160,9 +173,12 @@ def build(db, frames_tbl, key, names):
         return None, []
     H, W = frames[0].shape[:2]
 
-    tr, span, masks, all_tracks = agent_track(frames)
+    # ONE motion pass on the GPU, shared by both consumers
+    from extract_events import motion_mags
+    mg = motion_mags(frames)
+    tr, span, masks, all_tracks = agent_track(frames, mg)
     agent_union = masks.any(0)
-    abox = articulated_box(frames, agent_union)
+    abox = articulated_box(frames, agent_union, mg)
     ev = []
 
     def stamp(i):

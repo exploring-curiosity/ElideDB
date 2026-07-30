@@ -25,6 +25,7 @@ one matmul.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -82,8 +83,11 @@ def structure(db, frames_tbl, key):
     if len(frames) < 4:
         return None
     H, W = frames[0].shape[:2]
-    tr, span, masks, all_tracks = agent_track(frames)
-    abox = articulated_box(frames, masks.any(0))
+    # ONE motion pass on the GPU, shared by both consumers
+    from extract_events import motion_mags
+    mg = motion_mags(frames)
+    tr, span, masks, all_tracks = agent_track(frames, mg)
+    abox = articulated_box(frames, masks.any(0), mg)
     ev = []
 
     def stamp(i):
@@ -254,32 +258,63 @@ def main():
                             "ev_t0", "ev_t1", "conf")}
     vecs, spans = [], []
     t0 = time.time()
-    for n, k in enumerate(keys):
-        st = structure(db, frames_tbl, k)
-        if st is None:
-            continue
-        spans.append((k, st["span"]))
-        crops = [e["crop"] for e in st["events"] if e["crop"] is not None]
-        nv = np.zeros((0, 1152), np.float32)
-        if crops:
-            emb = crop_embed(crops, sig, proc, dev)
+    # PARALLEL BY DEMO, BATCHED ON THE GPU.
+    #
+    # This loop used to run one demo at a time, and it was the whole
+    # write cost: profiled at 537 ms/demo of geometry, of which 87% is
+    # dense Farneback optical flow (agent_track 243 ms, articulated_box
+    # 227 ms), plus ~310 ms of per-demo SigLIP crop embedding. Meanwhile
+    # the INGEST of the same corpus ran at 1,109 frames/s on 13.6 cores.
+    # The element pass was using one.
+    #
+    # Two changes, neither of which alters a single output value:
+    #   - structure() runs across demos in a thread pool. It is OpenCV
+    #     and ffmpeg underneath, both of which drop the GIL, so threads
+    #     get real parallelism (the store's own loader already reads
+    #     concurrently for the same reason).
+    #   - crops are embedded ONE CHUNK AT A TIME instead of one demo at
+    #     a time, so SigLIP sees batches of hundreds rather than fours.
+    # Demos are independent and the rows are ts-sorted before the
+    # commit, so results are identical to the sequential path.
+    # NO THREADS. The motion pass runs on the GPU instead (see
+    # motion_mags): the work that made this slow was per-pixel and
+    # belongs on device, not spread across cores. Crops are still
+    # embedded a CHUNK at a time so SigLIP sees batches of hundreds
+    # rather than fours, which is also GPU work.
+    CHUNK = 32
+    print(f"  {len(keys)} demos, GPU motion, chunk {CHUNK}", flush=True)
+    for base in range(0, len(keys), CHUNK):
+        batch = keys[base:base + CHUNK]
+        sts = [structure(db, frames_tbl, kk) for kk in batch]
+        allcrops = []
+        for st in sts:
+            if st is None:
+                continue
+            allcrops += [e["crop"] for e in st["events"]
+                         if e["crop"] is not None]
+        NV = np.zeros((0, 1152), np.float32)
+        if allcrops:
+            emb = crop_embed(allcrops, sig, proc, dev)
             with torch.no_grad():
-                nv = net(torch.tensor(emb, device=dev,
+                NV = net(torch.tensor(emb, device=dev,
                                       dtype=torch.float32)).cpu().numpy()
-        ci = 0
-        for e in st["events"]:
-            rows["ts"].append(k[1]); rows["t1"].append(k[2])
-            rows["stream"].append(k[0]); rows["kind"].append(e["kind"])
-            rows["role"].append(e["role"]); rows["ev_t0"].append(e["t0"])
-            rows["ev_t1"].append(e["t1"]); rows["conf"].append(e["conf"])
-            if e["crop"] is not None:
-                vecs.append(nv[ci]); ci += 1
-            else:
-                vecs.append(np.zeros(1152, np.float32))
-        if (n + 1) % 200 == 0:
-            el = time.time() - t0
-            print(f"  {n+1}/{len(keys)} {el:.0f}s "
-                  f"({el/(n+1):.2f}s/demo)", flush=True)
+        ptr = 0
+        for k, st in zip(batch, sts):
+            if st is None:
+                continue
+            spans.append((k, st["span"]))
+            for e in st["events"]:
+                rows["ts"].append(k[1]); rows["t1"].append(k[2])
+                rows["stream"].append(k[0]); rows["kind"].append(e["kind"])
+                rows["role"].append(e["role"]); rows["ev_t0"].append(e["t0"])
+                rows["ev_t1"].append(e["t1"]); rows["conf"].append(e["conf"])
+                if e["crop"] is not None:
+                    vecs.append(NV[ptr]); ptr += 1
+                else:
+                    vecs.append(np.zeros(1152, np.float32))
+        n = min(base + CHUNK, len(keys))
+        el = time.time() - t0
+        print(f"  {n}/{len(keys)} {el:.0f}s ({el/n:.3f}s/demo)", flush=True)
     wall = time.time() - t0
     V = np.stack(vecs)
     tbl = pa.table({

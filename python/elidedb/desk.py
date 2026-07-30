@@ -556,6 +556,143 @@ def api_architecture(key: str):
                                       ("media", "model")])}}
 
 
+def api_dbinternals(key: str, table: str | None = None):
+    """The storage engine, as it actually is on disk.
+
+    Not a diagram: every number here is read from the transaction log
+    and the Parquet footers of this store, right now. Four things a
+    storage engine has to be able to show:
+
+      1. the LOG   — the table is the fold of an append-only list of
+                     JSON commits, each carrying its own file list
+      2. FILES     — with the zone map (min_ts/max_ts) that lets a
+                     query drop a whole file without opening it
+      3. PAGES     — row groups inside a file, each with its own ts
+                     statistics and per-column chunk sizes
+      4. PRUNING   — what a real window query touches, in bytes,
+                     across both layers
+    """
+    import pyarrow.parquet as pq
+    db = STORES[key]
+    names = sorted(db.tables())
+    table = table if table in names else (
+        "frames" if "frames" in names else names[0])
+    t = db.table(table)
+    st = t.state()
+
+    # ---- 1. the log: manifest commits, newest last
+    log = []
+    for c in t.history():
+        log.append({
+            "version": c.get("version"), "op": c.get("op"),
+            "kind": c.get("kind"),
+            "added": len(c.get("add") or []),
+            "removed": len(c.get("remove") or []),
+            "added_rows": c.get("added_rows"),
+            "ts": c.get("ts"),
+            "meta": {k: v for k, v in (c.get("meta") or {}).items()
+                     if not isinstance(v, (list, dict))},
+        })
+
+    # ---- 2/3. files and their row groups (pages)
+    files, pages = [], []
+    total_rg = 0
+    for f in st.files:
+        p = db.dir / "tables" / table / f.path
+        row = {"path": f.path, "rows": f.rows, "bytes": f.bytes,
+               "min_ts": f.min_ts, "max_ts": f.max_ts, "row_groups": None,
+               "footer_bytes": None}
+        try:
+            pf = pq.ParquetFile(p)
+            md = pf.metadata
+            row["row_groups"] = md.num_row_groups
+            row["footer_bytes"] = md.serialized_size
+            total_rg += md.num_row_groups
+            ts_i = (md.schema.names.index("ts")
+                    if "ts" in md.schema.names else 0)
+            if len(pages) < 24:            # a readable sample, not all
+                for g in range(min(md.num_row_groups, 8)):
+                    rg = md.row_group(g)
+                    s = rg.column(ts_i).statistics
+                    cols = []
+                    for c in range(rg.num_columns):
+                        col = rg.column(c)
+                        cols.append({
+                            "name": (md.schema.names[c]
+                                     if c < len(md.schema.names) else "?"),
+                            "compressed": col.total_compressed_size,
+                            "uncompressed": col.total_uncompressed_size,
+                            "encodings": [str(e) for e in
+                                          (col.encodings or [])][:3],
+                        })
+                    cols.sort(key=lambda x: -x["compressed"])
+                    pages.append({
+                        "file": f.path[:18], "group": g,
+                        "rows": rg.num_rows, "bytes": rg.total_byte_size,
+                        "min_ts": getattr(s, "min", None),
+                        "max_ts": getattr(s, "max", None),
+                        "columns": cols[:6],
+                        "n_columns": rg.num_columns})
+        except Exception:
+            pass
+        files.append(row)
+
+    # ---- 4. pruning, executed for real on a 2% slice of the span
+    prune = None
+    if st.files and st.min_ts is not None:
+        # ANCHOR THE WINDOW ON REAL DATA. Taking the midpoint of
+        # min_ts..max_ts lands in one of the 60 s gaps this store puts
+        # between demos and returns zero rows, which measures nothing.
+        # A row group's own ts statistics are, by construction, a range
+        # that contains rows - so the demo window is the middle row
+        # group of the middle file.
+        t0, t1 = st.min_ts, st.min_ts + max(
+            (st.max_ts - st.min_ts) // 50, 1)
+        try:
+            mid = st.files[len(st.files) // 2]
+            pf = pq.ParquetFile(db.dir / "tables" / table / mid.path)
+            md = pf.metadata
+            ts_i = (md.schema.names.index("ts")
+                    if "ts" in md.schema.names else 0)
+            g = md.row_group(md.num_row_groups // 2)
+            s = g.column(ts_i).statistics
+            if s is not None and s.min is not None:
+                t0, t1 = int(s.min), int(s.max)
+        except Exception:
+            pass
+        from .store import QueryStats
+        qs = QueryStats()
+        try:
+            got = t.scan(t0, t1, stats=qs)
+            prune = {
+                "window_ns": int(t1 - t0),
+                "files_total": qs.files_total,
+                "files_touched": qs.files_touched,
+                "corpus_bytes": qs.corpus_bytes,
+                "bytes_touched": qs.bytes_touched,
+                "rows_returned": len(got),
+                "elided_pct": (round(100.0 * (qs.corpus_bytes
+                                              - qs.bytes_touched)
+                                     / max(qs.corpus_bytes, 1), 2)),
+            }
+        except Exception as e:
+            prune = {"error": f"{type(e).__name__}: {e}"[:120]}
+
+    return {
+        "store": db.name, "key": key, "table": table, "tables": names,
+        "version": st.version, "kind": st.kind, "rows": st.rows,
+        "bytes": st.bytes, "n_files": len(st.files),
+        "n_row_groups": total_rg,
+        "schema": [str(x) for x in str(st.schema).split("\n") if x][:24],
+        "log": log[-12:], "log_total": len(log),
+        "files": files[:12], "pages": pages, "prune": prune,
+        "log_dir": f"tables/{table}/_log/",
+        "store_files": sorted(
+            p.name for p in db.dir.glob("*")
+            if p.is_file())[:20],
+    }
+
+
 def api_analytics(key: str):
     """Operational analytics, general to ANY store: everything here is
     derived from transaction logs, parquet footers, and table meta.
@@ -1127,6 +1264,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json([store_summary(k) for k in STORES])
             if u.path == "/api/architecture":
                 return self._json(api_architecture(q["store"]))
+            if u.path == "/api/dbinternals":
+                return self._json(api_dbinternals(q["store"],
+                                                  q.get("table")))
             if u.path == "/api/map":
                 return self._json(api_map(q["store"]))
             if u.path == "/api/geo":

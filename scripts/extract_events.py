@@ -37,6 +37,7 @@ participant name >=80%, cost <= 8s/demo.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -55,17 +56,100 @@ MIN_BLOB = 120          # px in the before/after diff
 PAD = 0.6               # crop padding around a site, fraction of box
 
 
-def agent_track(frames):
-    """Largest persistent coherent-motion track + per-frame agent mask."""
+# FLOW RESOLUTION. Dense Farneback is O(pixels) and it was the entire
+# write cost: profiled at 470 of 537 ms/demo of geometry, run at native
+# resolution, twice (here and in articulated_box). Half scale is a
+# quarter of the pixels. Optical flow is a smoothness prior over a
+# coarse pyramid to begin with - the first pyramid level already
+# downsamples - so this removes redundant work rather than information.
+# Every pixel threshold below is scaled with it (areas by s^2, distances
+# by s) so the decisions are the same ones, taken on a smaller grid.
+FLOW_SCALE = float(os.environ.get("ELIDEDB_FLOW_SCALE", "0.5"))
+
+
+def _shrink(frames, scale):
+    """Greyscale pyramid base for flow, plus the factor to undo it."""
     import cv2
     grey = [cv2.cvtColor(f, cv2.COLOR_RGB2GRAY) for f in frames]
-    H, W = grey[0].shape
+    if scale >= 0.999:
+        return grey, 1.0
+    h, w = grey[0].shape
+    hh, ww = max(int(h * scale), 32), max(int(w * scale), 32)
+    return ([cv2.resize(g, (ww, hh), interpolation=cv2.INTER_AREA)
+             for g in grey], w / float(ww))
+
+
+_DEV = None
+
+
+def motion_mags(frames, scale=None):
+    """Per-pixel motion magnitude for every consecutive pair, ON DEVICE.
+
+    Neither consumer of this ever used flow DIRECTION - agent_track and
+    articulated_box both take |flow| and threshold it - so dense
+    Farneback was solving for a vector field in order to discard its
+    angle, on the CPU, twice per demo. That was 470 of 537 ms/demo.
+
+    What the pipeline actually wants is the normal-flow magnitude, which
+    the optical-flow constraint equation gives directly:
+
+        |v| = |I_t| / (|grad I| + eps)
+
+    That is three convolutions and a divide - the shape of computation a
+    GPU is for - and it is computed ONCE here for the whole demo and
+    handed to both consumers, so the duplicate pass is gone as well.
+
+    Returns a (T-1, h, w) float32 array at FLOW_SCALE, plus the factor
+    that maps those coordinates back to full resolution."""
+    global _DEV
+    import torch
+    import torch.nn.functional as Fn
+    if _DEV is None:
+        from elidedb.device import pick
+        _DEV = pick()[0]
+    s = FLOW_SCALE if scale is None else scale
+    a = np.stack(frames).astype(np.float32)              # T,H,W,3
+    FH, FW = a.shape[1], a.shape[2]
+    x = torch.from_numpy(a).to(_DEV)
+    x = (x[..., 0] * 0.299 + x[..., 1] * 0.587
+         + x[..., 2] * 0.114).unsqueeze(1)               # T,1,H,W
+    if s < 0.999:
+        hh, ww = max(int(FH * s), 32), max(int(FW * s), 32)
+        x = Fn.interpolate(x, size=(hh, ww), mode="area")
+    up = FW / float(x.shape[-1])
+    k = torch.tensor([[1., 0., -1.], [2., 0., -2.], [1., 0., -1.]],
+                     device=_DEV).view(1, 1, 3, 3) / 8.0
+    gx = Fn.conv2d(x, k, padding=1)
+    gy = Fn.conv2d(x, k.transpose(2, 3), padding=1)
+    gmag = torch.sqrt(gx * gx + gy * gy)
+    it = (x[1:] - x[:-1]).abs()
+    # spatial gradient averaged over the pair: a moving edge is an edge
+    # in both frames, and using one frame alone biases toward whichever
+    # side happens to be sharper
+    gm = 0.5 * (gmag[1:] + gmag[:-1])
+    mag = it / (gm + 1.0)
+    return mag.squeeze(1).float().cpu().numpy(), up
+
+
+def agent_track(frames, mags=None):
+    """Largest persistent coherent-motion track + per-frame agent mask.
+
+    `mags` is motion_mags()'s (T-1,h,w) output; computed here if not
+    supplied, but callers should compute it once and share it with
+    articulated_box rather than pay for it twice."""
+    import cv2
+    if mags is None:
+        mags, up = motion_mags(frames)
+    else:
+        mags, up = mags
+    H, W = mags.shape[1], mags.shape[2]
+    FH, FW = frames[0].shape[:2]
     masks = np.zeros((len(frames), H, W), bool)
     tracks, live = [], []
-    for i in range(len(grey) - 1):
-        flow = cv2.calcOpticalFlowFarneback(
-            grey[i], grey[i + 1], None, 0.5, 3, 15, 3, 5, 1.2, 0)
-        mag = np.linalg.norm(flow, axis=2)
+    area_min = 40.0 / (up * up)          # thresholds live on THIS grid
+    link_max = 40.0 / up
+    for i in range(len(mags)):
+        mag = mags[i]
         med = float(np.median(mag))
         mad = float(np.median(np.abs(mag - med))) + 1e-6
         mv = (mag > max(1.0, med + 4 * 1.4826 * mad)).astype(np.uint8)
@@ -73,14 +157,19 @@ def agent_track(frames):
         nlab, lab, stats, cents = cv2.connectedComponentsWithStats(mv, 8)
         blobs = []
         for j in range(1, nlab):
-            if stats[j, cv2.CC_STAT_AREA] < 40:
+            if stats[j, cv2.CC_STAT_AREA] < area_min:
                 continue
-            bb = (int(stats[j, cv2.CC_STAT_LEFT]),
-                  int(stats[j, cv2.CC_STAT_TOP]),
-                  int(stats[j, cv2.CC_STAT_LEFT] + stats[j, cv2.CC_STAT_WIDTH]),
-                  int(stats[j, cv2.CC_STAT_TOP] + stats[j, cv2.CC_STAT_HEIGHT]))
-            blobs.append((tuple(cents[j]),
-                          float(stats[j, cv2.CC_STAT_AREA]), bb))
+            # boxes and centroids leave this function in FULL-resolution
+            # coordinates: everything downstream (crops, containment,
+            # displacement) indexes the original frames.
+            bb = (int(stats[j, cv2.CC_STAT_LEFT] * up),
+                  int(stats[j, cv2.CC_STAT_TOP] * up),
+                  int((stats[j, cv2.CC_STAT_LEFT]
+                       + stats[j, cv2.CC_STAT_WIDTH]) * up),
+                  int((stats[j, cv2.CC_STAT_TOP]
+                       + stats[j, cv2.CC_STAT_HEIGHT]) * up))
+            blobs.append(((float(cents[j][0] * up), float(cents[j][1] * up)),
+                          float(stats[j, cv2.CC_STAT_AREA]) * up * up, bb))
         nxt = []
         for c, a, bb in blobs:
             best, bd = None, 1e9
@@ -88,7 +177,7 @@ def agent_track(frames):
                 dd = float(np.hypot(*(np.array(tr[-1][1]) - np.array(c))))
                 if dd < bd:
                     best, bd = tr, dd
-            if best is not None and bd < 40:
+            if best is not None and bd < link_max * up:
                 best.append((i, c, a, bb))
                 nxt.append(best)
             else:
@@ -98,6 +187,11 @@ def agent_track(frames):
         live = nxt
     if len(frames) > 1:
         masks[-1] = masks[-2]
+    if up != 1.0:                     # masks are consumed at full res
+        masks = np.stack([
+            cv2.resize(m.astype(np.uint8), (FW, FH),
+                       interpolation=cv2.INTER_NEAREST).astype(bool)
+            for m in masks])
     main = max(tracks, key=len) if tracks else None
     # a track may collect >1 blob per frame pair; span is coverage of
     # DISTINCT frame pairs, capped at 1
