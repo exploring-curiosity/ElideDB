@@ -42,16 +42,27 @@ from elidedb import Store                                    # noqa: E402
 # closed-class, uniform English: query verb words -> topology verbs.
 # "move" appears everywhere because the extractor's move covers any
 # relocation; direction verbs map to the articulation channel.
+# v2 verbs are a geometric partition (largest class 28%, was 80%
+# when every named track answered "move"), so the map targets the
+# TRANSITION the query describes. The PREPOSITION is the stronger
+# signal and wins when present: "into the drawer" is put_into
+# whatever the sentence's main verb happens to be.
 VERB_MAP = {
     "open": {"open"},
     "close": {"close"}, "closes": {"close"}, "shut": {"close"},
-    "put": {"move", "bring", "put_away"},
-    "place": {"move", "bring", "put_away"},
-    "pick": {"move", "put_away"},
-    "take": {"move", "bring"},
-    "move": {"move", "bring", "put_away"},
-    "holds": {"close", "open", "move"},
+    "put": {"put_into", "put_on", "put_away"},
+    "place": {"put_into", "put_on", "put_away"},
+    "pick": {"put_into", "put_on", "take_out"},
+    "take": {"take_out"},
+    "move": {"put_into", "put_on", "put_away"},
+    # "holds the handle and closes" - the sentence's OTHER verb is
+    # the event. Mapping "holds" to three classes matched 837 of 1,122
+    # demos and buried the 62%-correct `close` label under everything
+    # else, so a grasp word contributes nothing on its own.
+    "holds": set(),
 }
+REL_VERBS = {"into": {"put_into"}, "on": {"put_on"},
+             "out": {"take_out"}}
 
 
 # closed-class English prepositions -> geometric relation classes
@@ -71,6 +82,8 @@ def parse_query(text, atoms_of):
         if pat in tl:
             rel = r
             break
+    if rel in REL_VERBS and not (verbs & {"open", "close"}):
+        verbs = REL_VERBS[rel]
     atoms = atoms_of(tl)[:2]
     return verbs, atoms, rel
 
@@ -111,6 +124,17 @@ def main():
         rows_of[kidx[(ans["stream"][r], int(ans["ts"][r]),
                       int(ans["t1"][r]))]].append(r)
     verb_of = {i: ans["verb"][rows_of[i][0]] for i in rows_of}
+    # v2 verbs from scripts/verb_recompute.py when present
+    import json as _json
+    vp = ROOT / "ml/verbs_v2.json"
+    if vp.exists():
+        v2 = _json.loads(vp.read_text())
+        hit = 0
+        for i in rows_of:
+            k = f"{keys[i][0]}|{keys[i][1]}"
+            if k in v2:
+                verb_of[i] = v2[k]; hit += 1
+        print(f"verbs v2 applied to {hit}/{len(rows_of)} demos")
     art_of = {i: float(ans["articulation"][rows_of[i][0]])
               for i in rows_of}
     # geometry per demo: dest/origin boxes + the articulated region.
@@ -210,16 +234,14 @@ def main():
         vs = np.zeros(len(keys))
         ns = np.zeros(len(keys))
         for i in range(len(keys)):
+            # ONE verb path for every query. open/close used to be
+            # routed around the verb field into the raw articulation
+            # sign, which is exactly the signal measured useless
+            # (corr +0.04); the cavity-based verb label is 2.2-2.5x
+            # over prior on the two drawer queries and the matcher
+            # has to actually read it.
             v = verb_of[i]
-            ok = v in verbs if verbs else True
-            # open/close ride the calibrated articulation sign
-            if verbs & {"open", "close"}:
-                a = sign * art_of[i]
-                want_open = "open" in verbs
-                ok = (a > 1.5) if want_open else (a < -1.5)
-                vs[i] = abs(art_of[i]) if ok else 0.0
-            else:
-                vs[i] = 1.0 if ok else 0.0
+            vs[i] = 1.0 if (not verbs or v in verbs) else 0.0
             if qv:
                 rr = [r for r in rows_of[i] if has_name[r]]
                 if rr:
