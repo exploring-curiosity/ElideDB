@@ -54,14 +54,25 @@ VERB_MAP = {
 }
 
 
+# closed-class English prepositions -> geometric relation classes
+PREP_MAP = (("on top", "on"), ("onto", "on"), ("into", "into"),
+            ("in ", "into"), ("out of", "out"), ("from", "out"),
+            ("on ", "on"))
+
+
 def parse_query(text, atoms_of):
     tl = text.lower()
     verbs = set()
     for w, tv in VERB_MAP.items():
         if w in tl.split() or any(t.startswith(w) for t in tl.split()):
             verbs |= tv
+    rel = ""
+    for pat, r in PREP_MAP:
+        if pat in tl:
+            rel = r
+            break
     atoms = atoms_of(tl)[:2]
-    return verbs, atoms
+    return verbs, atoms, rel
 
 
 def main():
@@ -102,6 +113,54 @@ def main():
     verb_of = {i: ans["verb"][rows_of[i][0]] for i in rows_of}
     art_of = {i: float(ans["articulation"][rows_of[i][0]])
               for i in rows_of}
+    # geometry per demo: dest/origin boxes + the articulated region.
+    # box columns are FixedSizeList; flatten once.
+    BX = np.array(ans["box"], np.int32).reshape(-1, 4) \
+        if "box" in ans else None
+    AB = np.array(ans["art_box"], np.int32).reshape(-1, 4) \
+        if "art_box" in ans else None
+
+    def rel_score(i, qrel):
+        """Geometric relation between the participant's END state and
+        the articulated region. Closed-class geometry, no camera
+        assumptions beyond box containment/overlap:
+          into  the moved thing's last box sits INSIDE the articulated
+                region (it went in), or it has an origin but no dest
+                (it disappeared)
+          on    a dest box exists (visible at end) and OVERLAPS the
+                articulated region
+          out   an origin box sits inside the region (it came out)"""
+        if not qrel or BX is None:
+            return 0.5
+        ab = AB[rows_of[i][0]]
+        has_art = (ab[2] - ab[0]) * (ab[3] - ab[1]) > 0
+        dests = [BX[r] for r in rows_of[i] if ans["kind"][r] == "dest"]
+        origs = [BX[r] for r in rows_of[i] if ans["kind"][r] == "origin"]
+
+        def center_in(b, rgn):
+            cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+            return rgn[0] <= cx <= rgn[2] and rgn[1] <= cy <= rgn[3]
+
+        def overlap(b, rgn):
+            return not (b[2] < rgn[0] or b[0] > rgn[2]
+                        or b[3] < rgn[1] or b[1] > rgn[3])
+
+        if qrel == "into":
+            if origs and not dests:
+                return 1.0                    # vanished: went inside
+            if has_art and any(center_in(d, ab) for d in dests):
+                return 1.0
+            return 0.2
+        if qrel == "on":
+            if dests and (not has_art
+                          or any(overlap(d, ab) for d in dests)):
+                return 1.0
+            return 0.3
+        if qrel == "out":
+            if has_art and any(center_in(o, ab) for o in origs):
+                return 1.0
+            return 0.3
+        return 0.5
 
     # ---- articulation sign calibration (corpus-derived, no geometry
     # assumption): among demos the extractor called open/close, which
@@ -138,7 +197,7 @@ def main():
         if sup[qi] == 0:
             continue
         text = QUERIES[qi]
-        verbs, atoms = parse_query(text, atoms_of)
+        verbs, atoms, qrel = parse_query(text, atoms_of)
         qv = []
         for a in atoms:
             v = np.asarray(_text_vec(a), np.float32)
@@ -167,10 +226,11 @@ def main():
                     sims = NV[rr] @ np.stack(qv).T      # (rows, atoms)
                     w = row_idf[rr][:, None]
                     ns[i] = float((sims * (0.3 + 0.7 * w)).max())
+        rel = np.array([rel_score(i, qrel) for i in range(len(keys))])
         cells = []
         for m in modes:
             if m == "full":
-                sc = vs * (1.0 + ns)
+                sc = vs * (1.0 + ns) * (0.5 + rel)
             elif m == "verb-only":
                 sc = vs
             else:

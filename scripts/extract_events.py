@@ -184,10 +184,11 @@ def articulation(frames, agent_union):
     down/right in image space."""
     import cv2
     if len(frames) < 4:
-        return 0.0
+        return 0.0, None
     grey = [cv2.cvtColor(f, cv2.COLOR_RGB2GRAY) for f in frames]
     tot_dx = tot_dy = 0.0
     votes = 0
+    art_box = []
     for i in range(len(grey) - 1):
         flow = cv2.calcOpticalFlowFarneback(
             grey[i], grey[i + 1], None, 0.5, 3, 21, 3, 5, 1.2, 0)
@@ -199,9 +200,14 @@ def articulation(frames, agent_union):
         tot_dx += float(np.median(flow[..., 0][m]))
         tot_dy += float(np.median(flow[..., 1][m]))
         votes += 1
+        ys, xs = np.where(m)
+        bb = (int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max()))
+        if not art_box or (bb[2]-bb[0])*(bb[3]-bb[1]) >            (art_box[0][2]-art_box[0][0])*(art_box[0][3]-art_box[0][1]):
+            art_box = [bb]
     if votes == 0:
-        return 0.0
-    return float(tot_dy if abs(tot_dy) >= abs(tot_dx) else tot_dx)
+        return 0.0, None
+    return (float(tot_dy if abs(tot_dy) >= abs(tot_dx) else tot_dx),
+            art_box[0] if art_box else None)
 
 
 def _crop(im, box):
@@ -296,7 +302,7 @@ def extract(db, frames_tbl, key, namer, verifier):
     tr, span, masks, all_tracks = agent_track(frames)
     agent_union = masks.any(0)
     first, last = frames[0], frames[-1]
-    art = articulation(frames, agent_union)
+    art, art_box = articulation(frames, agent_union)
 
     parts = []
     caus = causal_participants(all_tracks, tr, len(frames) - 1)
@@ -346,7 +352,9 @@ def extract(db, frames_tbl, key, namer, verifier):
         verb = "adjust"
     return {"stream": s, "ts": a, "dur_s": round((b - a) / 1e9, 1),
             "agent_span": round(span, 2), "verb": verb,
-            "articulation": round(art, 2), "participants": parts}
+            "articulation": round(art, 2),
+            "art_box": list(art_box) if art_box else [],
+            "participants": parts}
 
 
 def main():
@@ -410,7 +418,7 @@ def main():
         from elidedb.sig2 import _text_vec
         rows = {"ts": [], "t1": [], "stream": [], "verb": [],
                 "articulation": [], "agent_span": [], "kind": [],
-                "name": [], "site_area": []}
+                "name": [], "site_area": [], "box": [], "art_box": []}
         vecs = []
         cache = {}
         for r in out:
@@ -422,16 +430,21 @@ def main():
                 rows["verb"].append(r["verb"])
                 rows["articulation"].append(float(r["articulation"]))
                 rows["agent_span"].append(float(r["agent_span"]))
+                rows["art_box"].append(
+                    [int(v) for v in (r.get("art_box") or [0, 0, 0, 0])]
+                    if len(r.get("art_box") or []) == 4 else [0, 0, 0, 0])
                 if p is None or p["name"].startswith("<"):
                     rows["kind"].append("")
                     rows["name"].append("")
                     rows["site_area"].append(0)
+                    rows["box"].append([0, 0, 0, 0])
                     vecs.append(np.zeros(1152, np.float32))
                 else:
                     rows["kind"].append(p["kind"])
                     rows["name"].append(p["name"])
                     x0, y0, x1, y1 = p["box"]
                     rows["site_area"].append(int((x1 - x0) * (y1 - y0)))
+                    rows["box"].append([int(x0), int(y0), int(x1), int(y1)])
                     if p["name"] not in cache:
                         cache[p["name"]] = np.asarray(
                             _text_vec(p["name"]), np.float32)
@@ -447,6 +460,12 @@ def main():
             "kind": pa.array(rows["kind"]),
             "name": pa.array(rows["name"]),
             "site_area": pa.array(rows["site_area"], pa.int32()),
+            "box": pa.FixedSizeListArray.from_arrays(
+                pa.array(np.array(rows["box"], np.int32).reshape(-1),
+                         pa.int32()), 4),
+            "art_box": pa.FixedSizeListArray.from_arrays(
+                pa.array(np.array(rows["art_box"], np.int32).reshape(-1),
+                         pa.int32()), 4),
             "name_vec": pa.FixedSizeListArray.from_arrays(
                 pa.array(np.ascontiguousarray(
                     V.astype(np.float16)).reshape(-1), pa.float16()),
