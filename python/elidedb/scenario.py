@@ -158,6 +158,78 @@ def _auto_action_support(store, text):
             "support_ratio": round(ratio, 2)}
 
 
+_EVK: dict = {}
+
+# closed-class English -> the transition the sentence asks for. Uniform
+# across queries, dictionary knowledge only.
+_PREPK = (("on top", "put_on"), ("onto", "put_on"), ("into", "put_into"),
+          ("out of", "take_out"), (" in ", "put_into"), (" on ", "put_on"))
+_VERBK = {"open": "open", "opens": "open", "close": "close",
+          "closes": "close", "shut": "close"}
+
+
+def _query_transitions(tl):
+    need = {_VERBK[w] for w in tl.split() if w in _VERBK}
+    if not need:
+        for pat, k in _PREPK:
+            if pat in tl:
+                need.add(k)
+                break
+    if "from the drawer" in tl or "out of" in tl:
+        need = {"take_out"} | (need - {"put_on", "put_into"})
+    return need
+
+
+def _demo_transitions(store, keys):
+    """demo index -> set of transition kinds, cached per table version."""
+    ver = store.table("events").state().version
+    ck = (str(store.dir), ver, "kinds")
+    if ck in _EVK:
+        return _EVK[ck]
+    ev = store.table("events").scan().to_pydict()
+    kidx = {(k[0], k[1]): i for i, k in enumerate(keys)}
+    out = {}
+    for r in range(len(ev["ts"])):
+        i = kidx.get((str(ev["stream"][r]), int(ev["ts"][r])))
+        if i is not None:
+            out.setdefault(i, set()).add(ev["kind"][r])
+    _EVK.clear()
+    _EVK[ck] = out
+    return out
+
+
+def _motion_density(store, keys, fused, k_max):
+    """Fraction of a demo's motion-space neighbours that the cheap
+    ranking already ranks highly. Measured: of a true q04 episode's 10
+    nearest neighbours in motion space, 8.5 are also true (q05: 8.2) -
+    the tightest cluster signal in the store, and unused until now.
+    Appearance neighbourhoods do NOT have this property, which is why
+    diffusing over them was a wash and why IVF cells over them once
+    hid 45 of 46 positives."""
+    if "motion_vectors" not in store.tables():
+        return None
+    ver = store.table("motion_vectors").state().version
+    ck = (str(store.dir), ver, "nn")
+    if ck not in _EVK:
+        from .embeddings import _vec_table
+        tb, V = _vec_table(store, "motion_vectors")
+        V = np.asarray(V, np.float32)
+        em = {}
+        for r, (s_, a_) in enumerate(zip(tb.column("stream").to_pylist(),
+                                         tb.column("ts").to_pylist())):
+            em.setdefault((str(s_), int(a_)), []).append(r)
+        M = np.stack([V[em[(k[0], k[1])]].mean(0) if (k[0], k[1]) in em
+                      else np.zeros(V.shape[1], np.float32) for k in keys])
+        M /= np.linalg.norm(M, axis=1, keepdims=True) + 1e-8
+        S = M @ M.T
+        np.fill_diagonal(S, -9)
+        _EVK[ck] = np.argsort(-S, axis=1)[:, :15]
+    nn = _EVK[ck]
+    top = set(np.argsort(-fused)[:max(k_max, 20)].tolist())
+    return np.array([len(top & set(nn[i].tolist())) / nn.shape[1]
+                     for i in range(len(keys))])
+
+
 def _knee(sorted_desc):
     """Set boundary on the sorted fused curve. The raw largest-drop
     knee cut 183-episode classes to 4 (RRF consensus gives the top few
@@ -485,6 +557,41 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
                 ch["itm"] = zc
         except Exception as e:
             _fail('itm', e)
+
+    # EVENT-STRUCTURE STAGE, self-routed. Two mechanisms measured on
+    # the oracle-cut metric min(yield, prec):
+    #   event filter   q04 0.42 -> 0.57, q05 0.38 -> 0.42, but it
+    #                  DESTROYS q00 0.33 -> 0.07 and q01 0.33 -> 0.22,
+    #                  because their required transition (put_into) is
+    #                  one the extractor assigns rarely and wrongly.
+    #   motion density q04 -> 0.53, and together 0.66 - over the 0.60
+    #                  bar for the first time on any query.
+    # Applied globally the mean FALLS (0.33 -> 0.32); routed, it only
+    # fires where the structure agrees with the ranking. The gate is
+    # unsupervised: if the top candidates the cheap ranking already
+    # likes mostly carry the required transition, the event evidence
+    # and the ranking corroborate each other and the filter is trusted;
+    # if they disagree, the extractor is wrong about this query type
+    # and its opinion is discarded. No labels, no per-query constants.
+    try:
+        if "events" in store.tables():
+            from .itm import _S as _itm_unused        # noqa: F401
+            need = _query_transitions(tl)
+            if need:
+                kinds = _demo_transitions(store, keys)
+                have = np.array([1.0 if (kinds.get(i) or set()) & need
+                                 else 0.0 for i in range(len(keys))])
+                head = np.argsort(-fused)[:max(k_max, 20)]
+                agree = float(have[head].mean())
+                if agree >= 0.35:
+                    fused = fused + 0.5 * have * float(np.std(fused))
+                    ch["evk"] = have
+            dens = _motion_density(store, keys, fused, k_max)
+            if dens is not None:
+                fused = fused + 0.5 * dens * float(np.std(fused))
+                ch["dens"] = dens
+    except Exception as e:
+        _fail('events', e)
 
     # NO-MATCH GATE, self-recognized: map the query onto the action
     # probe's OWN vocabulary by embedding similarity (no hand verb

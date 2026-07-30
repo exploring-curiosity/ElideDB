@@ -553,3 +553,5 @@ so any such number would measure the backend, not the model.
 | 2026-07-30 02:43 | b30f6b4 | k=1.5xsup | 341/768 returned true | mean yield 0.38 | mean prec 0.29 | q00:3/12 q01:7/26 q02:7/21 q03:142/221 q04:85/213 q05:83/224 q07:7/18 q08:7/27 q09:0/3 q10:0/3 |
 | 2026-07-30 03:57 | edf2e69 | k=1.5xsup | 305/805 returned true | mean yield 0.27 | mean prec 0.21 | q00:3/12 q01:4/26 q02:4/21 q03:150/272 q04:67/207 q05:70/216 q07:2/18 q08:5/27 q09:0/3 q10:0/3 |
 | 2026-07-30 03:59 | edf2e69 | k=1.5xsup | 341/768 returned true | mean yield 0.38 | mean prec 0.29 | q00:3/12 q01:7/26 q02:7/21 q03:142/221 q04:85/213 q05:83/224 q07:7/18 q08:7/27 q09:0/3 q10:0/3 |
+| 2026-07-30 05:23 | 8bd9023 | k=1.5xsup | 341/768 returned true | mean yield 0.38 | mean prec 0.29 | q00:3/12 q01:7/26 q02:7/21 q03:142/221 q04:85/213 q05:83/224 q07:7/18 q08:7/27 q09:0/3 q10:0/3 |
+| 2026-07-30 05:50 | 8bd9023 | k=1.5xsup | 415/896 returned true | mean yield 0.42 | mean prec 0.30 | q00:3/12 q01:7/26 q02:7/21 q03:152/244 q04:119/248 q05:113/294 q07:7/18 q08:7/27 q09:0/3 q10:0/3 |
