@@ -581,16 +581,24 @@ def api_dbinternals(key: str, table: str | None = None):
     st = t.state()
 
     # ---- 1. the log: manifest commits, newest last
+    # read the RAW commit files: Table.history() summarises and drops the
+    # removal count, which is the whole point of an op=replace entry.
     log = []
-    for c in t.history():
+    ldir = db.dir / "tables" / table / "_log"
+    for f in sorted(ldir.glob("*.json")) if ldir.is_dir() else []:
+        try:
+            e = json.loads(f.read_text())
+        except Exception:
+            continue
+        add = e.get("add") or []
         log.append({
-            "version": c.get("version"), "op": c.get("op"),
-            "kind": c.get("kind"),
-            "added": len(c.get("add") or []),
-            "removed": len(c.get("remove") or []),
-            "added_rows": c.get("added_rows"),
-            "ts": c.get("ts"),
-            "meta": {k: v for k, v in (c.get("meta") or {}).items()
+            "version": int(f.stem), "op": e.get("op"), "kind": e.get("kind"),
+            "added": len(add),
+            "removed": len(e.get("remove") or []),
+            "added_rows": sum(a.get("rows", 0) for a in add),
+            "added_bytes": sum(a.get("bytes", 0) for a in add),
+            "ts": e.get("ts_utc"),
+            "meta": {k: v for k, v in (e.get("meta") or {}).items()
                      if not isinstance(v, (list, dict))},
         })
 

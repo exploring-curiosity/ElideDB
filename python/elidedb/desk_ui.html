@@ -1352,7 +1352,33 @@ loadStores();
   height:calc(100vh - 118px); min-height:480px; }
 #arch-seg { position:absolute; top:8px; left:12px; z-index:6; }
 #arch-pane-db { position:absolute; inset:44px 0 0 0; overflow:auto;
-  padding:0 14px 24px; }
+  padding:0 14px 24px; background:#11151c; }
+/* never shrink below legibility: scroll the pane instead of scaling the
+   diagram down until the labels are unreadable */
+#db-svg { display:block; width:1400px; min-width:1400px; }
+#db-info { position:sticky; bottom:0; margin-top:8px;
+  background:rgba(13,17,23,.96); border:1px solid var(--line);
+  border-radius:4px; padding:8px 11px; font:11px/1.6 var(--mono);
+  color:var(--dim); max-width:104ch; }
+#db-info b { color:var(--accent); letter-spacing:.06em; }
+text.db-lane { fill:var(--dim); font:600 9.5px var(--mono);
+  letter-spacing:.11em; }
+text.db-t { fill:var(--ink); font:600 10.5px var(--mono); }
+text.db-s { fill:var(--dim); font:9.5px var(--mono); }
+.db-node rect { transition:filter .12s; }
+.db-node:hover rect { filter:brightness(1.55); }
+rect.db-b { stroke-width:1; }
+rect.db-store  { fill:#1d2836; stroke:#7fb0ff; }
+rect.db-meta   { fill:#191d24; stroke:#3a4756; }
+rect.db-table  { fill:#17212c; stroke:#4a6076; }
+rect.db-table.on { fill:#1d3340; stroke:var(--accent); stroke-width:1.6; }
+rect.db-commit { fill:#241f2e; stroke:#a07fd4; }
+rect.db-logsum { fill:#1a1720; stroke:#6b5a86; }
+rect.db-file   { fill:#152430; stroke:#5accb9; }
+rect.db-page   { fill:#13282a; stroke:#5accb9; }
+rect.db-chunk  { fill:#1b2320; stroke:#7f9a6b; }
+rect.db-prune  { fill:#2a2418; stroke:#c99a5b; }
+path.db-link { fill:none; stroke:#4a6076; stroke-width:1; opacity:.5; }
 #arch-pane-model { position:absolute; inset:44px 0 0 0; }
 /* database pane: dense, monospaced, built to be read out loud */
 .dbsec { margin:16px 0 6px; font:600 11px/1.5 var(--mono);
@@ -1445,6 +1471,17 @@ button.mini.on { background:var(--accent); color:#0d1117;
 </style>
 <script>
 let ARCH = null, DBI = null, DBI_TABLE = null;
+
+/* one explanation surface for the model pane, mirroring db-info:
+   click a channel or a stage and read what it is and why it is there */
+function archNote(title, id, note) {
+  const d = $("arch-detail");
+  d.className = "on";
+  d.innerHTML = `<h4>${esc(title)}</h4>` +
+    `<div style="color:#8fa3b8;font:10px var(--mono);margin-bottom:6px">` +
+    `id ${esc(id || "")}</div>` +
+    `<div style="line-height:1.65">${esc(note || "")}</div>`;
+}
 async function loadArch() {
   if (!ARCH) ARCH = await j(`/api/architecture?store=${CUR.key}`);
   drawArch();
@@ -1466,172 +1503,219 @@ async function loadDb(table) {
   drawDb();
 }
 
+/* DATABASE ENGINE, DRAWN. Five lanes left to right, every box sized and
+   populated from THIS store right now: store -> meta files -> tables ->
+   (log commits + parquet files) -> pages -> column chunks. Hover any box
+   for what it is and why it exists. */
+const DB_DOC = {
+  store: ["STORE", "A directory. No server, no daemon, no custom byte "
+    + "format outside the media itself. Everything is Parquet under a "
+    + "transaction log, so another engine can read it directly."],
+  meta: ["META FILE", "Sidecar state next to the tables. Authoritative "
+    + "(_store.json), fitted artifact (_set_weights.json), cache "
+    + "(_vocab.json, grown lazily per new word) or disposable (_cache/, "
+    + "deleting it costs recompute time, never correctness)."],
+  tables: ["TABLES", "One directory per table, each with its OWN commit "
+    + "log. Every table must carry ts (int64 ns) sorted within a file - "
+    + "the single schema law, and what makes time the primary axis."],
+  table: ["TABLE", "State is the fold of its log, not the files in the "
+    + "directory. Height here is proportional to bytes on disk."],
+  log: ["COMMIT LOG", "Append-only JSON commits. Version N is immutable "
+    + "forever (snapshot isolation + time travel), a multi-file load "
+    + "lands as ONE entry (atomicity), and the lock is O_EXCL on the "
+    + "next filename - single writer, many readers, no coordinator."],
+  commit: ["COMMIT", "One manifest entry: op, schema, and the file list "
+    + "with zone maps. op=replace removes the old file set in the same "
+    + "commit that adds the new one - it exists because appending a "
+    + "rebuild once doubled the events table to 16,526 rows silently."],
+  file: ["PARQUET FILE", "Immutable, never edited in place. Its "
+    + "min_ts/max_ts live in the COMMIT ENTRY, so a time-window query "
+    + "drops the whole file before opening a single footer. That is "
+    + "prune layer 1, and it costs zero I/O against the data."],
+  page: ["ROW GROUP (page)", "A page carries its own ts statistics, so "
+    + "groups outside the window are never decompressed - prune layer "
+    + "2. Sized by BYTES (8 MB target) not by row count, or a 1152-d "
+    + "vector table emits groups nobody can skip inside. This is the "
+    + "random-access vs compression tension the Lance paper is about."],
+  chunk: ["COLUMN CHUNK", "Each column is stored separately inside the "
+    + "page, so a projection touches only the columns it asked for. "
+    + "Width here is the compressed size."],
+  prune: ["PUSHDOWN, EXECUTED", "A real scan run just now. bytes_touched "
+    + "is charged as footer + overlapping row groups + projected column "
+    + "chunks - the same arithmetic the reader performs, not an "
+    + "estimate. Every read goes through the counter, which is what "
+    + "makes the elision number honest."],
+  media: ["MEDIA", "Store-managed renditions. Raw sources are NEVER "
+    + "copied in: a frames row whose source starts with @ is managed, "
+    + "anything else is an external reference-in-place. The store is an "
+    + "index over your video, not a second copy of it."],
+  frames: ["FRAME INDEX", "Not frames - (ts, byte_offset, packet_size, "
+    + "keyframe, codec, source, stream), one row per frame pointing INTO "
+    + "a media file. Pixels are produced last, from byte ranges, only "
+    + "for rows that survived every prune. Late materialization."],
+};
+
+function dbInfo(kind, extra) {
+  const d = DB_DOC[kind]; if (!d) return;
+  $("db-info").innerHTML = `<b>${d[0]}</b>${extra ? " · " + extra : ""}
+    <div class="rule"></div>${d[1]}`;
+}
+
 function drawDb() {
   const d = DBI, P = d.prune || {};
-  const pct = (a, b) => b ? (100 * a / b) : 0;
-  const bar = (v, max, cold) =>
-    `<span class="dbbar${cold ? " cold" : ""}" style="width:${
-      Math.max(1, Math.round(60 * (max ? v / max : 0)))}px"></span>`;
+  const NS = "http://www.w3.org/2000/svg";
+  $("arch-pane-db").innerHTML =
+    `<svg id="db-svg"><g id="db-cam"></g></svg><div id="db-info"></div>`;
+  const cam = $("db-cam");
+  const el = (t, a, parent) => { const e = document.createElementNS(NS, t);
+    for (const k in a) e.setAttribute(k, a[k]);
+    (parent || cam).appendChild(e); return e; };
+  const txt = (x, y, s, cls, parent, anchor) => {
+    const e = el("text", { x, y, class: cls }, parent);
+    if (anchor) e.setAttribute("text-anchor", anchor);
+    e.textContent = s; return e; };
+  const link = (x1, y1, x2, y2) => el("path", { class: "db-link",
+    d: `M${x1},${y1} C${(x1 + x2) / 2},${y1} ${(x1 + x2) / 2},${y2} ${x2},${y2}` });
+  const box = (x, y, w, h, cls, kind, extra, onclick) => {
+    const g = el("g", { class: "db-node" });
+    const r = el("rect", { x, y, width: w, height: h, rx: 3, class: cls }, g);
+    r.addEventListener("mouseenter", () => dbInfo(kind, extra));
+    if (onclick) { r.style.cursor = "pointer"; r.addEventListener("click", onclick); }
+    return g;
+  };
+  const LX = [30, 250, 520, 800, 1080], W = [170, 210, 230, 230, 260];
 
-  /* ---- 0. what a store IS on disk */
-  let h = `<div class="dbsec">1 · Physical layout</div>
-  <div class="dbnote">A store is a directory. Every table is Parquet under
-  its OWN append-only commit log. There is no server and no custom byte
-  format: another engine can read these files directly, which is the point
-  of an open format.</div>
-  <table class="dbt"><tr><th>path</th><th>what it is</th>
-  <th>authority</th></tr>
-  <tr><td class="dbpath">_store.json</td><td>format id, name, created</td>
-    <td>authoritative</td></tr>
-  <tr><td class="dbpath">tables/&lt;t&gt;/_log/*.json</td>
-    <td>the commit log — the table IS the fold of this</td>
-    <td>authoritative</td></tr>
-  <tr><td class="dbpath">tables/&lt;t&gt;/part-*.parquet</td>
-    <td>immutable data files, never edited in place</td>
-    <td>data</td></tr>
-  <tr><td class="dbpath">media/</td>
-    <td>store-managed renditions; <b>raw sources are never copied in</b></td>
-    <td>data</td></tr>
-  <tr><td class="dbpath">_set_weights.json</td>
-    <td>fitted selection weights (+ .prev rotation, .loqo holdout)</td>
-    <td>fitted artifact</td></tr>
-  <tr><td class="dbpath">_vocab.json</td>
-    <td>corpus-attested vocabulary, grown lazily per new word</td>
-    <td>cache</td></tr>
-  <tr><td class="dbpath">_cache/</td>
-    <td>disposable; deleting costs recompute time, never correctness</td>
-    <td>disposable</td></tr>
-  </table>
-  <div class="dbnote">Files present in this store's root:
-  ${(d.store_files || []).map(f => `<span class="dbpath">${esc(f)}</span>`)
-    .join(" ") || "—"}</div>`;
+  /* lane 0 — store + its meta files */
+  txt(LX[0], 26, "STORE", "db-lane");
+  let g = box(LX[0], 40, W[0], 46, "db-b db-store", "store", d.store);
+  txt(LX[0] + 10, 60, d.store, "db-t", g);
+  txt(LX[0] + 10, 76, `${d.tables.length} tables`, "db-s", g);
+  let y = 104;
+  txt(LX[0], y - 8, "META FILES", "db-lane");
+  const metas = (d.store_files || []).slice(0, 8);
+  metas.forEach(f => {
+    const gg = box(LX[0], y, W[0], 20, "db-b db-meta", "meta", f);
+    txt(LX[0] + 8, y + 14, f, "db-s", gg);
+    y += 24;
+  });
+  const gm = box(LX[0], y, W[0], 20, "db-b db-meta", "media", "media/");
+  txt(LX[0] + 8, y + 14, "media/", "db-s", gm);
 
-  /* ---- 1. table picker + headline */
-  h += `<div class="dbsec">2 · Table under inspection</div>
-  <div class="dbnote">Every table must carry <b>ts (int64 ns), sorted
-  within a file</b>. That is the only schema law, and it is what makes
-  time the primary axis: alignment becomes a query parameter instead of a
-  storage commitment.</div>
-  <div style="margin:6px 0 10px">` +
-    d.tables.map(t => `<button class="mini${t === d.table ? " on" : ""}"
-      onclick="loadDb('${t}')">${esc(t)}</button>`).join(" ") + `</div>
-  <div class="dbkpi">
-    <div><b>v${d.version}</b>log version</div>
-    <div><b>${fmtN(d.rows)}</b>rows</div>
-    <div><b>${fmtB(d.bytes)}</b>bytes</div>
-    <div><b>${d.n_files}</b>parquet files</div>
-    <div><b>${d.n_row_groups}</b>row groups (pages)</div>
-    <div><b>${d.log_total}</b>commits</div>
-  </div>`;
+  /* lane 1 — tables, height proportional to bytes */
+  txt(LX[1], 26, "TABLES", "db-lane");
+  const nodes = ((ARCH && ARCH.nodes) || []).filter(n => n.rows != null);
+  const maxB = Math.max(...nodes.map(n => n.bytes || 0), 1);
+  let ty = 40, tpos = {};
+  nodes.forEach(n => {
+    const h = 20 + Math.round(26 * Math.sqrt((n.bytes || 0) / maxB));
+    const on = n.id === d.table;
+    const gg = box(LX[1], ty, W[1], h, "db-b db-table" + (on ? " on" : ""),
+      n.id === "frames" ? "frames" : "table",
+      `${n.id} · ${fmtN(n.rows)} rows · ${fmtB(n.bytes || 0)}`,
+      () => loadDb(n.id));
+    txt(LX[1] + 8, ty + 14, n.id, "db-t", gg);
+    if (h > 30) txt(LX[1] + 8, ty + 28,
+      `${fmtN(n.rows)} rows · ${fmtB(n.bytes || 0)}`, "db-s", gg);
+    txt(LX[1] + W[1] - 8, ty + 14, fmtB(n.bytes || 0), "db-s", gg, "end");
+    tpos[n.id] = ty + h / 2;
+    ty += h + 5;
+  });
+  link(LX[0] + W[0], 63, LX[1], (tpos[d.table] ?? 60));
 
-  /* ---- 2. the log = manifests */
-  h += `<div class="dbsec">3 · Transaction log — the manifest chain</div>
-  <div class="dbnote">A table's state is <b>not</b> the files in the
-  directory; it is the fold of these commits. That buys snapshot isolation
-  (version N is immutable forever), atomic multi-file commits (the lock is
-  O_EXCL on the next filename — single writer, many readers), and
-  schema-on-log. Each commit carries its own file list <b>with zone
-  maps</b>, which is what makes layer-1 pruning free.
-  Directory: <span class="dbpath">${esc(d.log_dir)}</span></div>
-  <table class="dbt"><tr><th class="n">version</th><th>op</th>
-    <th class="n">+files</th><th class="n">−files</th>
-    <th class="n">rows added</th><th>meta</th></tr>` +
-    d.log.slice().reverse().map(c => `<tr>
-      <td class="n">${c.version}</td><td>${esc(c.op || "")}</td>
-      <td class="n">${c.added}</td><td class="n">${c.removed || ""}</td>
-      <td class="n">${c.added_rows == null ? "" : fmtN(c.added_rows)}</td>
-      <td style="color:var(--dim)">${esc(Object.entries(c.meta || {})
-        .map(([k, v]) => k + "=" + v).join(" ").slice(0, 60))}</td></tr>`)
-      .join("") + `</table>
-  <div class="dbnote"><b>op=replace</b> exists because derived tables
-  (events, answers2) are recomputed from the frames: appending a rebuild
-  silently doubled the events table once — 8,263 → 16,526 rows, every demo
-  holding both the old and the new typing. replace removes the old file
-  set in the SAME commit that adds the new one.</div>`;
+  /* lane 2 — the selected table's log commits, then its files */
+  const cx = LX[2];
+  txt(cx, 26, "COMMIT LOG (manifest chain)", "db-lane");
+  txt(cx, 36, d.log_dir, "db-s");
+  let cy = 48;
+  const commits = d.log.slice().reverse();
+  commits.forEach(c => {
+    const gg = box(cx, cy, W[2], 26, "db-b db-commit", "commit",
+      `v${c.version} ${c.op} +${c.added}${c.removed ? " −" + c.removed : ""}`);
+    txt(cx + 8, cy + 12, `v${c.version}  ${c.op}`, "db-t", gg);
+    txt(cx + 8, cy + 22,
+      `+${c.added} file${c.added === 1 ? "" : "s"}` +
+      (c.removed ? ` · −${c.removed}` : "") +
+      (c.added_rows ? ` · ${fmtN(c.added_rows)} rows` : ""), "db-s", gg);
+    cy += 30;
+  });
+  const gl = box(cx, cy + 4, W[2], 22, "db-b db-logsum", "log",
+    `${d.log_total} commits · state = fold of these`);
+  txt(cx + 8, cy + 19, `state = fold of ${d.log_total} commits`, "db-s", gl);
+  link(LX[1] + W[1], (tpos[d.table] ?? 60), cx, 61);
 
-  /* ---- 3. files + zone maps */
-  const maxB = Math.max(...d.files.map(f => f.bytes), 1);
-  h += `<div class="dbsec">4 · Files and their zone maps (prune layer 1)
-  </div>
-  <div class="dbnote">min_ts/max_ts live in the COMMIT ENTRY, so a
-  time-window query drops whole files before opening a single Parquet
-  footer. Zero I/O against the data to do it.</div>
-  <table class="dbt"><tr><th>file</th><th class="n">rows</th>
-    <th class="n">bytes</th><th class="n">row groups</th>
-    <th class="n">footer</th><th>ts range (zone map)</th></tr>` +
-    d.files.map(f => `<tr><td class="dbpath">${esc(f.path.slice(0, 22))}</td>
-      <td class="n">${fmtN(f.rows)}</td>
-      <td class="n">${bar(f.bytes, maxB)} ${fmtB(f.bytes)}</td>
-      <td class="n">${f.row_groups ?? "—"}</td>
-      <td class="n">${f.footer_bytes ? fmtB(f.footer_bytes) : "—"}</td>
-      <td style="color:var(--dim)">${fmtTs(f.min_ts)} → ${fmtTs(f.max_ts)}
-      </td></tr>`).join("") + `</table>`;
+  cy += 52;
+  txt(cx, cy - 8, "PARQUET FILES · zone map = prune 1", "db-lane");
+  const fmax = Math.max(...d.files.map(f => f.bytes), 1);
+  const fpos = [];
+  d.files.forEach(f => {
+    const h = 24 + Math.round(22 * Math.sqrt(f.bytes / fmax));
+    const gg = box(cx, cy, W[2], h, "db-b db-file", "file",
+      `${f.path.slice(0, 18)} · ${fmtN(f.rows)} rows · ${fmtB(f.bytes)} · ` +
+      `${f.row_groups} pages · footer ${fmtB(f.footer_bytes || 0)}`);
+    txt(cx + 8, cy + 14, f.path.slice(0, 20), "db-t", gg);
+    txt(cx + 8, cy + 26,
+      `${fmtN(f.rows)} rows · ${fmtB(f.bytes)} · ${f.row_groups} pages`,
+      "db-s", gg);
+    txt(cx + 8, cy + (h > 40 ? 38 : 26),
+      h > 40 ? `ts ${fmtTs(f.min_ts)} → ${fmtTs(f.max_ts)}` : "", "db-s", gg);
+    fpos.push(cy + h / 2);
+    cy += h + 6;
+  });
 
-  /* ---- 4. pages */
-  const maxRG = Math.max(...(d.pages || []).map(p => p.bytes), 1);
-  h += `<div class="dbsec">5 · Pages — row groups and column chunks
-  (prune layer 2)</div>
-  <div class="dbnote">Inside a surviving file, each row group carries its
-  own ts statistics, so groups outside the window are never decompressed;
-  and each column is a separate chunk, so columns outside the projection
-  are never touched. Row groups are sized by BYTES (8 MB target), not by a
-  fixed row count — otherwise a 1152-d vector table emits groups nobody
-  can skip inside. This is the central random-access-vs-compression
-  tension the Lance paper is about.</div>
-  <table class="dbt"><tr><th>file</th><th class="n">group</th>
-    <th class="n">rows</th><th class="n">bytes</th>
-    <th class="n">cols</th><th>largest column chunks</th></tr>` +
-    (d.pages || []).map(p => `<tr>
-      <td class="dbpath">${esc(p.file)}</td><td class="n">${p.group}</td>
-      <td class="n">${fmtN(p.rows)}</td>
-      <td class="n">${bar(p.bytes, maxRG)} ${fmtB(p.bytes)}</td>
-      <td class="n">${p.n_columns}</td>
-      <td style="color:var(--dim)">${p.columns.map(c =>
-        esc(c.name) + " " + fmtB(c.compressed)).join(" · ")}</td>
-      </tr>`).join("") + `</table>`;
+  /* lane 3 — pages */
+  const px = LX[3];
+  txt(px, 26, "PAGES (row groups) · prune 2", "db-lane");
+  txt(LX[4], 26, "COLUMN CHUNKS · projection", "db-lane");
+  let py = 40;
+  const pmax = Math.max(...(d.pages || []).map(p => p.bytes), 1);
+  (d.pages || []).slice(0, 14).forEach((p, i) => {
+    const h = 22 + Math.round(24 * Math.sqrt(p.bytes / pmax));
+    const gg = box(px, py, W[3], h, "db-b db-page", "page",
+      `group ${p.group} · ${fmtN(p.rows)} rows · ${fmtB(p.bytes)} · ` +
+      `${p.n_columns} columns`);
+    txt(px + 8, py + 14, `group ${p.group}`, "db-t", gg);
+    txt(px + 8, py + 26, `${fmtN(p.rows)} rows · ${fmtB(p.bytes)}`, "db-s", gg);
+    txt(px + W[3] - 8, py + 14, `${p.n_columns} cols`, "db-s", gg, "end");
+    if (i === 0 && fpos.length) link(cx + W[2], fpos[0], px, py + h / 2);
+    /* lane 4 — this page's column chunks, only for the first few */
+    if (i < 6) {
+      let qx = LX[4], qy = py;
+      p.columns.slice(0, 4).forEach(c => {
+        const w = Math.max(46, Math.round(W[4] *
+          Math.sqrt(c.compressed / Math.max(p.bytes, 1))));
+        const gg2 = box(qx, qy, w, 15, "db-b db-chunk", "chunk",
+          `${c.name} · ${fmtB(c.compressed)} compressed of ` +
+          `${fmtB(c.uncompressed)} · ${(c.encodings || []).join(", ")}`);
+        txt(qx + 5, qy + 11, `${c.name} ${fmtB(c.compressed)}`, "db-s", gg2);
+        qy += 17;
+      });
+      if (p.columns.length) link(px + W[3], py + h / 2, LX[4], py + 7);
+    }
+    py += h + 6;
+  });
 
-  /* ---- 5. pruning, executed */
+  /* pushdown result, as a measured badge */
   if (P && !P.error) {
-    h += `<div class="dbsec">6 · Predicate pushdown, executed just now
-    </div>
-    <div class="dbnote">A real scan over one row group's ts range on this
-    table. bytes_touched is charged as footer + only the overlapping row
-    groups + only the projected column chunks — the same arithmetic the
-    reader performs, not an estimate. This is the elision metric, and it
-    is honest because every read goes through the counter.</div>
-    <div class="dbkpi">
-      <div><b>${P.files_touched}/${P.files_total}</b>files touched</div>
-      <div><b>${fmtB(P.bytes_touched)}</b>bytes read</div>
-      <div><b>${fmtB(P.corpus_bytes)}</b>table bytes</div>
-      <div><b>${P.elided_pct}%</b>elided</div>
-      <div><b>${fmtN(P.rows_returned)}</b>rows returned</div>
-    </div>
-    <div class="dbnote">${d.n_row_groups <= 1
-      ? "This table has ONE row group, so layer 2 has nothing to prune — "
-        + "the honest result is ~0% and the engine says so rather than "
-        + "inventing a saving."
-      : "Elision here comes from row-group skipping; it rises with the "
-        + "number of groups, which is why row-group sizing is the dial "
-        + "that matters."}</div>`;
+    const by = Math.max(py, cy) + 16;
+    const gg = box(px, by, W[3] + W[4] - 40, 58, "db-b db-prune", "prune",
+      `${P.files_touched}/${P.files_total} files · ` +
+      `${fmtB(P.bytes_touched)} of ${fmtB(P.corpus_bytes)}`);
+    txt(px + 10, by + 18, "PREDICATE PUSHDOWN · executed now", "db-t", gg);
+    txt(px + 10, by + 34,
+      `${P.files_touched}/${P.files_total} files · ${fmtB(P.bytes_touched)}` +
+      ` read of ${fmtB(P.corpus_bytes)} · ${fmtN(P.rows_returned)} rows`,
+      "db-s", gg);
+    txt(px + 10, by + 50, `${P.elided_pct}% elided` +
+      (d.n_row_groups <= 1 ? "  (one row group: nothing to prune)" : ""),
+      "db-t", gg);
   }
 
-  /* ---- 6. late materialization */
-  h += `<div class="dbsec">7 · Late materialization — pixels come last
-  </div>
-  <div class="dbnote">The <b>frames</b> table is a frame INDEX, not
-  frames: (ts, byte_offset, packet_size, keyframe, codec, source, stream).
-  One row per frame, pointing into a media file. A query prunes on time,
-  then structure, then semantics — and only the survivors are decoded,
-  from byte ranges. Everything before that step is metadata arithmetic.
-  <b>source</b> starting with @ means store-managed; anything else is an
-  external reference-in-place, so the raw video is never copied into the
-  store. This is C-Store's late materialization applied to video.</div>
-  <div class="dbsec">8 · Schema of ${esc(d.table)}</div>
-  <table class="dbt">` + d.schema.map(s =>
-    `<tr><td style="color:var(--dim)">${esc(s)}</td></tr>`).join("")
-    + `</table>`;
-
-  $("arch-pane-db").innerHTML = h;
+  const H = Math.max(py, cy, y) + 120;
+  const svg = $("db-svg");
+  svg.setAttribute("viewBox", `0 0 1400 ${H}`);
+  svg.setAttribute("preserveAspectRatio", "xMinYMin meet");
+  svg.style.height = H + "px";
+  dbInfo("store", d.store);
 }
 function archLane(n) {
   if (n.kind === "media") return 0;
@@ -1729,10 +1813,14 @@ function drawArch() {
   const CH_W = 190, ST_X = PIPE_X + CH_W + 90;
   ARCH.channels.forEach(c => {
     const g = el("g", { transform: `translate(${PIPE_X},${cy})` });
-    el("rect", { width: CH_W, height: 34, rx: 3, class: "an-chan" }, g);
+    const cr = el("rect", { width: CH_W, height: 34, rx: 3,
+      class: "an-chan" }, g);
     txt(10, 14, c.label, "an-chan-t", g);
-    txt(10, 26, c.note, "an-chan-n", g);
+    txt(10, 26, (c.note || "").slice(0, 46), "an-chan-n", g);
     txt(CH_W - 8, 14, c.id, "an-kind", g, "end");
+    // click any block for the full explanation, same as the DB pane
+    cr.style.cursor = "pointer";
+    cr.onclick = () => archNote("CHANNEL · " + c.label, c.id, c.note);
     const y = cy + 17;
     const d = `M${PIPE_X + CH_W},${y} C${PIPE_X + CH_W + 45},${y} ` +
               `${PIPE_X + CH_W + 45},${92} ${ST_X},${92}`;
@@ -1750,9 +1838,14 @@ function drawArch() {
   let prev = null;
   ARCH.pipeline.forEach(p => {
     const g = el("g", { transform: `translate(${ST_X},${sy})` });
-    el("rect", { width: 150, height: 44, rx: 3, class: "an-stage" }, g);
+    const sr = el("rect", { width: 150, height: 44, rx: 3,
+      class: "an-stage" }, g);
     txt(10, 18, p.label, "an-chan-t", g);
-    txt(10, 32, stageNote[p.id] || p.note, "an-chan-n", g);
+    txt(10, 32, (stageNote[p.id] || p.note || "").slice(0, 26),
+        "an-chan-n", g);
+    sr.style.cursor = "pointer";
+    sr.onclick = () => archNote("STAGE · " + p.label, p.id,
+                                stageNote[p.id] || p.note);
     if (prev != null) {
       const x = ST_X + 75;
       const d = `M${x},${prev + 44} L${x},${sy}`;
