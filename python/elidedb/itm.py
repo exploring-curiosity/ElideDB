@@ -25,6 +25,17 @@ Two measurements decide the shape of this module:
   corpus, which is L7 ("ITM is evidence inside a candidate set, not
   authority over the corpus") arrived at from the cost side.
 
+ITM IS A STAGE, NOT A CHANNEL — and that distinction was measured, not
+chosen. Making it a weighted RRF voter and refitting cost 0.38 -> 0.27
+for two compounding reasons: RRF converts every channel to RANKS, which
+throws away the logit margin's scale, and that scale is where the
+cross-encoder's separation lives (the 0.40 offline number came from
+adding z-scores, not ranks); and the k-ladder refit then optimized the
+ladder mean away from the 1.5x-support operating point the product
+metric uses. So ITM stays a rerank STAGE alongside NMS and the
+confidence cut - stages the fitter switches on and off rather than
+weights - and the fit models it as such.
+
 The cache is content-addressed by (episode, model) and capped; deleting
 it costs time, never correctness.
 """
