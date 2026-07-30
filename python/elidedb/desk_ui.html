@@ -1368,16 +1368,19 @@ text.db-s { fill:var(--dim); font:9.5px var(--mono); }
 .db-node rect { transition:filter .12s; }
 .db-node:hover rect { filter:brightness(1.55); }
 rect.db-b { stroke-width:1; }
-rect.db-store  { fill:#1d2836; stroke:#7fb0ff; }
-rect.db-meta   { fill:#191d24; stroke:#3a4756; }
-rect.db-table  { fill:#17212c; stroke:#4a6076; }
-rect.db-table.on { fill:#1d3340; stroke:var(--accent); stroke-width:1.6; }
-rect.db-commit { fill:#241f2e; stroke:#a07fd4; }
-rect.db-logsum { fill:#1a1720; stroke:#6b5a86; }
-rect.db-file   { fill:#152430; stroke:#5accb9; }
-rect.db-page   { fill:#13282a; stroke:#5accb9; }
-rect.db-chunk  { fill:#1b2320; stroke:#7f9a6b; }
+rect.db-l0 { fill:#10161f; stroke:#3a4756; }        /* lake  */
+rect.db-l1 { fill:#131b26; stroke:#4a6076; }        /* store */
+rect.db-l2 { fill:#16212c; stroke:#7fb0ff; }        /* table */
+rect.db-l3 { fill:#152430; stroke:#5accb9; }        /* file  */
+rect.db-l4 { fill:#13282a; stroke:#5accb9; }        /* rowgrp*/
+rect.db-l5 { fill:#1b2320; stroke:#7f9a6b; }        /* chunk */
+rect.db-l6 { fill:#222417; stroke:#b0a85f; }        /* page  */
+rect.db-l7 { fill:#2a2418; stroke:#c99a5b; }        /* value */
+rect.db-commitband { fill:#241f2e; stroke:#a07fd4; }
+rect.db-footerband { fill:#1a2733; stroke:#7fb0ff; stroke-dasharray:3 2; }
 rect.db-prune  { fill:#2a2418; stroke:#c99a5b; }
+#db-head { padding:4px 0 8px; }
+#db-info .mk { color:#a07fd4; }
 path.db-link { fill:none; stroke:#4a6076; stroke-width:1; opacity:.5; }
 #arch-pane-model { position:absolute; inset:44px 0 0 0; }
 /* database pane: dense, monospaced, built to be read out loud */
@@ -1562,10 +1565,12 @@ function dbInfo(kind, extra) {
 }
 
 function drawDb() {
-  const d = DBI, P = d.prune || {};
+  const d = DBI, P = d.prune || {}, L = d.ladder || [];
+  const by = {}; L.forEach(x => by[x.id] = x);
   const NS = "http://www.w3.org/2000/svg";
   $("arch-pane-db").innerHTML =
-    `<svg id="db-svg"><g id="db-cam"></g></svg><div id="db-info"></div>`;
+    `<div id="db-head"></div><svg id="db-svg"><g id="db-cam"></g></svg>
+     <div id="db-info"></div>`;
   const cam = $("db-cam");
   const el = (t, a, parent) => { const e = document.createElementNS(NS, t);
     for (const k in a) e.setAttribute(k, a[k]);
@@ -1574,148 +1579,100 @@ function drawDb() {
     const e = el("text", { x, y, class: cls }, parent);
     if (anchor) e.setAttribute("text-anchor", anchor);
     e.textContent = s; return e; };
-  const link = (x1, y1, x2, y2) => el("path", { class: "db-link",
-    d: `M${x1},${y1} C${(x1 + x2) / 2},${y1} ${(x1 + x2) / 2},${y2} ${x2},${y2}` });
-  const box = (x, y, w, h, cls, kind, extra, onclick) => {
-    const g = el("g", { class: "db-node" });
-    const r = el("rect", { x, y, width: w, height: h, rx: 3, class: cls }, g);
-    r.addEventListener("mouseenter", () => dbInfo(kind, extra));
-    if (onclick) { r.style.cursor = "pointer"; r.addEventListener("click", onclick); }
-    return g;
+
+  /* table picker */
+  $("db-head").innerHTML = d.tables.map(t =>
+    `<button class="mini${t === d.table ? " on" : ""}"
+      onclick="loadDb('${t}')">${esc(t)}</button>`).join(" ");
+
+  /* CONTAINMENT. Each rung physically encloses the next, because that
+     is the actual relationship: a value lives in a page, which lives in
+     a column chunk, which lives in a row group, which lives in a file,
+     which a commit lists, which a table folds, which a store holds. */
+  const W = 1400, PAD = 21, HEAD = 30;
+  const levels = ["lake", "store", "table", "file", "rowgroup",
+                  "chunk", "page", "value"];
+  const hover = (r, id) => {
+    r.addEventListener("mouseenter", () => {
+      const x = by[id]; if (!x) return;
+      $("db-info").innerHTML =
+        `<b>${esc(x.label)}</b> &nbsp;<span style="color:var(--ink)">
+         ${esc(x.n)}</span> &nbsp;<span>${esc(x.sub)}</span>
+         <div class="rule"></div>
+         <div><span class="mk">metadata:</span> ${esc(x.meta)}</div>
+         <div style="margin-top:5px">${esc(x.why)}</div>`;
+    });
   };
-  const LX = [30, 250, 520, 800, 1080], W = [170, 210, 230, 230, 260];
 
-  /* lane 0 — store + its meta files */
-  txt(LX[0], 26, "STORE", "db-lane");
-  let g = box(LX[0], 40, W[0], 46, "db-b db-store", "store", d.store);
-  txt(LX[0] + 10, 60, d.store, "db-t", g);
-  txt(LX[0] + 10, 76, `${d.tables.length} tables`, "db-s", g);
-  let y = 104;
-  txt(LX[0], y - 8, "META FILES", "db-lane");
-  const metas = (d.store_files || []).slice(0, 8);
-  metas.forEach(f => {
-    const gg = box(LX[0], y, W[0], 20, "db-b db-meta", "meta", f);
-    txt(LX[0] + 8, y + 14, f, "db-s", gg);
-    y += 24;
-  });
-  const gm = box(LX[0], y, W[0], 20, "db-b db-meta", "media", "media/");
-  txt(LX[0] + 8, y + 14, "media/", "db-s", gm);
-
-  /* lane 1 — tables, height proportional to bytes */
-  txt(LX[1], 26, "TABLES", "db-lane");
-  const nodes = ((ARCH && ARCH.nodes) || []).filter(n => n.rows != null);
-  const maxB = Math.max(...nodes.map(n => n.bytes || 0), 1);
-  let ty = 40, tpos = {};
-  nodes.forEach(n => {
-    const h = 20 + Math.round(26 * Math.sqrt((n.bytes || 0) / maxB));
-    const on = n.id === d.table;
-    const gg = box(LX[1], ty, W[1], h, "db-b db-table" + (on ? " on" : ""),
-      n.id === "frames" ? "frames" : "table",
-      `${n.id} · ${fmtN(n.rows)} rows · ${fmtB(n.bytes || 0)}`,
-      () => loadDb(n.id));
-    txt(LX[1] + 8, ty + 14, n.id, "db-t", gg);
-    if (h > 30) txt(LX[1] + 8, ty + 28,
-      `${fmtN(n.rows)} rows · ${fmtB(n.bytes || 0)}`, "db-s", gg);
-    txt(LX[1] + W[1] - 8, ty + 14, fmtB(n.bytes || 0), "db-s", gg, "end");
-    tpos[n.id] = ty + h / 2;
-    ty += h + 5;
-  });
-  link(LX[0] + W[0], 63, LX[1], (tpos[d.table] ?? 60));
-
-  /* lane 2 — the selected table's log commits, then its files */
-  const cx = LX[2];
-  txt(cx, 26, "COMMIT LOG (manifest chain)", "db-lane");
-  txt(cx, 36, d.log_dir, "db-s");
-  let cy = 48;
-  const commits = d.log.slice().reverse();
-  commits.forEach(c => {
-    const gg = box(cx, cy, W[2], 26, "db-b db-commit", "commit",
-      `v${c.version} ${c.op} +${c.added}${c.removed ? " −" + c.removed : ""}`);
-    txt(cx + 8, cy + 12, `v${c.version}  ${c.op}`, "db-t", gg);
-    txt(cx + 8, cy + 22,
-      `+${c.added} file${c.added === 1 ? "" : "s"}` +
-      (c.removed ? ` · −${c.removed}` : "") +
-      (c.added_rows ? ` · ${fmtN(c.added_rows)} rows` : ""), "db-s", gg);
-    cy += 30;
-  });
-  const gl = box(cx, cy + 4, W[2], 22, "db-b db-logsum", "log",
-    `${d.log_total} commits · state = fold of these`);
-  txt(cx + 8, cy + 19, `state = fold of ${d.log_total} commits`, "db-s", gl);
-  link(LX[1] + W[1], (tpos[d.table] ?? 60), cx, 61);
-
-  cy += 52;
-  txt(cx, cy - 8, "PARQUET FILES · zone map = prune 1", "db-lane");
-  const fmax = Math.max(...d.files.map(f => f.bytes), 1);
-  const fpos = [];
-  d.files.forEach(f => {
-    const h = 24 + Math.round(22 * Math.sqrt(f.bytes / fmax));
-    const gg = box(cx, cy, W[2], h, "db-b db-file", "file",
-      `${f.path.slice(0, 18)} · ${fmtN(f.rows)} rows · ${fmtB(f.bytes)} · ` +
-      `${f.row_groups} pages · footer ${fmtB(f.footer_bytes || 0)}`);
-    txt(cx + 8, cy + 14, f.path.slice(0, 20), "db-t", gg);
-    txt(cx + 8, cy + 26,
-      `${fmtN(f.rows)} rows · ${fmtB(f.bytes)} · ${f.row_groups} pages`,
-      "db-s", gg);
-    txt(cx + 8, cy + (h > 40 ? 38 : 26),
-      h > 40 ? `ts ${fmtTs(f.min_ts)} → ${fmtTs(f.max_ts)}` : "", "db-s", gg);
-    fpos.push(cy + h / 2);
-    cy += h + 6;
+  const N = levels.length;
+  const innerH = 46;
+  const H = innerH + 2 * N * 0 + N * (HEAD + 12) + 30;
+  let bandY = [];
+  levels.forEach((id, i) => {
+    const x = PAD + i * PAD, w = W - 2 * (PAD + i * PAD);
+    const y = 14 + i * (HEAD + 6);
+    const h = H - y - (i * 6) - 14;
+    const g = el("g", { class: "db-node" });
+    const r = el("rect", { x, y, width: w, height: h, rx: 4,
+      class: "db-b db-l" + i }, g);
+    hover(r, id);
+    const it = by[id] || {};
+    txt(x + 11, y + 19, it.label || id.toUpperCase(), "db-t", g);
+    txt(x + w - 11, y + 19, `${it.n || ""}   ${it.sub || ""}`,
+        "db-s", g, "end");
+    bandY.push({ x, y, w, h });
   });
 
-  /* lane 3 — pages */
-  const px = LX[3];
-  txt(px, 26, "PAGES (row groups) · prune 2", "db-lane");
-  txt(LX[4], 26, "COLUMN CHUNKS · projection", "db-lane");
-  let py = 40;
-  const pmax = Math.max(...(d.pages || []).map(p => p.bytes), 1);
-  (d.pages || []).slice(0, 14).forEach((p, i) => {
-    const h = 22 + Math.round(24 * Math.sqrt(p.bytes / pmax));
-    const gg = box(px, py, W[3], h, "db-b db-page", "page",
-      `group ${p.group} · ${fmtN(p.rows)} rows · ${fmtB(p.bytes)} · ` +
-      `${p.n_columns} columns`);
-    txt(px + 8, py + 14, `group ${p.group}`, "db-t", gg);
-    txt(px + 8, py + 26, `${fmtN(p.rows)} rows · ${fmtB(p.bytes)}`, "db-s", gg);
-    txt(px + W[3] - 8, py + 14, `${p.n_columns} cols`, "db-s", gg, "end");
-    if (i === 0 && fpos.length) link(cx + W[2], fpos[0], px, py + h / 2);
-    /* lane 4 — this page's column chunks, only for the first few */
-    if (i < 6) {
-      let qx = LX[4], qy = py;
-      p.columns.slice(0, 4).forEach(c => {
-        const w = Math.max(46, Math.round(W[4] *
-          Math.sqrt(c.compressed / Math.max(p.bytes, 1))));
-        const gg2 = box(qx, qy, w, 15, "db-b db-chunk", "chunk",
-          `${c.name} · ${fmtB(c.compressed)} compressed of ` +
-          `${fmtB(c.uncompressed)} · ${(c.encodings || []).join(", ")}`);
-        txt(qx + 5, qy + 11, `${c.name} ${fmtB(c.compressed)}`, "db-s", gg2);
-        qy += 17;
-      });
-      if (p.columns.length) link(px + W[3], py + h / 2, LX[4], py + 7);
-    }
-    py += h + 6;
-  });
+  /* the two things that hang OFF the ladder rather than inside it:
+     the commit log (sibling of the files, inside the table) and the
+     footer (inside the file, after the row groups) */
+  const tb = bandY[2], fb = bandY[3];
+  const cg = el("g", { class: "db-node" });
+  const cr = el("rect", { x: tb.x + 12, y: tb.y + tb.h - 44,
+    width: tb.w - 24, height: 30, rx: 3, class: "db-b db-commitband" }, cg);
+  hover(cr, "commit");
+  const lc = by["commit"] || {}, ll = by["log"] || {};
+  txt(tb.x + 22, tb.y + tb.h - 24,
+      `${lc.label || "COMMIT"} — ${lc.n || ""} · ${ll.sub || ""}`,
+      "db-s", cg);
+  txt(tb.x + tb.w - 22, tb.y + tb.h - 24,
+      `${lc.sub || ""}`, "db-s", cg, "end");
 
-  /* pushdown result, as a measured badge */
+  const fg = el("g", { class: "db-node" });
+  const fr = el("rect", { x: fb.x + 12, y: fb.y + fb.h - 44,
+    width: fb.w - 24, height: 30, rx: 3, class: "db-b db-footerband" }, fg);
+  hover(fr, "footer");
+  const ft = by["footer"] || {};
+  txt(fb.x + 22, fb.y + fb.h - 24,
+      `${ft.label || "FOOTER"} — ${ft.n || ""} · ${ft.meta || ""}`,
+      "db-s", fg);
+
+  /* pushdown badge, measured, sitting under the ladder */
   if (P && !P.error) {
-    const by = Math.max(py, cy) + 16;
-    const gg = box(px, by, W[3] + W[4] - 40, 58, "db-b db-prune", "prune",
-      `${P.files_touched}/${P.files_total} files · ` +
-      `${fmtB(P.bytes_touched)} of ${fmtB(P.corpus_bytes)}`);
-    txt(px + 10, by + 18, "PREDICATE PUSHDOWN · executed now", "db-t", gg);
-    txt(px + 10, by + 34,
-      `${P.files_touched}/${P.files_total} files · ${fmtB(P.bytes_touched)}` +
-      ` read of ${fmtB(P.corpus_bytes)} · ${fmtN(P.rows_returned)} rows`,
-      "db-s", gg);
-    txt(px + 10, by + 50, `${P.elided_pct}% elided` +
-      (d.n_row_groups <= 1 ? "  (one row group: nothing to prune)" : ""),
-      "db-t", gg);
+    const y = H + 6;
+    const g = el("g", { class: "db-node" });
+    const r = el("rect", { x: PAD, y, width: W - 2 * PAD, height: 42,
+      rx: 4, class: "db-b db-prune" }, g);
+    hover(r, "prune");
+    txt(PAD + 12, y + 18, "PREDICATE PUSHDOWN · executed now", "db-t", g);
+    txt(PAD + 12, y + 33,
+      `layer 1 (commit zone maps): ${P.files_touched}/${P.files_total} ` +
+      `files kept   ·   layer 2 (row-group stats + projection): ` +
+      `${fmtB(P.bytes_touched)} read of ${fmtB(P.corpus_bytes)}   ·   ` +
+      `${fmtN(P.rows_returned)} rows   ·   ${P.elided_pct}% elided` +
+      (d.n_row_groups <= 1 ? "  (one row group — nothing to prune)" : ""),
+      "db-s", g);
   }
 
-  const H = Math.max(py, cy, y) + 120;
+  const TOT = H + 60;
   const svg = $("db-svg");
-  svg.setAttribute("viewBox", `0 0 1400 ${H}`);
-  svg.setAttribute("preserveAspectRatio", "xMinYMin meet");
-  svg.style.height = H + "px";
-  dbInfo("store", d.store);
+  svg.setAttribute("viewBox", `0 0 ${W} ${TOT}`);
+  svg.style.height = TOT + "px";
+  $("db-info").innerHTML =
+    `<b>Hover any layer.</b> The ladder reads bottom-up: a VALUE lives
+     in a PAGE, pages make a COLUMN CHUNK, chunks make a ROW GROUP,
+     groups make a FILE, a COMMIT lists files, the TABLE is the fold of
+     its commits, the STORE holds tables, the LAKE holds stores.`;
 }
 function archLane(n) {
   if (n.kind === "media") return 0;

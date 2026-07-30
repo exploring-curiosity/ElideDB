@@ -686,11 +686,116 @@ def api_dbinternals(key: str, table: str | None = None):
         except Exception as e:
             prune = {"error": f"{type(e).__name__}: {e}"[:120]}
 
+    # ---- THE LADDER: the containment hierarchy, one rung per level,
+    # with this store's real numbers on each. Ordered smallest first.
+    lake_dir = db.dir.parent
+    n_stores = sum(1 for p in lake_dir.iterdir()
+                   if p.is_dir() and (p / "_store.json").exists())
+    f0 = files[0] if files else None    # the dict built above
+    rg0 = pages[0] if pages else None
+    ch0 = (rg0 or {}).get("columns", [{}])[0] if rg0 else {}
+    PAGE_TARGET = 1 << 20                       # parquet default 1 MiB
+    est_pages = max(1, round((ch0.get("compressed") or 0) / PAGE_TARGET)) \
+        if ch0 else None
+    ladder = [
+        {"id": "value", "label": "VALUE / ROW",
+         "n": f"{st.rows:,} rows",
+         "sub": f"{(rg0 or {}).get('n_columns', 0)} columns",
+         "meta": "—",
+         "why": "One cell. Rows are never stored contiguously: inside a "
+                "row group the data is laid out COLUMN BY COLUMN, which "
+                "is what lets a query read one column and skip the rest."},
+        {"id": "page", "label": "PAGE",
+         "n": (f"~{est_pages} per column chunk" if est_pages else "—"),
+         "sub": "~1 MiB target",
+         "meta": "page header: encoding, value count, (optional) stats",
+         "why": "The atomic unit of compression and decode. You cannot "
+                "read half a page - it is decompressed whole - so page "
+                "size is the floor on random-access cost."},
+        {"id": "chunk", "label": "COLUMN CHUNK",
+         "n": f"{(rg0 or {}).get('n_columns', 0)} per row group",
+         "sub": (f"{ch0.get('name','')} "
+                 f"{(ch0.get('encodings') or [None])[0] or ''}"),
+         "meta": "offset, size, encodings, compression, min/max/nulls",
+         "why": "All the pages of ONE column within ONE row group, "
+                "contiguous on disk. This is the unit PROJECTION "
+                "pushdown skips: ask for 2 of 11 columns and the other "
+                "9 chunks are never read."},
+        {"id": "rowgroup", "label": "ROW GROUP",
+         "n": f"{total_rg} in this table",
+         "sub": (f"{rg0['rows']:,} rows · {rg0['bytes']:,} B"
+                 if rg0 else "—"),
+         "meta": "per-column statistics: min, max, null_count",
+         "why": "A horizontal slice of rows holding every column's "
+                "chunk. Its ts statistics are what PREDICATE pushdown "
+                "tests, so a non-overlapping group is never "
+                "decompressed. Sized by BYTES (8 MB target), not rows."},
+        {"id": "footer", "label": "FOOTER  (FileMetaData)",
+         "n": (f"{f0.get('footer_bytes') or 0:,} B" if f0 else "—"),
+         "sub": "at the END of the file",
+         "meta": "THE schema + every row group's metadata + offsets",
+         "why": "Written last so the file streams out in one pass, read "
+                "first so one seek reveals the whole layout. NOTE: row "
+                "group metadata lives HERE, inside the same file - not "
+                "in a separate meta file. Separate meta files start one "
+                "level up."},
+        {"id": "file", "label": "PARQUET FILE",
+         "n": f"{len(st.files)} in this table",
+         "sub": (f"{f0['rows']:,} rows · {f0['bytes']:,} B" if f0 else "—"),
+         "meta": "immutable; never edited in place",
+         "why": "The unit of atomic addition and removal. Rewriting is "
+                "how you 'edit', which is what makes snapshots cheap."},
+        {"id": "commit", "label": "COMMIT  (manifest file)",
+         "n": f"{len(log)} in tables/{table}/_log/",
+         "sub": (f"latest: v{log[-1]['version']} {log[-1]['op']} "
+                 f"+{log[-1]['added']}"
+                 f"{' −' + str(log[-1]['removed']) if log[-1]['removed'] else ''}"
+                 if log else "—"),
+         "meta": "op, schema, file list WITH zone maps (min_ts/max_ts)",
+         "why": "THE separate meta file. One JSON per commit, listing "
+                "the files this version contains and each file's time "
+                "range - so a window query drops whole files here, "
+                "before opening a single footer. Iceberg calls this a "
+                "manifest; Delta calls it a log entry."},
+        {"id": "log", "label": "LOG  →  TABLE STATE",
+         "n": f"version {st.version}",
+         "sub": f"state = fold of {len(log)} commits",
+         "meta": "the fold: adds minus removes, in order",
+         "why": "A table is NOT the files in its directory - it is the "
+                "result of replaying this log. That is what buys "
+                "snapshot isolation (v{N} is immutable forever), atomic "
+                "multi-file commits, and time travel."},
+        {"id": "table", "label": "TABLE  (+ schema)",
+         "n": f"{len(names)} in this store",
+         "sub": f"{table}: {st.rows:,} rows · {st.bytes:,} B",
+         "meta": "schema travels with each commit (schema-on-log)",
+         "why": "Schema evolution is an append, never a rewrite. Every "
+                "table must carry ts (int64 ns) sorted within a file - "
+                "the one schema law, and why time is the primary axis."},
+        {"id": "store", "label": "STORE",
+         "n": f"{len(names)} tables",
+         "sub": f"{db.name} · {sum((db.table(x).state().bytes) for x in names):,} B",
+         "meta": "_store.json + fitted artifacts + caches + media/",
+         "why": "A directory of tables plus sidecar state. Sidecars are "
+                "graded: authoritative (_store.json), fitted "
+                "(_set_weights.json), cache (_vocab.json), disposable "
+                "(_cache/). Raw media is referenced in place, never "
+                "copied in."},
+        {"id": "lake", "label": "LAKE",
+         "n": f"{n_stores} store{'' if n_stores == 1 else 's'}",
+         "sub": str(lake_dir),
+         "meta": "plain directories — no catalog service",
+         "why": "Many stores side by side. Nothing above this is "
+                "needed: the format is open, so any engine (DuckDB, "
+                "Spark, pandas) reads these files directly without "
+                "going through us."},
+    ]
+
     return {
         "store": db.name, "key": key, "table": table, "tables": names,
         "version": st.version, "kind": st.kind, "rows": st.rows,
         "bytes": st.bytes, "n_files": len(st.files),
-        "n_row_groups": total_rg,
+        "n_row_groups": total_rg, "ladder": ladder,
         "schema": [str(x) for x in str(st.schema).split("\n") if x][:24],
         "log": log[-12:], "log_total": len(log),
         "files": files[:12], "pages": pages, "prune": prune,
