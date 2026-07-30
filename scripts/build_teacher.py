@@ -20,6 +20,19 @@ Cost note: participant NAMES are reused from the existing answers
 table (same boxes, same generator+verifier, already paid for at
 3.4s/demo). Everything else here is geometry and costs ~0.3s/demo.
 
+MEASURED NEGATIVE, do not "fix" again without re-measuring: the
+articulated box below is the bbox of ALL coherent non-agent motion,
+which spans 96% of the frame at the median, so 97% of both origins and
+destinations test as "inside" it. That is physically wrong and it was
+replaced with the largest CONNECTED component (plus a 40%-of-frame
+rejection) - the correct construction. The metric FELL 0.25 -> 0.15:
+with a real box, put_on fires on 86% of demos and stops discriminating
+anything, and q03 collapsed 0.79 -> 0.26. The whole-frame box was
+accidentally acting as a useful prior, which means the 0.25 is partly
+luck and the containment test is not yet a real relation detector.
+The honest fix is to identify the CONTAINER as an entity - not to
+threshold a motion blob - and that is unbuilt.
+
   python scripts/build_teacher.py [--n 20]   sample, prints scripts
   python scripts/build_teacher.py --all      writes events + answers
 """
