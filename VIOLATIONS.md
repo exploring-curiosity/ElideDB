@@ -144,3 +144,133 @@ is now fitted from co-existing-track negatives.
 **Until S1 is fixed, treat `task_auc` on `open`/`close`/`put_into`/
 `put_on` as partly circular and rely on `contact`/`release` — the two
 labels that come from geometry rather than from a hand-written ladder.**
+
+---
+
+# Deep sweep — the rest of the system, 2026-07-31
+
+The first pass stopped at the geometry. Sweeping every module found
+larger violations in the **language path**, including one the code's own
+comments admit to. Severities continue from S1.
+
+---
+
+## S0 — the caption prompt is a task prior, and it was tuned on eval labels
+
+**Worse than S1. Promoted above it.**
+
+`python/elidedb/context.py:82` — `MANIPULATION_PROMPT`, the instruction
+given to the VLM that produces `context_captions`:
+
+> "the action verb in plain English (whatever it is - picking up,
+> putting, opening, closing, pushing, pouring, wiping, pressing...), the
+> object acted on with its colour, and where it ends up"
+
+Two separate violations in one string.
+
+**1. It enumerates the task vocabulary.** Eight verbs, hand-picked. The
+file's own comment states the consequence outright: *"The caption IS the
+index: whatever verbs the prompt teaches are the only verbs lexical
+recall can ever match."* A verb absent from that list is unfindable by
+construction. The comment even records the previous version failing this
+way — 2,348 captions with `picks` x2371, `puts` x1673 and **zero**
+close/open/wipe/push, so "close the drawer" could not be retrieved.
+
+**2. It was tuned against the eval labels.** The comment documents the
+generic prompt producing *"a robot arm interacts with a wooden box"*
+while *"the human label for the same clip was 'put red object in the
+drawer'"* — and the prompt was rewritten to close that gap. That is the
+truthset's own vocabulary steering the design of the index. The comment
+defends itself with "it never names objects that appear in the labels",
+which addresses nouns and concedes the verbs and the shape.
+
+It also declares itself: *"the prompt is a per-domain parameter"*. A
+per-domain parameter authored by hand is precisely what the rule forbids.
+
+**Fix direction:** captions should not be the index at all — they are a
+VLM in the path, already ruled out. If a lexical channel is wanted, its
+vocabulary must come from the corpus (attested words), not from a prompt.
+
+---
+
+## S1b — VERB_SWAPS: 81 hand-authored opposite pairs
+
+`python/elidedb/lexicon.py:15` — open/close, picks up/puts down,
+lifts/lowers, pushes/pulls, into/out of, onto/off, left/right, up/down,
+toward/away from, front/back, and 71 more.
+
+Same family as S3 (`_UN_BASES`) but an order of magnitude larger and
+more directly the manipulation task's vocabulary. The swap-contrast
+*mechanism* is sound and measured; the table it runs on is authored.
+
+**Fix direction:** derive antonym pairs from corpus co-occurrence or an
+embedding-space reflection, not a list.
+
+---
+
+## S1c — sentence TEMPLATES generate the student's training text
+
+`scripts/distill_student.py:60` —
+
+    "put the {a} on the {b}", "pick up the {a}",
+    "put the {a} into the {b}", "take the {a} out of the {b}",
+    "open the {a}", "close the {a}", ...
+
+Ten hand-written sentence frames used to synthesise the text side of
+student training. A student trained on these can only ever have seen
+this grammar, so its text tower inherits the task taxonomy directly as
+training data — the strongest form of hardwiring in the system, because
+it is baked into weights rather than into an `if`.
+
+---
+
+## S2b — the colour table
+
+`python/elidedb/scenario.py:975` — `_HUE`, seven colour words mapped to
+OpenCV hue bands.
+
+Defended in-comment as "closed-class colour words... no model, no
+metadata, fully explainable", and that defence is the strongest of any
+here: the bands are physics, the word list is closed-class English, and
+the evidence is pixels. **Listed as borderline, not as a violation to
+fix** — but noted because it is a hand-authored vocabulary, and if the
+corpus's colour distinctions do not match these seven bands, nothing in
+the system can discover that.
+
+---
+
+## What is CORRECT and should not be "fixed"
+
+Recorded so a later pass does not break it:
+
+- **`scripts/bridge_ingest.py` refuses the task strings.** Its docstring:
+  the task strings "describe what each clip *is about*, which is
+  precisely the thing the database is supposed to work out from the
+  pixels. Ingesting them would make every later retrieval number
+  meaningless." They are written to `eval/` **outside the store**, and
+  nothing on the query path can read them. This is the rule applied
+  correctly, and it is why S0 matters — the metadata was kept out of the
+  store and then let back in through a prompt.
+- Bench scripts reading `t["task"]` — eval side, correct.
+- `_STOP` in `sig2.py` — generic English stopwords, no task content.
+- `scripts/build_objects.py` `PROMPT = "object"` — deliberately
+  vocabulary-free, and commented as such.
+
+---
+
+## Revised fix order
+
+| | what | why first |
+|---|---|---|
+| **1** | **S0** caption prompt | eval vocabulary reached the index; contaminates the lexical channel and every number computed from captions |
+| **2** | **S1** verb set + if/else | root of the element taxonomy; contaminates `chanbench` task labels |
+| **3** | **S1c** student templates | hardwiring baked into weights is the hardest to undo later |
+| **4** | **S1b / S3** swap and un- tables | mechanism is sound, only the lists need deriving |
+| **5** | **S2 / S2b** query-side maps | fall out of 2 |
+| **6** | **S4 / S5** thresholds, config | mechanical |
+
+**Standing caution until 1 and 2 are fixed:** any retrieval number that
+routes through captions, or any `task_auc` on
+`open`/`close`/`put_into`/`put_on`, is partly circular. `contact` and
+`release` remain the only labels derived from geometry rather than from
+an authored vocabulary.
