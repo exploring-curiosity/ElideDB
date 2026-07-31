@@ -323,12 +323,49 @@ def stage_index(db):
     return len(L["ts"])
 
 
+CHANNELS = [("pe", "pe_ingest.py"), ("sig2", "sig2_ingest.py"),
+            ("iv2", "iv2_ingest.py"), ("xclip", "xclip_ingest.py"),
+            ("vjepa", "vjepa_channel.py"), ("act", "action_ingest.py")]
+
+
+def stage_channels(out, only=None):
+    """The six retrieval channels. Part of the write, not an extra.
+
+    search_set scores these; a store without them answers metadata and
+    object queries and nothing else. Each is a separate pretrained model
+    over the whole corpus, and on this hardware `pe` alone measured 32x
+    the entire FDNN-V ingest - which is the number that matters far more
+    than the total, because it says the retrieval path costs an order of
+    magnitude more than the write budget allows.
+    """
+    T = {}
+    for name, script in CHANNELS:
+        if only and name not in only:
+            continue
+        a = time.time()
+        r = subprocess.run([sys.executable, f"scripts/{script}", str(out)],
+                           capture_output=True, text=True)
+        T[name] = round(time.time() - a, 2)
+        if r.returncode != 0:
+            T[name] = f"FAILED after {T[name]}s: {r.stderr.strip()[-200:]}"
+            print(f"  channel {name}: FAILED\n{r.stderr[-600:]}", flush=True)
+        else:
+            print(f"  channel {name}: {T[name]}s  {r.stdout.strip()[-160:]}",
+                  flush=True)
+    return T
+
+
 def main():
     argv = sys.argv
     out = Path(argv[argv.index("--out") + 1] if "--out" in argv
                else "lake/bench")
     files = ([int(x) for x in argv[argv.index("--files") + 1].split(",")]
              if "--files" in argv else [119, 120, 129, 132])
+    # start small, then build up: cap the episode count so every stage,
+    # channels included, can be timed on a corpus that finishes.
+    limit = int(argv[argv.index("--limit") + 1]) if "--limit" in argv else 0
+    only = (set(argv[argv.index("--channels") + 1].split(","))
+            if "--channels" in argv else None)
     if out.exists():
         if "--force" not in argv:
             raise SystemExit(f"{out} exists; pass --force")
@@ -342,6 +379,8 @@ def main():
     e, _h = model(mx.array(np.zeros((1, 8, 144, 192, 3), np.float32)))
     mx.eval(e)
     spans = episode_spans(files)
+    if limit:
+        spans = spans[:limit]
     shift = gapped(spans)
     T["setup"] = time.time() - a
 
@@ -364,6 +403,10 @@ def main():
     N["labels"] = stage_index(db)
     T["index"] = time.time() - a
 
+    a = time.time()
+    T["channels"] = stage_channels(out, only)
+    T["channels_total"] = time.time() - a
+
     T["total"] = time.time() - t00
     N["episodes"] = len(spans)
     hours = sum(s["n"] for s in spans) / FPS / 3600
@@ -374,7 +417,13 @@ def main():
         "seconds": {k: round(v, 2) for k, v in T.items()},
         "min_per_hour_video": {
             k: round(v / 60 / max(hours, 1e-9), 3)
-            for k, v in T.items() if k != "embed+geometry"},
+            for k, v in T.items()
+            if k not in ("embed+geometry", "channels")
+            and isinstance(v, (int, float))},
+        "channels_min_per_hour": {
+            k: round(v / 60 / max(hours, 1e-9), 3)
+            for k, v in T.get("channels", {}).items()
+            if isinstance(v, (int, float))},
         "s_per_episode": round(T["total"] / max(len(spans), 1), 3),
         "bytes": {"raw_source": raw_bytes, "store": store_bytes,
                   "store_over_raw": round(store_bytes / raw_bytes, 2)},
