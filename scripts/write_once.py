@@ -144,6 +144,42 @@ def stream_once(model, f, spans, geom_every):
                 np.zeros((0, 1152), np.float32)), keep
 
 
+def _structures(frames, keep=6):
+    """Large, persistent segmented regions - the enclosure candidates.
+
+    Persistence is the point: a structure is a thing that is still there
+    at the end. A drawer, a lane, a shelf and a bin all satisfy that; a
+    hand passing through does not. No class name is involved, and the
+    segmenter runs class-agnostic.
+    """
+    try:
+        from elidedb.identity import detect
+    except Exception:
+        return []
+    try:
+        per = detect([frames[0], frames[len(frames) // 2], frames[-1]])
+    except Exception:
+        return []
+    first, last = per[0][0], per[-1][0]
+    if not len(first) or not len(last):
+        return []
+
+    def iou(a, b):
+        x0, y0 = max(a[0], b[0]), max(a[1], b[1])
+        x1, y1 = min(a[2], b[2]), min(a[3], b[3])
+        i = max(x1 - x0, 0) * max(y1 - y0, 0)
+        u = ((a[2] - a[0]) * (a[3] - a[1])
+             + (b[2] - b[0]) * (b[3] - b[1]) - i)
+        return i / u if u > 0 else 0.0
+
+    out = []
+    for b in first:
+        if any(iou(b, c) > 0.5 for c in last):        # still there
+            out.append(tuple(int(v) for v in b))
+    out.sort(key=lambda r: -(r[2] - r[0]) * (r[3] - r[1]))
+    return out[:keep]
+
+
 def episode_events(s, frames, t0=None, t1=None):
     """Geometry for ONE episode -> (event rows, name crops per row).
 
@@ -152,8 +188,10 @@ def episode_events(s, frames, t0=None, t1=None):
     [stream, ep_t0, ep_t1, kind, ev_t0, ev_t1, conf, name]; crops are
     (row_index_within_this_episode, image) for the opt-in namer.
     """
-    from build_teacher import articulated_box, cavity_series, REL_MIN, CAV_MIN
+    from build_teacher import articulated_box, cavity_series, CAV_MIN
     from extract_events import agent_track, causal_participants, motion_mags, _crop
+    from elidedb.transitions import (descriptor as tdesc,
+                                     aperture_descriptor as aperture_desc)
     a0 = s["t0"] if t0 is None else t0
     a1 = s["t1"] if t1 is None else t1
     rows, crops = [], []
@@ -164,50 +202,91 @@ def episode_events(s, frames, t0=None, t1=None):
 
     mg = motion_mags(frames)
     tr, span, masks, tracks = agent_track(frames, mg)
-    abox = articulated_box(frames, masks.any(0), mg)
+    # STRUCTURE, not a motion blob. articulated_box is the bbox of all
+    # coherent non-agent motion and spans 96% of the frame at the
+    # median, so every containment test was trivially true. The
+    # segmenter already returns real object extents; the enclosure
+    # candidates are the large persistent ones, and which of them
+    # matters is decided per transition by whichever the object moved
+    # into or out of. Kept as a fallback so a corpus without a working
+    # segmenter still writes.
+    regions = _structures(frames)
+    if not regions:
+        fb = articulated_box(frames, masks.any(0), mg)
+        regions = [fb] if fb is not None else []
+    # enclosure is measured against EVERY structure (whichever the
+    # object actually entered or left scores); the aperture series needs
+    # one region to watch, and the largest is the dominant structure in
+    # view. Measuring an aperture per structure is the general form and
+    # costs one cavity_series per region - worth doing once a corpus is
+    # known to have several apertures that matter.
+    abox = regions[0] if regions else None
     if tr is not None:
         rows.append([s["stream"], a0, a1, "agent",
                      stamp(tr[0][0]), stamp(tr[-1][0] + 1), float(span), ""])
+    # APERTURE CHANGE, untyped. This branch used to read
+    #     k = "open" if d >= CAV_MIN else "close" if d <= -CAV_MIN
+    # which is the same violation as the participant ladder, one level
+    # up: "open" and "close" are English words for a SIGNED aperture
+    # change, and a corpus whose apertures are lane gaps or shutter
+    # angles has no use for either. The measurement is the signed
+    # magnitude and its duration; what to call it is the corpus's
+    # business, decided by the same discovery pass.
     cav = cavity_series(frames, abox)
     if cav is not None and len(cav) >= 4:
         b0 = float(np.median(cav[:2]))
-        run = None
-        for i in range(1, len(cav)):
-            d = float(cav[i]) - b0
-            k = ("open" if d >= CAV_MIN else
-                 "close" if d <= -CAV_MIN else None)
-            if k and run is None:
-                run = (k, i)
-            elif run and k != run[0]:
-                rows.append([s["stream"], a0, a1, run[0],
-                             stamp(run[1] - 1), stamp(i), abs(d), ""])
-                run = (k, i) if k else None
-        if run:
-            rows.append([s["stream"], a0, a1, run[0], stamp(run[1] - 1),
-                         stamp(len(cav) - 1), abs(float(cav[-1]) - b0), ""])
+        d_series = np.array([float(c) - b0 for c in cav[1:]])
+        # segment where the sign of the change is stable; no threshold
+        # decides WHICH kind, only that something changed at all
+        sign = np.sign(d_series)
+        i = 0
+        while i < len(sign):
+            j = i
+            while j + 1 < len(sign) and sign[j + 1] == sign[i]:
+                j += 1
+            if sign[i] != 0:
+                peak = float(d_series[i:j + 1][
+                    np.argmax(np.abs(d_series[i:j + 1]))])
+                rows.append([s["stream"], a0, a1, "", stamp(i),
+                             stamp(j + 1), abs(peak), "",
+                             aperture_desc(peak, (j + 1 - i) / FPS)])
+            i = j + 1
     for origin, dest, onset, life, area in causal_participants(
             tracks, tr, len(frames) - 1):
-        c0 = np.array([(origin[0] + origin[2]) / 2,
-                       (origin[1] + origin[3]) / 2])
-        c1 = np.array([(dest[0] + dest[2]) / 2, (dest[1] + dest[3]) / 2])
-        od = float(np.hypot(origin[2] - origin[0], origin[3] - origin[1]))
-        disp = float(np.linalg.norm(c1 - c0)) / max(od, 1.0)
-
-        def inside(c, r):
-            return (r is not None and r[0] <= c[0] <= r[2]
-                    and r[1] <= c[1] <= r[3])
-        k = ("adjust" if disp < REL_MIN else
-             "take_out" if (inside(c0, abox) and not inside(c1, abox))
-             else "put_into" if inside(c1, abox) else "put_on")
+        # NO TYPING HERE. The transition is emitted as a nameless
+        # DESCRIPTOR of physical measurements; what kind it is gets
+        # decided later by the corpus, in transitions.discover(). The
+        # if/else ladder this replaces ("adjust" if disp < REL_MIN else
+        # "take_out" if ... else "put_into" if ... else "put_on") was a
+        # table-top manipulation prior: a driving corpus has no
+        # put_into, and every lane change would have been forced into
+        # put_on. Worse, "adjust" was the else branch, so 82% of motion
+        # landed in a bucket that was not a class at all.
+        # a track row is (frame_idx, centroid, area, box) - the centroid
+        # is element 1 and is already an (x, y) pair, not a slice
+        gx = None
+        if tr:
+            gx = (tr[min(onset, len(tr) - 1)][1],
+                  tr[min(onset + life, len(tr) - 1)][1])
+        desc = tdesc(origin, dest, onset, life, FPS,
+                     (frames[0].shape[1], frames[0].shape[0]),
+                     enclosure=regions, agent_xy=gx)
+        # contact and release stay as they are: they are ONSET and
+        # OFFSET of co-motion, i.e. geometry, not a named category -
+        # which is why they are the only labels that survived the
+        # hardwiring audit intact.
         for kind, i0, i1, box, src in (
                 ("contact", onset - 1, onset, origin, frames[0]),
-                ("release", onset + life - 1, onset + life, dest, frames[-1]),
-                (k, onset, onset + life, dest, frames[0])):
+                ("release", onset + life - 1, onset + life, dest, frames[-1])):
             rows.append([s["stream"], a0, a1, kind, stamp(i0), stamp(i1),
                          1.0, ""])
-            c = _crop(src, box if kind != k else origin)
+            c = _crop(src, box)
             if c is not None and c.size:
                 crops.append((len(rows) - 1, c))
+        # the transition itself: kind is left EMPTY and the descriptor
+        # travels with it, to be typed once the whole corpus is in
+        rows.append([s["stream"], a0, a1, "", stamp(onset),
+                     stamp(onset + life), 1.0, "", desc])
     return rows, crops
 
 

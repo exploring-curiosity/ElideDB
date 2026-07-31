@@ -52,8 +52,13 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from elidedb import Store                                    # noqa: E402
 
 JUDGE = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
-MIN_BLOB = 120          # px in the before/after diff
-PAD = 0.6               # crop padding around a site, fraction of box
+# Was 120 px here, 40/60/60/30 in four other files - five values
+# for one idea, which is the tell that none was derived. Now a
+# FRACTION of frame area (resolution-independent), fitted from the
+# observed blob-size distribution by derive.fit_cut when a caller
+# supplies one; this is only the fallback for a first pass.
+MIN_BLOB_FRAC = 4e-4    # of frame area, not pixels
+PAD = 0.6               # fraction of box; already relative, kept
 
 
 # FLOW RESOLUTION. Dense Farneback is O(pixels) and it was the entire
@@ -247,9 +252,10 @@ def state_diff(first, last, agent_union):
     m[agent_union] = 0
     m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
     nlab, lab, stats, _ = cv2.connectedComponentsWithStats(m, 8)
+    min_blob = MIN_BLOB_FRAC * m.shape[0] * m.shape[1]
     sites = []
     for j in range(1, nlab):
-        if stats[j, cv2.CC_STAT_AREA] < MIN_BLOB:
+        if stats[j, cv2.CC_STAT_AREA] < min_blob:
             continue
         x, y, w, h = (stats[j, cv2.CC_STAT_LEFT], stats[j, cv2.CC_STAT_TOP],
                       stats[j, cv2.CC_STAT_WIDTH], stats[j, cv2.CC_STAT_HEIGHT])

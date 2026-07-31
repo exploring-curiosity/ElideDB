@@ -274,3 +274,179 @@ routes through captions, or any `task_auc` on
 `open`/`close`/`put_into`/`put_on`, is partly circular. `contact` and
 `release` remain the only labels derived from geometry rather than from
 an authored vocabulary.
+
+---
+
+# Round 3 — LOGIC violations, 2026-07-31
+
+Rounds 1 and 2 audited constants and vocabularies. This round audits
+CODE LOGIC written for this dataset: procedures that are correct for a
+fixed-camera table-top manipulation set and silently wrong elsewhere.
+These are harder to see than a literal, because nothing in them looks
+like a task word.
+
+Two were found by the user in the space of one message, which is the
+measure of how well the first two rounds did.
+
+---
+
+## L0 — THE SYSTEM ONLY RECORDS WHAT MOVES
+
+**The largest violation in the codebase. Everything else is detail.**
+
+The element path is triggered entirely by motion: `agent_track` finds
+the largest coherent-motion track, `causal_participants` finds what that
+track touched, `cavity_series` measures change. An object that sits
+still produces no track, no participant, no event, no label, no row.
+
+So **"all samples where a banana is on the table" is unanswerable by
+construction** - not badly answered, structurally absent. The corpus can
+only be asked about things that happened, never about things that were.
+
+This is a manipulation-dataset assumption in the deepest possible place:
+that the unit of interest is an ACTION. For a driving log the parked
+cars matter; for a warehouse the stock on the shelf matters; for a
+kitchen the banana matters.
+
+**Fix direction:** state and event are two different indexes and the
+store has only one. Idle objects need a presence record - what was
+visible, where, for how long - independent of whether anything happened
+to it. The identity store is the natural home (it already tracks
+objects that persist) but it is currently fed only from the same
+motion-gated path.
+
+---
+
+## L1 — `single_cls=True` is a TRAINING flag and does nothing at predict
+
+Measured, same frames, same model:
+
+    single_cls=True   3.10 det/frame  {oven, sink, bowl, person, spoon, wine glass}
+    single_cls=False  3.10 det/frame  {oven, sink, bowl, person, spoon, wine glass}
+
+Byte-identical behaviour. The detector still fires only on COCO-shaped
+things; the flag hides the label at training time, not at inference.
+
+I described this as "class-agnostic" in identity.py, in the memory
+entries, in commit messages and in the earlier rounds of this document.
+It is **COCO detection with the label suppressed**, so every structure,
+participant proposal and identity region inherits COCO's 80-class prior
+- a hardwiring violation introduced while fixing hardwiring violations,
+invisible because I believed my own description of it.
+
+Consequence already measured: `_structures` returns 0.7 regions per
+episode, and the ones it finds are `oven` and `sink` at ~10% of frame
+area. Drawers, tabletops and bins are not COCO classes, so there was
+never a container there to find.
+
+**Fix direction:** a genuinely class-agnostic proposer. SAM-family
+"everything" mode is now permitted (it was excluded on COST, not
+principle) provided it is made fast and then distilled. Alternatives
+that need no class list at all: CutLER/MaskCut (unsupervised instance
+segmentation), classical region proposals, or self-training YOLO's
+objectness on the corpus - though NOT on motion alone, see L0.
+
+---
+
+## L2 — the transition DESCRIPTOR is a hand-authored feature space
+
+`transitions.FIELDS` - disp, dir_x, dir_y, duration, scale_ratio,
+enclosure_delta, persists, agent_d0, agent_d1.
+
+Nine numbers *I* chose as what matters about a transition. The verb
+ladder was replaced with a feature ladder: less wrong, same kind of
+wrong. The corpus is still being told what to measure, only the
+quantisation was handed back to it.
+
+**Fix direction:** cluster transitions in a LEARNED visual space - the
+trunk's representation of the transition's frames - so the corpus
+decides the features and the types together.
+
+---
+
+## L3 — `enclosure` was inherited, not motivated
+
+Carried forward from `inside(c1, abox) -> put_into`, the very ladder
+being deleted. Containment is a manipulation primitive; it was never
+justified on its own terms. Measured non-zero in **7 of 78** participant
+transitions, i.e. carrying no information, and the effort to feed it
+better was about to be spent on a detector that cannot see containers
+(L1).
+
+**Fix direction:** drop it. Re-derive a spatial-relation signal only if
+a corpus demonstrates it needs one.
+
+---
+
+## L4 — `cavity_series` measures DARKNESS as aperture
+
+    thr = 25th percentile of intensity; series = fraction of pixels darker
+
+An open drawer is darker inside than its front panel. That is an optical
+fact about *this* furniture under *this* lighting. An opening iris, a
+lane gap, a raised barrier or a lit doorway all change aperture without
+getting darker - and a shadow falling across the box registers as an
+aperture event that never happened.
+
+**Fix direction:** aperture is a geometric change in a structure's free
+extent, not a photometric one.
+
+---
+
+## L5 — single-agent, agent-causes-everything
+
+`agent_track` returns `max(tracks, key=len)`: exactly one agent, and it
+is whichever coherent motion persisted longest. `causal_participants`
+then attributes participants to that agent.
+
+Assumes one actor that causes what happens. Ego-motion in a driving log
+is the largest coherent motion in every frame, so the ego vehicle would
+be "the agent" and every other car a "participant" it caused. Multi-
+agent scenes have no single answer.
+
+**Fix direction:** agents are a discovered set, not a maximum; causal
+attribution needs to survive there being several, or none.
+
+---
+
+## L6 — the episode is assumed to exist, and to be the query unit
+
+`gapped()` shifts demos apart by `GAP_S`; `full_write` samples NGEOM
+frames uniformly per episode; retrieval returns episodes; the truthset
+is keyed by episode; row groups are clustered by `episode_index`.
+
+Bridge ships discrete demos. A continuous driving log, a surveillance
+feed or a surgical recording has no episodes - and uniform sampling
+within one assumes events are spread evenly through it, which is false
+even here (a grasp is brief).
+
+**Fix direction:** the query unit is a TIME WINDOW; episodes are one
+possible segmentation of the timeline, supplied by a corpus that has
+them, not assumed by the engine.
+
+---
+
+## L7 — `MAX_AREA = 0.5` rejects anything filling half the frame
+
+`identity.py`. Written to reject "the whole scene" detections. In a
+driving log the road surface, the sky and the vehicle ahead all exceed
+it; in close-up manipulation the manipulated object does. A size prior
+about how big things are in this camera's view.
+
+**Fix direction:** fit from the observed area distribution, or drop -
+a "too big to be an object" rule needs the corpus's opinion, not mine.
+
+---
+
+## Revised fix order, all rounds
+
+| | what | why |
+|---|---|---|
+| **1** | **L0** state vs event | the largest gap; idle objects are unqueryable by construction |
+| **2** | **L1** real class-agnostic proposer | L0's fix needs one, and every region in the system currently carries a COCO prior |
+| **3** | **L3** drop enclosure, **L2** drop the descriptor | both are inherited scaffolding; removing them is subtraction, not work |
+| **4** | **S0/S1** already fixed - verify no regression | |
+| **5** | **L4, L5, L6, L7** | each needs a corpus that disagrees with Bridge to test against |
+
+**L0 and L1 are the same fix seen twice:** the system cannot record what
+it cannot detect, and it cannot detect what COCO does not name.

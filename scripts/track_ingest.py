@@ -45,7 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 from elidedb import Store                                    # noqa: E402
 
 NF = 12             # frames sampled per episode for flow
-MIN_BLOB = 60       # px, ignore speckle
+MIN_BLOB_FRAC = 4e-4    # of frame area; see extract_events
 MAX_TRACKS = 4      # longest-lived tracks kept per episode
 MAX_VIEWS = 8       # views kept per track
 PAD = 0.35          # box padding, fraction of box size
@@ -69,9 +69,10 @@ def tracks_of(frames):
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE,
                                 np.ones((7, 7), np.uint8))
         nlab, _, stats, cents = cv2.connectedComponentsWithStats(mask, 8)
+        min_blob = MIN_BLOB_FRAC * mask.shape[0] * mask.shape[1]
         nxt = []
         for j in range(1, nlab):
-            if stats[j, cv2.CC_STAT_AREA] < MIN_BLOB:
+            if stats[j, cv2.CC_STAT_AREA] < min_blob:
                 continue
             bb = (int(stats[j, cv2.CC_STAT_LEFT]),
                   int(stats[j, cv2.CC_STAT_TOP]),

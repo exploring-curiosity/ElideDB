@@ -46,7 +46,7 @@ SRC = ROOT / "data/bridge/videos/observation.images.image_0/chunk-000"
 # object cannot survive that. Resolution is the one untested variable.
 W = H = 480
 NF = 12
-MIN_BLOB = 60
+MIN_BLOB_FRAC = 4e-4
 
 
 def frames_of(stream, t0, n=NF):
@@ -81,9 +81,10 @@ def tracks_of(frames):
         mask = (mag > max(1.0, med + 4 * 1.4826 * mad)).astype(np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
         nlab, lab, stats, cents = cv2.connectedComponentsWithStats(mask, 8)
+        min_blob = MIN_BLOB_FRAC * mask.shape[0] * mask.shape[1]
         blobs = []
         for j in range(1, nlab):
-            if stats[j, cv2.CC_STAT_AREA] < MIN_BLOB:
+            if stats[j, cv2.CC_STAT_AREA] < min_blob:
                 continue
             x, y, w, h = (stats[j, cv2.CC_STAT_LEFT], stats[j, cv2.CC_STAT_TOP],
                           stats[j, cv2.CC_STAT_WIDTH], stats[j, cv2.CC_STAT_HEIGHT])

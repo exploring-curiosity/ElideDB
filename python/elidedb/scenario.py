@@ -161,12 +161,20 @@ def _auto_action_support(store, text):
 
 _EVK: dict = {}
 
-# closed-class English -> the transition the sentence asks for. Uniform
-# across queries, dictionary knowledge only.
-_PREPK = (("on top", "put_on"), ("onto", "put_on"), ("into", "put_into"),
-          ("out of", "take_out"), (" in ", "put_into"), (" on ", "put_on"))
-_VERBK = {"open": "open", "opens": "open", "close": "close",
-          "closes": "close", "shut": "close"}
+# The right-hand sides of this table used to be put_on / put_into /
+# take_out / open / close - the hand-authored task vocabulary, so query
+# parsing hardwired the taxonomy and a corpus with different transitions
+# could not be asked about at all.
+#
+# There is no table now. A query names transition types the way it names
+# anything else: by SIMILARITY to what the corpus attested, resolved
+# against the store's own discovered types at query time. The closed-
+# class prepositions survive as SPATIAL RELATION cues (containment vs
+# support vs separation), which are geometry and hold in any domain -
+# a box in a drawer, a car in a lane, a pallet on a shelf.
+_REL_CUES = {"containment": ("into", "in", "inside", "within"),
+             "support": ("on", "onto", "on top", "above", "over"),
+             "separation": ("out of", "from", "off", "away")}
 
 
 def _query_transitions(tl):

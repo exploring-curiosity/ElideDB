@@ -41,7 +41,7 @@ FILE_STRIDE_NS = 20_000_000_000_000
 FPS = 5.0
 SRC = ROOT / "data/bridge/videos/observation.images.image_0/chunk-000"
 SIZE = 192
-MIN_BLOB = 30
+MIN_BLOB_FRAC = 4e-4
 
 
 def frames_of(stream, t0, n=12, size=SIZE):
@@ -76,9 +76,10 @@ def story_features(frames):
         mad = float(np.median(np.abs(mag - med))) + 1e-6
         mask = (mag > max(1.0, med + 4 * 1.4826 * mad)).astype(np.uint8)
         nlab, lab, stats, cents = cv2.connectedComponentsWithStats(mask, 8)
+        min_blob = MIN_BLOB_FRAC * mask.shape[0] * mask.shape[1]
         blobs = [(cents[j], float(stats[j, cv2.CC_STAT_AREA]))
                  for j in range(1, nlab)
-                 if stats[j, cv2.CC_STAT_AREA] >= MIN_BLOB]
+                 if stats[j, cv2.CC_STAT_AREA] >= min_blob]
         total_area += sum(a for _, a in blobs)
         nxt = []
         for c, a in blobs:

@@ -79,13 +79,31 @@ CAPTION_PROMPT = (
 # instances of close/open/wipe/push, so "close the drawer" was unfindable by
 # construction. The prompt must be VERB-OPEN: describe the action in its own
 # words, and always report state changes.
+# S0 VIOLATION, FIXED. The previous MANIPULATION_PROMPT enumerated the
+# task vocabulary - "picking up, putting, opening, closing, pushing,
+# pouring, wiping, pressing" - and this file's own comment stated the
+# consequence: "The caption IS the index: whatever verbs the prompt
+# teaches are the only verbs lexical recall can ever match." A verb
+# outside that list was unfindable by construction, and a non-
+# manipulation corpus was unfindable entirely.
+#
+# It was also TUNED AGAINST THE EVAL LABELS. The removed comment
+# recorded the generic prompt producing "a robot arm interacts with a
+# wooden box" where "the human label for the same clip was 'put red
+# object in the drawer'", and the prompt being rewritten to close that
+# gap. bridge_ingest.py deliberately keeps the task strings out of the
+# store; this prompt let them back in through the side door.
+#
+# The replacement names no verb, no object class and no domain. It asks
+# for what MOVED and what CHANGED, which is answerable for a kitchen, a
+# road, a warehouse or a surgical table, and lets the corpus supply its
+# own words.
 MANIPULATION_PROMPT = (
-    "These frames are in time order from one short clip of a robot arm. "
-    "Reply with ONE short sentence: the action verb in plain English "
-    "(whatever it is - picking up, putting, opening, closing, pushing, "
-    "pouring, wiping, pressing...), the object acted on with its colour, "
-    "and where it ends up. If anything is opened, closed, or changes state, "
-    "say so. Do not say 'frame', 'image', or 'video'."
+    "These frames are in time order from one short clip. "
+    "Reply with ONE short sentence in plain English: what moved, what it "
+    "did, and what was different at the end. Use whatever words fit; do "
+    "not choose from a list. If anything changed state, say so. "
+    "Do not say 'frame', 'image', or 'video'."
 )
 
 PROMPTS = {"scene": CAPTION_PROMPT, "manipulation": MANIPULATION_PROMPT}

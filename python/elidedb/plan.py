@@ -31,11 +31,25 @@ import pyarrow.compute as pc
 
 from .store import QueryStats
 
-# the transition kinds that get a boolean column on the episode row.
-# Low cardinality is the requirement: a bool column's min/max IS the
-# set-membership test, so this only works for a closed, small set.
-FLAG_KINDS = ("open", "close", "put_into", "put_on", "take_out",
-              "adjust", "contact", "release")
+def flag_kinds(store):
+    """The transition kinds THIS corpus produced, read from the store.
+
+    Was a literal tuple of eight English verbs - open, close, put_into,
+    put_on, take_out, adjust, contact, release - which is a table-top
+    manipulation prior. A driving log has none of them and a warehouse
+    camera has no drawers, so the system could not recognise a domain it
+    had not been told about.
+
+    Now: whatever `has_*` columns the write path created, which are
+    whatever transition types the corpus turned out to have. Low
+    cardinality is still the requirement - a bool column's min/max IS
+    the set-membership test - and discovery enforces that by clustering
+    rather than by someone keeping the list short.
+    """
+    if "episodes" not in store.tables():
+        return ()
+    return tuple(sorted(c[4:] for c in store.table("episodes").scan().column_names
+                        if c.startswith("has_")))
 
 
 def label_lookup(store, values, kinds=None, stats: QueryStats | None = None):

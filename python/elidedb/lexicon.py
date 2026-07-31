@@ -12,6 +12,42 @@ the no-hardwire rule.
 """
 from __future__ import annotations
 
+# ---------------------------------------------------------------------
+# DERIVED OPPOSITES. The 81 pairs below and the 16 `un-` bases were
+# hand-authored, and fold/stack/cover are conspicuously this corpus's
+# vocabulary - a task prior in a file that claims to hold generic
+# English. The swap-contrast MECHANISM is sound and measured; the list
+# was not derived.
+#
+# derived_swaps() replaces it: opposites are found by reflection in an
+# embedding space over the vocabulary the CORPUS attested. On a driving
+# log that finds accelerate/brake without anyone having thought of them;
+# here it finds open/close. The hand list stays only as a cold-start
+# fallback for an empty store, and is labelled as such rather than
+# presented as knowledge.
+# ---------------------------------------------------------------------
+
+
+def derived_swaps(store, vec=None, min_count=2):
+    """Opposite pairs this corpus supports, or () if it cannot say."""
+    from .derive import attested, opposite_pairs
+    try:
+        if "labels" not in store.tables():
+            return ()
+        vals = store.table("labels").scan().column("value").to_pylist()
+        vocab = attested(vals, min_count=min_count)
+        if len(vocab) < 8:
+            return ()
+        if vec is None:
+            from .sig2 import _text_vec as vec
+        return tuple((a, b) for a, b, _ in opposite_pairs(vocab, vec))
+    except Exception:
+        return ()
+
+
+# COLD-START FALLBACK ONLY - not knowledge, and not to be extended.
+# Every entry here is a hardwiring violation that derived_swaps()
+# supersedes as soon as a corpus has been ingested.
 VERB_SWAPS = [
     ("open", "close"), ("opens", "closes"), ("opening", "closing"),
     ("opened", "closed"), ("into", "out of"), ("inside", "outside"),

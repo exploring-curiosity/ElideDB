@@ -51,7 +51,7 @@ import mlx.core as mx                                          # noqa: E402
 from elidedb import Store                                      # noqa: E402
 from elidedb.fdnnvideo import fdnnv_dir, load_encoder          # noqa: E402
 from elidedb.fftools import find                               # noqa: E402
-from elidedb.plan import FLAG_KINDS                            # noqa: E402
+from elidedb.transitions import discover, profile                # noqa: E402
 from elidedb.video import scan_video_packets                   # noqa: E402
 from write_once import (CAM, DATA, EPOCH_NS, FILE_STRIDE_NS,   # noqa: E402
                         FPS, NGEOM, episode_events,
@@ -217,6 +217,35 @@ def stage_embed_geometry(db, spans, shift, model):
         "file_index": pa.array([s["file"] for s in spans], pa.int32()),
     }), kind="timeseries")
 
+    # TYPE THE TRANSITIONS FROM THE CORPUS, not from a ladder. Rows
+    # carrying a descriptor (index 8) are untyped participant
+    # transitions; the corpus decides how many kinds exist and which is
+    # which. Rows without one are onset/offset geometry (contact,
+    # release) and the agent track, which are measurements rather than
+    # categories and need no discovery.
+    di = [i for i, r in enumerate(ev_rows) if len(r) > 8]
+    tinfo = {"types": 0, "n": 0}
+    if di:
+        D = np.stack([ev_rows[i][8] for i in di])
+        lab, cent, tinfo = discover(D)
+        for i, k in zip(di, lab):
+            # an integer id, never a name. -1 stays -1: a transition the
+            # corpus cannot type is UNTYPED, not swept into a majority
+            # bucket the way `adjust` used to be.
+            ev_rows[i][3] = f"t{int(k)}" if k >= 0 else ""
+        if len(cent):
+            db.table("transition_types").append(pa.table({
+                "ts": pa.array([spans[0]["t0"]] * len(cent), pa.int64()),
+                "t1": pa.array([spans[-1]["t1"]] * len(cent), pa.int64()),
+                "type_id": pa.array(list(range(len(cent))), pa.int32()),
+                "n_members": pa.array(tinfo["sizes"], pa.int32()),
+                "centroid": pa.FixedSizeListArray.from_arrays(
+                    pa.array(np.ascontiguousarray(cent).reshape(-1),
+                             pa.float32()), cent.shape[1]),
+            }), kind="index", meta={"discovered": True,
+                                    "profile": json.dumps(
+                                        profile(cent, tinfo["mu"],
+                                                tinfo["sd"]))})
     E = pa.table({
         "ts": pa.array([r[1] for r in ev_rows], pa.int64()),
         "t1": pa.array([r[2] for r in ev_rows], pa.int64()),
@@ -228,6 +257,7 @@ def stage_embed_geometry(db, spans, shift, model):
         "name": pa.array([r[7] for r in ev_rows]),
         "conf": pa.array([r[6] for r in ev_rows], pa.float32()),
     })
+    E = E.filter(pc.not_equal(E.column("kind"), ""))
     db.table("events").set_layout("kind", sort_by=["kind", "role", "ts"],
                                   min_group_rows=512)
     db.table("events").append(E.take(pc.sort_indices(E.column("ts"))),
@@ -284,7 +314,7 @@ def stage_index(db):
     for i in range(len(ev["ts"])):
         key = (str(ev["stream"][i]), int(ev["ts"][i]), int(ev["t1"][i]))
         k = ev["kind"][i]
-        if k in FLAG_KINDS or k == "agent":
+        if k:
             rows[key].add(("action", k))
         nm = (ev["name"][i] or "").strip().lower()
         if nm:
@@ -310,7 +340,11 @@ def stage_index(db):
         have[(str(ev["stream"][i]), int(ev["ts"][i]))].add(ev["kind"][i])
     d = ep.to_pydict()
     n = len(d["ts"])
-    for k in FLAG_KINDS:
+    # The flag set is WHATEVER THE CORPUS PRODUCED - discovered type ids
+    # plus the geometric onsets - not a literal tuple of eight verbs. A
+    # driving corpus gets its own columns without a line changing here.
+    kinds = sorted({k for v in have.values() for k in v if k})
+    for k in kinds:
         ep = ep.append_column(f"has_{k}", pa.array(
             [k in have.get((str(d["stream"][i]), int(d["ts"][i])), ())
              for i in range(n)], pa.bool_()))

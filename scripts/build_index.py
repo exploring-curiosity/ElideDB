@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
 
 from elidedb import Store                                    # noqa: E402
-from elidedb.plan import FLAG_KINDS                          # noqa: E402
+
 
 
 def main():
@@ -53,7 +53,7 @@ def main():
     for i in range(len(ev["ts"])):
         key = (str(ev["stream"][i]), int(ev["ts"][i]), int(ev["t1"][i]))
         k = ev["kind"][i]
-        if k in FLAG_KINDS or k == "agent":
+        if k:
             rows[key].add(("action", k))
         nm = (ev["name"][i] or "").strip().lower()
         if nm:
@@ -113,13 +113,14 @@ def main():
     # unreadable until it was restored from version 1 through the log.
     # A derived-column builder has to be re-runnable; the base columns
     # are whatever this builder did not add.
-    derived = {f"has_{k}" for k in FLAG_KINDS} | {"n_labels"}
+    kinds = sorted({k for v in have.values() for k in v if k})
+    derived = {f"has_{k}" for k in kinds} | {"n_labels"}
     base = [c for c in ep.column_names if c not in derived]
     ep = ep.select(base)
     d = ep.to_pydict()
     n = len(d["ts"])
     ep2 = ep
-    for k in FLAG_KINDS:
+    for k in kinds:
         ep2 = ep2.append_column(
             f"has_{k}", pa.array(
                 [k in have.get((str(d["stream"][i]), int(d["ts"][i])), ())

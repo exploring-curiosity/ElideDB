@@ -57,11 +57,27 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from elidedb import Store                                    # noqa: E402
 
-TEMPLATES = ("put the {a} on the {b}", "pick up the {a}",
-             "put the {a} into the {b}", "take the {a} out of the {b}",
-             "the robot arm moves the {a}", "open the {a}",
-             "close the {a}", "place the {a} next to the {b}",
-             "move the {a} to the {b}", "the {a} is picked up")
+# WAS ten hand-written sentence frames - "put the {a} on the {b}",
+# "open the {a}", ... - used to synthesise the text side of student
+# training. That is the strongest form of hardwiring in the system,
+# because a student trained on them has the task grammar baked into its
+# WEIGHTS rather than into an `if` someone can later delete.
+#
+# The frames now come from the corpus: whatever phrasings the store's
+# own labels attest, so a driving corpus trains on driving language and
+# this one on manipulation language, with no list in between.
+def corpus_templates(store, limit=32):
+    """Attested phrasings, most frequent first. () if the store cannot
+    supply any - in which case the caller must not invent some."""
+    from collections import Counter
+    from elidedb.derive import attested
+    if "labels" not in store.tables():
+        return ()
+    vals = [str(v) for v in
+            store.table("labels").scan().column("value").to_pylist()]
+    vocab = set(attested(vals, min_count=2))
+    keep = [v for v in vals if v and set(v.split()) & vocab]
+    return tuple(w for w, _ in Counter(keep).most_common(limit))
 DIM = 256
 
 
@@ -121,14 +137,25 @@ def main():
     terms = sorted({t for t in vocab} |
                    {v for lst in vocab.values() for v in (lst or [])})
     rng = np.random.default_rng(0)
+    frames_ = corpus_templates(db)
+    if not frames_:
+        raise SystemExit(
+            "no attested phrasings in this store - refusing to invent a "
+            "sentence grammar. Ingest a corpus first; a student trained "
+            "on hand-written frames has the task taxonomy in its weights.")
     qs = []
-    while len(qs) < nq:
-        tp = TEMPLATES[rng.integers(len(TEMPLATES))]
+    guard = 0
+    while len(qs) < nq and guard < nq * 50:
+        guard += 1
+        # an attested phrasing, with attested terms substituted into it
+        # where it has slots; no frame is authored here
+        tp = frames_[rng.integers(len(frames_))]
         a, b = terms[rng.integers(len(terms))], terms[rng.integers(len(terms))]
-        q = tp.format(a=a, b=b)
+        q = tp.format(a=a, b=b) if "{a}" in tp else tp
         if q not in qs:
             qs.append(q)
-    print(f"{len(qs)} training queries from {len(terms)} attested terms")
+    print(f"{len(qs)} training queries from {len(terms)} attested terms "
+          f"and {len(frames_)} attested phrasings")
 
     # ---- teacher labels: its ORDER over the corpus, per query
     from elidedb.pe import _text_vec as pe_text
