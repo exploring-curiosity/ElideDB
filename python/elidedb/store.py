@@ -23,6 +23,10 @@ from __future__ import annotations
 import io
 import json
 import time
+import contextlib
+import fcntl
+import importlib
+import os
 import uuid
 from pathlib import Path
 
@@ -53,6 +57,51 @@ def _row_width(schema: pa.Schema) -> int:
         except (ValueError, AttributeError):
             w += 32                       # strings/lists: a guess is fine
     return max(w, 1)
+
+
+# THE DATABASE DOES NOT CACHE. Not yet, deliberately: a buffer pool is
+# real work with real invalidation rules, and it is the LAST thing to
+# build, after the layout and the pruning are right. Until then the
+# honest position is that repeat reads should cost what first reads
+# cost, so a benchmark number cannot be quietly borrowed from the OS.
+#
+# Reads therefore open store files with F_NOCACHE (macOS) / O_DIRECT-ish
+# advice, which tells the kernel not to keep this file's pages in the
+# unified buffer cache. That is scoped to OUR files: the system cache
+# and every other process's data are untouched, which `sudo purge` can
+# never say. Set ELIDEDB_CACHE=1 to opt back into the OS page cache.
+_NOCACHE = os.environ.get("ELIDEDB_CACHE", "0") not in ("1", "true")
+_F_NOCACHE = 48                      # <sys/fcntl.h>, Darwin
+
+
+def _uncached(path):
+    """Open a store file so its pages are not retained by the kernel.
+
+    Returns a plain binary file object; pyarrow accepts any file-like,
+    so this drops in wherever a path was passed. Falls back to a normal
+    open anywhere the fcntl is unavailable (Linux, odd filesystems) -
+    losing the no-cache property is worth strictly less than crashing,
+    and the caller is told by ELIDEDB_CACHE what it asked for.
+    """
+    f = open(path, "rb", buffering=0)
+    try:
+        fcntl.fcntl(f.fileno(), _F_NOCACHE, 1)
+    except Exception:
+        pass
+    return f
+
+
+def _pf(path):
+    """pq.ParquetFile honouring the no-cache policy."""
+    return pq.ParquetFile(_uncached(path) if _NOCACHE else str(path))
+
+
+def _read(path, **kw):
+    """pq.read_table honouring the no-cache policy."""
+    if not _NOCACHE:
+        return pq.read_table(str(path), **kw)
+    with _uncached(path) as fh:
+        return pq.read_table(fh, **kw)
 
 
 def _top(md, c: int) -> str:
@@ -198,7 +247,7 @@ class Table:
         if st.files:
             # compare against the LATEST file: after additive evolution the
             # newest schema is the table's current contract
-            existing = pq.ParquetFile(
+            existing = _pf(
                 self.dir / st.files[-1].path).schema_arrow
             have = {f.name: f.type for f in existing}
             new = {f.name: f.type for f in table.schema}
@@ -482,7 +531,7 @@ class Table:
             if t0 <= f.min_ts and f.max_ts <= t1:
                 dropped += f.rows
                 continue  # fully covered: no rewrite needed
-            t = pq.read_table(self.dir / f.path)
+            t = _read(self.dir / f.path)
             keep = t.filter(pc.or_(pc.less(t.column("ts"), t0),
                                    pc.greater(t.column("ts"), t1)))
             dropped += len(t) - len(keep)
@@ -514,7 +563,7 @@ class Table:
         st = self.state()
         keys, vals = [], []
         for fi, f in enumerate(st.files):
-            col = pq.read_table(self.dir / f.path, columns=[column]) \
+            col = _read(self.dir / f.path, columns=[column]) \
                 .column(column).to_numpy(zero_copy_only=False)
             keys.append(bptree.encode_key(col))
             vals.append((np.uint64(fi) << np.uint64(40)) |
@@ -594,7 +643,7 @@ class Table:
         for fi in np.unique(file_ids):
             fmask = file_ids == fi
             frows = rows[fmask]
-            pf = pq.ParquetFile(self.dir / st.files[fi].path)
+            pf = _pf(self.dir / st.files[fi].path)
             md = pf.metadata
             # metadata-driven row->group mapping: group sizes are whatever
             # the writer chose (now width-adaptive), so boundaries come
@@ -670,7 +719,7 @@ class Table:
             if not f.may_contain(column, lo, hi):
                 continue
             p = self.dir / f.path
-            pf = pq.ParquetFile(p)
+            pf = _pf(p)
             md = pf.metadata
             ci = _col_index(md, column)
             if ci is None:
@@ -723,7 +772,7 @@ class Table:
         # ts min/max overlap the window — which is exactly what the reader
         # below will materialize. Same math as warehouse skip-indexes.
         for f in files:
-            pf = pq.ParquetFile(self.dir / f.path)
+            pf = _pf(self.dir / f.path)
             md = pf.metadata
             footer_bytes = md.serialized_size
             ts_idx = _col_index(md, "ts") or 0
@@ -751,7 +800,7 @@ class Table:
         if t1 is not None:
             c = pc.field("ts") <= t1
             filt = c if filt is None else filt & c
-        parts = [pq.read_table(self.dir / f.path, columns=columns,
+        parts = [_read(self.dir / f.path, columns=columns,
                                filters=filt) for f in files]
         out = pa.concat_tables(parts, promote_options="permissive")
         if len(parts) > 1:  # files may interleave in time across streams
@@ -854,6 +903,105 @@ class Store:
 
     def table(self, name: str) -> Table:
         return Table(self, name)
+
+    def drop_caches(self) -> dict:
+        """Forget everything this store has memoised. Nothing else.
+
+        The point is scope. `sudo purge` empties the whole machine's
+        unified buffer cache - every other process's working set with
+        it - which makes a benchmark both unrepeatable and rude. What a
+        database should be able to say is "drop MY cache", so this
+        clears only what ElideDB itself holds: the derived matrices
+        memoised per (store, version) in context.py and cracked.py.
+
+        File pages are handled separately and earlier: store reads open
+        with F_NOCACHE, so the kernel is never asked to retain them in
+        the first place. Nothing to evict beats evicting.
+
+        Loaded model weights are NOT dropped - they are not a cache of
+        the data, they are the program.
+        """
+        out = {}
+        for mod, names in ((".context", ("_CTX_CACHE", "_SPACE_CACHE")),
+                           (".cracked", ("_CACHE",))):
+            try:
+                m = importlib.import_module(mod, __package__)
+            except Exception:
+                continue
+            for n in names:
+                d = getattr(m, n, None)
+                if isinstance(d, dict):
+                    out[f"{mod.lstrip('.')}.{n}"] = len(d)
+                    d.clear()
+        out["file_pages"] = "not cached (F_NOCACHE)" if _NOCACHE else "OS"
+        return out
+
+    @contextlib.contextmanager
+    def measure(self):
+        """Charge every read inside this block to one QueryStats.
+
+        `scan` and `scan_values` already account honestly, but they
+        account PER CALL, and a retrieval query fans out across a dozen
+        channel tables through code that never threads a stats object
+        through. Threading one through every channel would touch every
+        caller for a number none of them care about; wrapping the two
+        entry points for the duration of a block gets the same figure
+        with the accounting living in exactly one place.
+
+            with db.measure() as st:
+                search_set(db, "open the drawer")
+            st.bytes_touched, st.elided_pct
+
+        corpus_bytes is the whole store, not the sum of the tables that
+        happened to be touched - the elision claim is against everything
+        that could have been read, or it means nothing.
+        """
+        stats = QueryStats()
+        stats.corpus_bytes = sum(self.table(t).state().bytes
+                                 for t in self.tables())
+        scan, values = Table.scan, Table.scan_values
+
+        def scan_m(self_, *a, stats=None, **kw):
+            local = QueryStats()
+            out = scan(self_, *a, stats=local, **kw)
+            _fold(stats or _NULL, local)
+            _fold(stats_outer, local)
+            return out
+
+        def values_m(self_, *a, stats=None, **kw):
+            local = QueryStats()
+            out = values(self_, *a, stats=local, **kw)
+            _fold(stats or _NULL, local)
+            _fold(stats_outer, local)
+            return out
+
+        stats_outer = stats
+        Table.scan, Table.scan_values = scan_m, values_m
+        try:
+            yield stats
+        finally:
+            Table.scan, Table.scan_values = scan, values
+
+
+_NULL = None
+
+
+def _fold(dst, src):
+    """Accumulate one QueryStats into another.
+
+    corpus_bytes takes a MAX, not a sum: it is a denominator, and adding
+    denominators across calls would inflate it until the elision figure
+    became meaningless. The measure() block seeds it with the whole
+    store, which is the largest and the correct one; a caller's own
+    stats keeps whatever per-table denominator it had.
+    """
+    if dst is None:
+        return
+    dst.files_total += src.files_total
+    dst.files_touched += src.files_touched
+    dst.bytes_touched += src.bytes_touched
+    dst.rows_returned += src.rows_returned
+    dst.corpus_bytes = max(dst.corpus_bytes, src.corpus_bytes)
 
     def describe(self) -> list[dict]:
         out = []

@@ -39,6 +39,35 @@ K_MULT = float(__import__("os").environ.get("ELIDEDB_BENCH_KMULT", "1.5"))
 K_FIXED = __import__("os").environ.get("ELIDEDB_BENCH_K")
 
 
+def cold_driver():
+    """One query per FRESH PROCESS: the honest "from scratch" number.
+
+    macOS `purge` needs a password, so the OS page cache cannot be
+    flushed from here and true cold-disk timing is not claimed. What a
+    fresh process DOES clear is the layer that actually dominates here:
+    lazily-loaded text encoders, the fitted-weight JSON, Arrow's own
+    buffers, and every module-level cache in scenario.py. In this system
+    that is the difference between a first query and a repeat, and it is
+    far larger than a page fault.
+
+    Bytes touched are cache-independent and are reported either way.
+    """
+    import re
+    print(f"{'q':>4} {'cold ms':>9} {'warm ms':>9} {'bytes':>12} "
+          f"{'elided':>9}   (fresh process per query)")
+    for qi in range(len(QUERIES)):
+        r = subprocess.run([sys.executable, __file__, "--only", str(qi)],
+                           capture_output=True, text=True,
+                           env={**os.environ, "ELIDEDB_BENCH_QUIET": "1"})
+        m = re.search(r"COLD (\S+) (\S+) (\S+) (\S+)", r.stdout)
+        if m:
+            print(f"q{qi:02d} {float(m.group(1)):>9.0f} "
+                  f"{float(m.group(2)):>9.0f} {int(m.group(3)):>12,} "
+                  f"{float(m.group(4)):>8.3f}%")
+        else:
+            print(f"q{qi:02d}   (no result)  {r.stdout.strip()[-90:]}")
+
+
 def main():
     # ELIDEDB_BENCH_STORE points the SAME measurement at a store copy for
     # migration gates (e.g. the fp16 rewrite); the ledger append is skipped
@@ -76,14 +105,36 @@ def main():
     covered = sorted(support)
     rows = []
     degraded = {}   # channel -> error, union over all queries
+    only = (int(sys.argv[sys.argv.index("--only") + 1])
+            if "--only" in sys.argv else None)
     for qi, q in enumerate(QUERIES):
+        if only is not None and qi != only:
+            continue
         if qi not in covered and qi != 6:
             continue
         sup_q = support.get(qi, 0)
         K = (int(K_FIXED) if K_FIXED
              else max(1, int(-(-sup_q * K_MULT // 1))) if sup_q else 10)
-        r = search_set(db, q, purity="fast", k_max=K,
+        # BYTES, not just milliseconds. A query is cheap because it
+        # read almost nothing or because the cache was warm, and only
+        # the first keeps being cheap as the corpus grows. measure()
+        # charges every table read inside the block to one counter.
+        import time as _t
+        _a = _t.perf_counter()
+        with db.measure() as qs:
+            r = search_set(db, q, purity="fast", k_max=K,
+                           cfg_override=(folds or {}).get(q))
+        cold_ms = (_t.perf_counter() - _a) * 1000
+        if only is not None:            # repeat in-process = warm
+            _a = _t.perf_counter()
+            search_set(db, q, purity="fast", k_max=K,
                        cfg_override=(folds or {}).get(q))
+            warm_ms = (_t.perf_counter() - _a) * 1000
+            print(f"COLD {cold_ms:.1f} {warm_ms:.1f} "
+                  f"{qs.bytes_touched} {qs.elided_pct:.4f}")
+        r["bytes"] = qs.bytes_touched
+        r["elided"] = qs.elided_pct
+        r["corpus"] = qs.corpus_bytes
         # A dead channel silently cost 0.38 -> 0.13 once (2026-07-28,
         # transformers 5 vs the IV2 port). The ledger is a record of
         # the SYSTEM, so a run missing a fitted channel must never be
@@ -96,7 +147,9 @@ def main():
             rows.append((qi, q, len(clips), 0, 0, 0,
                          "PASS" if ok else "FAIL", r["ms"]))
             print(f"q{qi:02d} no-match gate "
-                  f"{'PASS' if ok else 'FAIL'}  {q}")
+                  f"{'PASS' if ok else 'FAIL'}  "
+                  f"{r['ms']:6.0f}ms  {r['bytes']:>11,}B  "
+                  f"{r['elided']:6.2f}% elided  {q}")
             continue
         tru = ung = 0
         for c in clips:
@@ -109,14 +162,15 @@ def main():
         prec = tru / len(clips) if clips else None
         yld = tru / sup if sup else None
         rows.append((qi, q, len(clips), tru, ung, sup, prec, yld,
-                     r["ms"]))
+                     r["ms"], r["bytes"], r["elided"]))
         print(f"q{qi:02d} k {K:3d} ret {len(clips):3d} true {tru:3d} "
               f"sup {sup:3d}  "
               f"yield {yld if yld is None else f'{yld:.2f}'}  "
               f"prec {prec if prec is None else f'{prec:.2f}'}  "
-              f"{r['ms']:5.0f}ms  {q}", flush=True)
+              f"{r['ms']:6.0f}ms  {r['bytes']:>11,}B  "
+              f"{r['elided']:6.2f}%  {q}", flush=True)
 
-    graded = [r for r in rows if len(r) == 9]
+    graded = [r for r in rows if len(r) == 11]
     n = sum(r[2] for r in graded)
     tp = sum(r[3] for r in graded)
     mp = (sum(r[6] for r in graded if r[6] is not None)
@@ -171,4 +225,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import os as _os
+    import sys as _sys
+    if "--cold" in _sys.argv:
+        cold_driver()
+    else:
+        main()
