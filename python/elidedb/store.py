@@ -200,8 +200,51 @@ class Table:
             table = table.take(order)  # ts-sorted files ⇒ tight zone maps
         return table
 
+    # ---- layout policy ----------------------------------------------------
+    def set_layout(self, cluster_by: str, *, sort_by=None,
+                   min_group_rows=256) -> int:
+        """Declare the table's CLUSTER KEY once, for every writer.
+
+        Physical layout was a per-call argument, and the `events` table
+        is what that costs. write_once wrote it grouped by `kind`;
+        build_teacher rewrote it with plain replace(), ts-sorted. Same
+        table, two writers, and the store ended up holding the
+        unclustered one - so a lookup on `kind`, the verb, the single
+        most natural predicate in the corpus, had to open 100% of row
+        groups. Nothing errored. The table was simply no longer an
+        index, and only a footer audit would ever have said so.
+
+        Clustering is a property of a TABLE, the way a clustered index
+        is, not a decision each INSERT gets to re-make. Declared here,
+        it lands in the log - so it is versioned, travels with time
+        travel, and any writer that goes through append/replace honours
+        it without knowing it exists.
+        """
+        st = self.state()
+        # A pure METADATA commit: no file added, none removed. The
+        # declaration is a new version, so it is auditable and time
+        # travel still lands on the layout that was in force then, but
+        # it does not rewrite a byte. Existing files keep whatever
+        # layout they were written with until something rebuilds them -
+        # declaring an index does not reorganise the table.
+        return self.log.commit(
+            op="layout", kind=st.kind, schema=st.schema,
+            meta={"layout": {
+                "cluster_by": cluster_by,
+                "sort_by": list(sort_by or [cluster_by, "ts"]),
+                "min_group_rows": int(min_group_rows)}})
+
+    def layout(self) -> dict | None:
+        return self.state().meta.get("layout")
+
     def append(self, table: pa.Table, *, kind="timeseries", meta=None,
                evolve=False) -> int:
+        lay = self.layout()
+        if lay:
+            return self.append_grouped(
+                table, lay["cluster_by"], kind=kind, meta=meta,
+                evolve=evolve, sort_by=lay["sort_by"],
+                min_group_rows=lay["min_group_rows"])
         return self.append_batches([table], kind=kind, meta=meta,
                                    evolve=evolve)
 
@@ -336,7 +379,18 @@ class Table:
 
         Old files are removed in the same transaction that adds the new
         ones, so readers see one or the other and never the union, and
-        the previous version stays addressable through the log."""
+        the previous version stays addressable through the log.
+
+        A rebuild MUST NOT quietly restore the table to ts-sorted: if a
+        cluster key is declared, this rewrites through the grouped
+        writer. That is exactly how `events` lost its layout - a
+        recompute through replace() undid write_once's grouping."""
+        lay = self.layout()
+        if lay:
+            return self.append_grouped(
+                table, lay["cluster_by"], kind=kind, meta=meta,
+                evolve=evolve, sort_by=lay["sort_by"], replace=True,
+                min_group_rows=lay["min_group_rows"])
         st = self.state()
         prev = [f.path for f in st.files]
         self.dir.mkdir(parents=True, exist_ok=True)
