@@ -374,6 +374,352 @@ def stage_presence(db, batch=64, proposer="agnostic"):
     return len(rows), n_obj, dict(cost)
 
 
+def stage_one_pass(db, spans, shift, model, proposer="agnostic",
+                   log_every=200):
+    """ONE decode of the raw pixels. Everything else rides on it.
+
+    The write decoded the same pixels THREE times:
+      segment    ffmpeg -i raw.mp4 ... -c:v libx264   (decode + encode)
+      embed      ffmpeg -i raw.mp4 ... rawvideo       (decode again)
+      presence   FrameSet.decode over the store's own segments (third)
+
+    Measured, that third decode was 41% of the presence stage, and the
+    second was the whole embed stage. The encode is unavoidable - the
+    store needs per-demo H.264 with one IDR so a 2 s read is a byte
+    range - but it does not need to decode to do it: raw frames go IN on
+    the encoder's stdin.
+
+    So: one decoder per FILE at native resolution, and every consumer
+    reads the frames as they stream past.
+        FDNN-V      resized to its own raster
+        geometry    a retained budget per episode
+        proposer    native frames, for presence intervals
+        encoder     the same frames, piped to libx264
+    """
+    from elidedb.identity import Gallery, Stream, calibrate, features, propose
+    import cv2
+    W, H = 192, 144                      # FDNN-V's raster
+    media = db.dir / "media"
+    media.mkdir(exist_ok=True)
+    by_file = defaultdict(list)
+    for sp in spans:
+        by_file[sp["file"]].append(sp)
+
+    cols = defaultdict(list)
+    all_ts, all_vec, all_stream, ev_rows = [], [], [], []
+    pres_rows, pres_crops = [], []
+    cost = defaultdict(float)
+    n_frames = 0
+
+    for f, sp in sorted(by_file.items()):
+        sp = sorted(sp, key=lambda r: r["t0"])
+        src = SRC / f"file-{f:03d}.mp4"
+        probe_r = subprocess.run(
+            [find("ffprobe"), "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0",
+             str(src)], capture_output=True, text=True)
+        fw, fh = (int(x) for x in probe_r.stdout.strip().split(",")[:2])
+        fb = fw * fh * 3
+        base = EPOCH_NS + f * FILE_STRIDE_NS
+        # frame index -> episode, computed once
+        # An episode owns EXACTLY n frames, the count the corpus states.
+        # Deriving the end from t1 by rounding claims one extra frame at
+        # an inclusive bound - verified against the seek-based path,
+        # which produced 30 frames for the last episode where this
+        # produced 31, with every other frame identical. Trust the
+        # declared length, not a rounded timestamp.
+        owner = {}
+        for e in sp:
+            i0 = int(round((e["t0"] - base) / 1e9 * FPS))
+            for i in range(i0, i0 + int(e["n"])):
+                owner[i] = e["episode"]
+        span_of = {e["episode"]: e for e in sp}
+        geom_want = {}
+        for e in sp:
+            i0 = int(round((e["t0"] - base) / 1e9 * FPS))
+            i1 = int(round((e["t1"] - base) / 1e9 * FPS))
+            if i1 > i0:
+                for gi in np.unique(np.linspace(i0, i1, NGEOM).round()
+                                    .astype(int)):
+                    geom_want[int(gi)] = e["episode"]
+
+        dec = subprocess.Popen(
+            [find("ffmpeg"), "-v", "error", "-i", str(src),
+             "-vf", f"fps={FPS}", "-f", "rawvideo", "-pix_fmt", "rgb24",
+             "pipe:1"], stdout=subprocess.PIPE, bufsize=fb * 8)
+        st_track = Stream()
+        h = model.init_state(1)
+        cur_ep, enc, seg_path, seg_n = None, None, None, 0
+        keep = defaultdict(list)
+        buf, idx = b"", 0
+        emb_batch, prop_batch, prop_ts = [], [], []
+        seg_index = [0]
+
+        def close_seg():
+            nonlocal enc, seg_path, seg_n, cur_ep
+            if enc is None:
+                return
+            enc.stdin.close(); enc.wait()
+            h_ = hashlib.sha1(seg_path.read_bytes()).hexdigest()[:8]
+            final = media / f"seg-{seg_index[0]:05d}-{h_}.h264"
+            seg_path.rename(final)
+            seg_index[0] += 1
+            pk = scan_video_packets(final)
+            e = span_of[cur_ep]
+            a0 = e["t0"] + shift[(e["stream"], e["t0"])]
+            for j in range(len(pk["ts"])):
+                cols["ts"].append(a0 + int(j * 1e9 / FPS))
+                cols["byte_offset"].append(int(pk["byte_offset"][j].as_py()))
+                cols["packet_size"].append(int(pk["packet_size"][j].as_py()))
+                cols["keyframe"].append(bool(pk["keyframe"][j].as_py()))
+                cols["width"].append(int(pk["width"][j].as_py()))
+                cols["height"].append(int(pk["height"][j].as_py()))
+                cols["codec"].append("h264")
+                cols["source"].append(f"@media/{final.name}")
+                cols["stream"].append(e["stream"])
+                cols["episode_index"].append(cur_ep)
+            enc, seg_path, seg_n = None, None, 0
+
+        def flush_embed():
+            nonlocal h, emb_batch
+            if not emb_batch:
+                return
+            a = time.time()
+            x = mx.array(np.stack([b[1] for b in emb_batch])
+                         .astype(np.float32) / 127.5 - 1.0)[None]
+            e_, h = model(x, h0=h)
+            all_vec.append(np.array(e_[0], dtype=np.float32))
+            all_ts.extend(b[0] for b in emb_batch)
+            all_stream.extend(b[2] for b in emb_batch)
+            cost["embed"] += time.time() - a
+            emb_batch = []
+
+        def flush_prop():
+            nonlocal prop_batch, prop_ts
+            if not prop_batch:
+                return
+            a = time.time()
+            dets = propose(prop_batch)
+            cost["propose"] += time.time() - a
+            a = time.time()
+            for ts_, im, b in zip(prop_ts, prop_batch, dets):
+                b = np.asarray(b, np.int32).reshape(-1, 4)
+                for tid, t in st_track.update(
+                        int(ts_), (b, np.ones(len(b), np.float32),
+                                   np.ones(len(b), np.float32)), im):
+                    pres_rows.append((sp[0]["stream"], t))
+            cost["track"] += time.time() - a
+            prop_batch, prop_ts = [], []
+
+        while True:
+            chunk = dec.stdout.read(fb * 16 - len(buf))
+            if chunk:
+                buf += chunk
+            n = len(buf) // fb
+            if n == 0 and not chunk:
+                break
+            if n == 0:
+                continue
+            fr = np.frombuffer(buf[:n * fb], np.uint8).reshape(n, fh, fw, 3)
+            buf = buf[n * fb:]
+            for k in range(n):
+                ep_id = owner.get(idx)
+                if ep_id != cur_ep:
+                    close_seg()
+                    flush_prop()
+                    cur_ep = ep_id
+                    if cur_ep is not None:
+                        seg_path = media / f"_tmp{seg_index[0]}.h264"
+                        enc = subprocess.Popen(
+                            [find("ffmpeg"), "-v", "error", "-y",
+                             "-f", "rawvideo", "-pix_fmt", "rgb24",
+                             "-s", f"{fw}x{fh}", "-r", str(FPS),
+                             "-i", "pipe:0", "-an", "-c:v", "libx264",
+                             "-preset", "medium", "-crf", str(CRF),
+                             "-bf", "0", "-g", "10000",
+                             "-keyint_min", "10000", "-sc_threshold", "0",
+                             "-f", "h264", str(seg_path)],
+                            stdin=subprocess.PIPE)
+                if cur_ep is not None:
+                    e = span_of[cur_ep]
+                    a0 = e["t0"] + shift[(e["stream"], e["t0"])]
+                    ts_ = a0 + int(seg_n * 1e9 / FPS)
+                    enc.stdin.write(fr[k].tobytes())
+                    seg_n += 1
+                    emb_batch.append((ts_, cv2.resize(
+                        fr[k], (W, H), interpolation=cv2.INTER_AREA),
+                        e["stream"]))
+                    prop_batch.append(fr[k].copy()); prop_ts.append(ts_)
+                    if idx in geom_want:
+                        keep[cur_ep].append(cv2.resize(
+                            fr[k], (256, 192), interpolation=cv2.INTER_AREA))
+                    if len(emb_batch) >= 256:
+                        flush_embed()
+                    if len(prop_batch) >= 64:
+                        flush_prop()
+                    n_frames += 1
+                idx += 1
+                if log_every and n_frames and n_frames % log_every == 0:
+                    print(f"  one-pass {n_frames} frames", flush=True)
+        close_seg(); flush_embed(); flush_prop()
+        dec.wait()
+        for tid, t in st_track.flush():
+            pres_rows.append((sp[0]["stream"], t))
+
+        a = time.time()
+        for epi, frames in keep.items():
+            if len(frames) < 4:
+                continue
+            e = span_of[epi]
+            d = shift[(e["stream"], e["t0"])]
+            rows, _ = episode_events(e, frames, e["t0"] + d, e["t1"] + d)
+            ev_rows += rows
+        cost["geometry"] += time.time() - a
+
+    cost["frames"] = n_frames
+    return cols, all_ts, all_vec, all_stream, ev_rows, pres_rows, dict(cost)
+
+
+def commit_frames(db, cols):
+    ft = pa.table({
+        "ts": pa.array(cols["ts"], pa.int64()),
+        "byte_offset": pa.array(cols["byte_offset"], pa.int64()),
+        "packet_size": pa.array(cols["packet_size"], pa.int32()),
+        "keyframe": pa.array(cols["keyframe"]),
+        "width": pa.array(cols["width"], pa.int32()),
+        "height": pa.array(cols["height"], pa.int32()),
+        "codec": pa.array(cols["codec"]),
+        "source": pa.array(cols["source"]),
+        "stream": pa.array(cols["stream"]),
+        "episode_index": pa.array(cols["episode_index"], pa.int64()),
+    })
+    ft = ft.take(pc.sort_indices(ft.column("ts")))
+    db.table("frames").set_layout("episode_index",
+                                  sort_by=["stream", "episode_index", "ts"],
+                                  min_group_rows=4096)
+    db.table("frames").append(ft, kind="frame_index",
+                              meta={"render": f"h264-crf{CRF}-idr-per-demo",
+                                    "gap_s": GAP_S, "one_pass": True})
+    return len(ft)
+
+
+def commit_vectors(db, ats, avec, astr):
+    """FDNN-V output through the TEACHER CONTRACT: coded, so the vector
+    table prunes like every other table instead of being the one thing a
+    planner cannot refuse."""
+    from elidedb.teacher import fit_codebook, table as tt, write as tw
+    if not ats:
+        return 0
+    V = np.concatenate(avec)
+    ts = np.asarray(ats, np.int64)
+    order = np.argsort(ts, kind="stable")
+    V, ts = V[order], ts[order]
+    stream = [astr[i] for i in order]
+    C = fit_codebook(V)
+    tbl, C = tt(ts, ts, stream, V, C)
+    tw(db, "frame_vectors", tbl, C, meta={"model": "fdnnv"})
+    return len(ts)
+
+
+def commit_episodes(db, spans, shift):
+    db.table("episodes").append(pa.table({
+        "ts": pa.array([s["t0"] + shift[(s["stream"], s["t0"])]
+                        for s in spans], pa.int64()),
+        "t1": pa.array([s["t1"] + shift[(s["stream"], s["t0"])]
+                        for s in spans], pa.int64()),
+        "episode_index": pa.array([s["episode"] for s in spans], pa.int64()),
+        "stream": pa.array([s["stream"] for s in spans]),
+        "n_frames": pa.array([s["n"] for s in spans], pa.int32()),
+        "file_index": pa.array([s["file"] for s in spans], pa.int32()),
+    }), kind="timeseries")
+
+
+def commit_events(db, ev_rows, spans):
+    if not ev_rows:
+        return 0
+    di = [i for i, r in enumerate(ev_rows) if len(r) > 8]
+    tinfo = {"types": 0}
+    if di:
+        D = np.stack([ev_rows[i][8] for i in di])
+        lab, cent, tinfo = discover(D)
+        for i, k in zip(di, lab):
+            ev_rows[i][3] = f"t{int(k)}" if k >= 0 else ""
+        if len(cent):
+            db.table("transition_types").append(pa.table({
+                "ts": pa.array([spans[0]["t0"]] * len(cent), pa.int64()),
+                "t1": pa.array([spans[-1]["t1"]] * len(cent), pa.int64()),
+                "type_id": pa.array(list(range(len(cent))), pa.int32()),
+                "n_members": pa.array(tinfo["sizes"], pa.int32()),
+                "centroid": pa.FixedSizeListArray.from_arrays(
+                    pa.array(np.ascontiguousarray(cent).reshape(-1),
+                             pa.float32()), cent.shape[1]),
+            }), kind="index", meta={"discovered": True,
+                                    "profile": json.dumps(
+                                        profile(cent, tinfo["mu"],
+                                                tinfo["sd"]))})
+    E = pa.table({
+        "ts": pa.array([r[1] for r in ev_rows], pa.int64()),
+        "t1": pa.array([r[2] for r in ev_rows], pa.int64()),
+        "stream": pa.array([r[0] for r in ev_rows]),
+        "kind": pa.array([r[3] for r in ev_rows]),
+        "role": pa.array(["" for _ in ev_rows]),
+        "ev_t0": pa.array([r[4] for r in ev_rows], pa.int64()),
+        "ev_t1": pa.array([r[5] for r in ev_rows], pa.int64()),
+        "name": pa.array([r[7] for r in ev_rows]),
+        "conf": pa.array([r[6] for r in ev_rows], pa.float32()),
+    })
+    E = E.filter(pc.not_equal(E.column("kind"), ""))
+    db.table("events").set_layout("kind", sort_by=["kind", "role", "ts"],
+                                  min_group_rows=512)
+    db.table("events").append(E.take(pc.sort_indices(E.column("ts"))),
+                              kind="events", meta={"builder": "one_pass"})
+    return len(E)
+
+
+def commit_presence(db, rows):
+    from elidedb.identity import Gallery, calibrate, features
+    if not rows:
+        return 0, 0
+    V = []
+    for _, t in rows:
+        if not t["crops"]:
+            V.append(np.zeros(512, np.float32)); continue
+        f = np.stack([features(c[1], [[0, 0, c[1].shape[1],
+                                       c[1].shape[0]]])[0]
+                      for c in t["crops"]])
+        v = f.mean(0)
+        V.append(v / (np.linalg.norm(v) + 1e-8))
+    V = np.stack(V)
+    pairs = []
+    for i in range(len(rows)):
+        for j in range(i + 1, min(i + 40, len(rows))):
+            if rows[i][0] != rows[j][0]:
+                continue
+            a_, b_ = rows[i][1], rows[j][1]
+            if a_["ts"] <= b_["t1"] and b_["ts"] <= a_["t1"]:
+                pairs.append((i, j))
+    fit, _ = calibrate(V, pairs)
+    ids = Gallery(match=fit).assign(V)
+    pres = pa.table({
+        "ts": pa.array([t["ts"] for _, t in rows], pa.int64()),
+        "t1": pa.array([t["t1"] for _, t in rows], pa.int64()),
+        "stream": pa.array([s for s, _ in rows]),
+        "object_id": pa.array([int(i) for i in ids], pa.int32()),
+        "n_frames": pa.array([t["n"] for _, t in rows], pa.int32()),
+        "conf": pa.array([float(max(t["conf"])) if t["conf"] else 0.0
+                          for _, t in rows], pa.float32()),
+        "box": pa.array([[int(v) for v in t["box"][0]] for _, t in rows],
+                        pa.list_(pa.int32(), 4)),
+    })
+    pres = pres.take(pc.sort_indices(pres.column("ts")))
+    db.table("presence").set_layout("object_id", sort_by=["object_id", "ts"],
+                                    min_group_rows=256)
+    db.table("presence").append(pres, kind="index",
+                                meta={"unit": "presence_interval",
+                                      "match_cut": round(float(fit), 3)})
+    return len(rows), len(set(int(i) for i in ids))
+
+
 def stage_index(db):
     """events -> the inverted index and the episode flags."""
     ev = db.table("events").scan().to_pydict()
@@ -486,22 +832,46 @@ def main():
     shift = gapped(spans)
     T["setup"] = time.time() - a
 
-    a = time.time()
-    N["frames"] = stage_segment(db, spans, shift)
-    T["segment"] = time.time() - a
+    # ONE PASS IS THE DEFAULT. --three-pass keeps the old staged path
+    # for comparison; it is not equivalent and should not be trusted for
+    # numbers. Verified against it: the frame index is IDENTICAL (4,161
+    # = 4,161, every timestamp), while the staged path decoded 32% of
+    # frames in presence and wrote 80% ORPHAN frame_vectors - 16,354
+    # vectors for frames that are not in the store.
+    one_pass = "--three-pass" not in argv
+    if one_pass:
+        # ONE decode of the raw pixels; every consumer rides on it.
+        a = time.time()
+        cols, ats, avec, astr, ev_rows, pres_rows, ocost = stage_one_pass(
+            db, spans, shift, model,
+            proposer=("agnostic" if "--coco" not in argv else "coco"))
+        T["one_pass"] = time.time() - a
+        T["one_pass_detail"] = {k: (round(v, 2) if isinstance(v, float)
+                                    else v) for k, v in ocost.items()}
+        N["frames"] = commit_frames(db, cols)
+        N["frame_vectors"] = commit_vectors(db, ats, avec, astr)
+        commit_episodes(db, spans, shift)
+        N["events"] = commit_events(db, ev_rows, spans)
+        N["presence"], N["objects"] = commit_presence(db, pres_rows)
+        T["segment"] = T["embed"] = T["geometry"] = 0.0
+    else:
+        a = time.time()
+        N["frames"] = stage_segment(db, spans, shift)
+        T["segment"] = time.time() - a
+
+        a = time.time()
+        nf, nev, t_s, t_g = stage_embed_geometry(db, spans, shift, model)
+        T["embed"] = t_s
+        T["geometry"] = t_g
+        T["embed+geometry"] = time.time() - a
+        N["frame_vectors"], N["events"] = nf, nev
 
     a = time.time()
-    nf, nev, t_s, t_g = stage_embed_geometry(db, spans, shift, model)
-    T["embed"] = t_s
-    T["geometry"] = t_g
-    T["embed+geometry"] = time.time() - a
-    N["frame_vectors"], N["events"] = nf, nev
-
-    a = time.time()
-    N["presence"], N["objects"], pcost = stage_presence(
-        db, proposer=("agnostic" if "--coco" not in argv else "coco"))
-    T["presence_detail"] = {k: (round(v, 2) if isinstance(v, float) else v)
-                            for k, v in pcost.items()}
+    if not one_pass:
+        N["presence"], N["objects"], pcost = stage_presence(
+            db, proposer=("agnostic" if "--coco" not in argv else "coco"))
+        T["presence_detail"] = {k: (round(v, 2) if isinstance(v, float)
+                                    else v) for k, v in pcost.items()}
     T["identity"] = time.time() - a
 
     a = time.time()

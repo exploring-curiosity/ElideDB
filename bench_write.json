@@ -1,49 +1,50 @@
 {
- "store": "lake/nohw",
+ "store": "lake/onepass",
  "hours_of_video": 0.231,
  "rows": {
   "frames": 4161,
-  "frame_vectors": 20515,
-  "events": 1118,
-  "presence": 1849,
-  "objects": 596,
-  "labels": 591,
+  "frame_vectors": 4161,
+  "events": 870,
+  "presence": 4643,
+  "objects": 1138,
+  "labels": 607,
   "episodes": 120
  },
  "seconds": {
-  "setup": 0.19,
-  "segment": 13.54,
-  "embed": 11.04,
-  "geometry": 9.84,
-  "embed+geometry": 21.87,
-  "presence_detail": {
-   "decode": 6.47,
-   "propose": 30.5,
-   "track": 1.65,
-   "reid": 12.32,
-   "frames": 1328
+  "setup": 0.2,
+  "one_pass": 151.32,
+  "one_pass_detail": {
+   "propose": 88.09,
+   "track": 5.65,
+   "embed": 1.31,
+   "geometry": 8.5,
+   "frames": 4161
   },
-  "identity": 51.48,
+  "segment": 0.0,
+  "embed": 0.0,
+  "geometry": 0.0,
+  "identity": 0.0,
   "index": 0.01,
   "channels": {},
   "channels_total": 0.0,
-  "total": 87.08
+  "total": 188.91
  },
  "min_per_hour_video": {
-  "setup": 0.013,
-  "segment": 0.976,
-  "embed": 0.796,
-  "geometry": 0.71,
-  "identity": 3.712,
+  "setup": 0.015,
+  "one_pass": 10.91,
+  "segment": 0.0,
+  "embed": 0.0,
+  "geometry": 0.0,
+  "identity": 0.0,
   "index": 0.001,
   "channels_total": 0.0,
-  "total": 6.278
+  "total": 13.62
  },
  "channels_min_per_hour": {},
- "s_per_episode": 0.726,
+ "s_per_episode": 1.574,
  "bytes": {
   "raw_source": 819494109,
-  "store": 69196295,
-  "store_over_raw": 0.08
+  "store": 35759294,
+  "store_over_raw": 0.04
  }
 }
