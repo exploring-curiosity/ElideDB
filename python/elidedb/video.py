@@ -10,6 +10,12 @@ from pathlib import Path
 import numpy as np
 import pyarrow as pa
 
+from .store import _uncached          # media pages are DATABASE pages:
+# the pixel path moves far more bytes than every Parquet read combined,
+# so leaving it on the OS page cache would have kept the cache the
+# engine claims not to use. Same F_NOCACHE policy, same ELIDEDB_CACHE
+# switch, scoped to the store's own media files.
+
 
 def scan_video_packets(video_path, timestamps_ns=None) -> dict:
     """Packet-level scan (no decode) via PyAV if present, else ffprobe.
@@ -116,7 +122,7 @@ class FrameSet:
             for i in sel:
                 src = srcs[i]
                 if src not in handles:
-                    handles[src] = open(self._resolve(src), "rb")
+                    handles[src] = _uncached(self._resolve(src))
                 f = handles[src]
                 f.seek(offs[i])
                 b = f.read(sizes[i])
@@ -209,7 +215,7 @@ class FrameSet:
         # were correct (96 runs = 96 ffmpeg starts ~= 20 ms each).
         payloads, spans = [], []
         total = 0
-        with open(self._resolve(src), "rb") as f:
+        with _uncached(self._resolve(src)) as f:
             for r in runs:
                 f.seek(r["start"])
                 buf = f.read(r["end"] - r["start"])
