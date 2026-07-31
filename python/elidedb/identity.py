@@ -47,16 +47,22 @@ track() ties them together and pays batch-size-1 prices for both.
 
     per-frame track() calls          15.8 ms/frame
     batched track() (list per ep)     9.3
-    detect batched + associate        4.1   <- this module
-      of which detect                 3.9
-      of which associate              0.25
+    detect batched + associate        4.8   <- this module
+      of which detect  (fp16, 448)    4.16
+      of which associate              0.13
+      of which reid                   0.50  (was 4.1 per FRAME)
 
-At 18,000 frames per hour of video that last number is 1.23 min/hour,
+At 18,000 frames per hour of video that is 1.43 min/hour marginal,
 against a 1 min/hour write budget of which 0.23 is already spent by the
-existing pass. Identity therefore does NOT fit the budget for free; it
-fits only because the ReID half - the part that used to dominate - has
-collapsed to ~0.1 min/hour by riding on tracks. The detector is now the
-whole cost, and shrinking it is a detector question, not a design one.
+existing pass. STATED STRAIGHT: identity does not fit the budget. What
+riding on tracks bought is the ReID half, which used to dominate and is
+now 0.1 min/hour; the detector is the entire remaining cost, so closing
+the gap is a detector question, not a design one.
+
+fp16 is worth 14% of detect (4.94 -> 4.16 ms/frame) with the fitted cut
+and track count unchanged. That took interleaved runs to establish - a
+first attempt compared an fp16 run against fp32 runs taken earlier in a
+long session and read the thermal drift as fp16 being SLOWER.
 
 DEVICE. Defaults to the GPU, and this is now measured rather than
 assumed. The old 3-frames-per-episode path put CPU and MPS within 5%
@@ -78,7 +84,15 @@ _M: dict = {}
 
 SEG_MODEL = os.environ.get("ELIDEDB_SEG", "yolo11n-seg.pt")
 REID_MODEL = os.environ.get("ELIDEDB_REID", "yolo26n-reid.onnx")
+# imgsz 448 rather than 384, deliberately paying 0.5 ms/frame for it.
+# 384 is cheaper (3.76 vs 4.23 ms/frame with fp16) and finds MORE boxes
+# (2.63 vs 2.44 per frame), but the extra boxes are marginal ones: its
+# proven-different pairs reach 0.757 against 0.555 at 448, i.e. noisier
+# negatives, and it recovered 72 multi-episode objects against 81. A
+# cheaper size that degrades the identity is not cheaper.
 DET_SZ = int(os.environ.get("ELIDEDB_DET_SZ", "448"))
+# free: same 2.44 boxes/frame, 4.74 -> 4.23 ms/frame
+DET_FP16 = os.environ.get("ELIDEDB_DET_FP16", "1") not in ("0", "")
 # detection is stateless, so the batch may cross episode boundaries;
 # 3.87 ms/frame at ~37 (one episode) against 3.32 at 64
 DET_BATCH = int(os.environ.get("ELIDEDB_DET_BATCH", "64"))
@@ -150,10 +164,11 @@ def detect(frames, imgsz=DET_SZ, batch=DET_BATCH, conf=0.25):
     """
     m = _load()
     out = []
+    kw = {"quantize": "fp16"} if DET_FP16 else {}
     for i in range(0, len(frames), batch):
         chunk = frames[i:i + batch]
         res = m["seg"].predict(chunk, device=m["dev"], single_cls=True,
-                               verbose=False, imgsz=imgsz, conf=conf)
+                               verbose=False, imgsz=imgsz, conf=conf, **kw)
         for im, r in zip(chunk, res):
             H, W = im.shape[:2]
             if r.boxes is None or not len(r.boxes):
