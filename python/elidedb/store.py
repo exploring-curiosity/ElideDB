@@ -205,6 +205,99 @@ class Table:
         return self.log.commit(op="append", kind=kind,
                                schema=str(schema), add=adds, meta=meta)
 
+    def append_grouped(self, table: pa.Table, group_col: str, *,
+                       kind="timeseries", meta=None, evolve=False,
+                       sort_by=None, replace=False,
+                       min_group_rows: int = 1) -> int:
+        """Write with ROW GROUPS ALIGNED TO A LOGICAL UNIT.
+
+        The default writer sizes row groups by bytes, which is right for a
+        sensor stream and wrong for anything whose query unit is an
+        object. The frames table is the proof: 39,026 rows landed in ONE
+        row group of 981 KB, so a query for a single episode decompressed
+        every frame in the store and layer-2 pruning measured 0.45%.
+
+        Here each distinct `group_col` value becomes its own row group, so
+        "give me episode X" touches exactly one. The trade is footer size
+        — 1,122 groups x 9 columns is ~10k column-chunk entries of
+        metadata, and the footer is read on EVERY query — which is the
+        random-access-vs-metadata tension made explicit rather than
+        inherited from a default.
+
+        `sort_by` is recorded in the footer as Parquet sorting_columns, so
+        a reader can know the file is clustered without trusting us.
+        """
+        self.dir.mkdir(parents=True, exist_ok=True)
+        if len(table) == 0:
+            raise ValueError("nothing to write")
+        self._validate(table, evolve)
+        sort_by = sort_by or [group_col, "ts"]
+        sort_by = [c for c in sort_by if c in table.column_names]
+        table = table.take(pc.sort_indices(
+            table, sort_keys=[(c, "ascending") for c in sort_by]))
+
+        g = table.column(group_col).to_pylist()
+        raw, start = [], 0
+        for i in range(1, len(g) + 1):
+            if i == len(g) or g[i] != g[start]:
+                raw.append((start, i - start))
+                start = i
+        # MERGE ADJACENT GROUPS UP TO A ROW FLOOR. One group per distinct
+        # value sounds maximally prunable and is a trap: metadata costs a
+        # fixed amount per group PER COLUMN, so tiny groups invert the
+        # ratio. Measured on the labels table at one-group-per-value -
+        # 406 groups over 7,573 rows - the footer reached 286,796 bytes
+        # against 283,957 bytes of actual column data. The footer was
+        # LARGER THAN THE DATA, and it is read on every query, so the
+        # "index" cost more to consult than the table cost to scan.
+        #
+        # The SORT is what makes statistics prunable; group size is an
+        # independent dial. Merging keeps values contiguous, so each
+        # group still covers a narrow min/max range, at a fraction of the
+        # metadata.
+        bounds = []
+        if min_group_rows <= 1:
+            bounds = raw
+        else:
+            off = cur = 0
+            for s, n in raw:
+                cur += n
+                if cur >= min_group_rows:
+                    bounds.append((off, cur))
+                    off, cur = s + n, 0
+            if cur:
+                bounds.append((off, cur))
+
+        fname = f"part-{uuid.uuid4().hex[:12]}.parquet"
+        path = self.dir / fname
+        idx = {c: table.column_names.index(c) for c in sort_by}
+        sc = [pq.SortingColumn(idx[c]) for c in sort_by]
+        dict_cols = [f.name for f in table.schema
+                     if pa.types.is_string(f.type)
+                     or pa.types.is_large_string(f.type)]
+        w = pq.ParquetWriter(path, table.schema, compression="zstd",
+                             use_dictionary=dict_cols,
+                             write_page_index=True,
+                             sorting_columns=sc,
+                             column_encoding={"ts": "DELTA_BINARY_PACKED"})
+        try:
+            for off, n in bounds:
+                w.write_table(table.slice(off, n), row_group_size=n)
+        finally:
+            w.close()
+        fsync_file(path)
+
+        st = self.state()
+        tsv = table.column("ts")
+        add = [FileEntry(fname, len(table), path.stat().st_size,
+                         tsv[0].as_py(), tsv[-1].as_py())]
+        return self.log.commit(
+            op="replace" if replace else "append", kind=kind,
+            schema=str(table.schema), add=add,
+            remove=[f.path for f in st.files] if replace else [],
+            meta=dict(meta or {}, row_groups=len(bounds),
+                      grouped_by=group_col, sorted_by=sort_by))
+
     def replace(self, table: pa.Table, *, kind="timeseries", meta=None,
                 evolve=False) -> int:
         """REBUILD IN PLACE: these rows become the table, in one commit.
@@ -437,6 +530,69 @@ class Table:
         return [str(self.dir / f.path) for f in self.state(version).files]
 
     # ---- read path --------------------------------------------------------
+    def scan_values(self, column: str, values, columns=None,
+                    version=None, stats: QueryStats | None = None):
+        """VALUE PREDICATE PUSHED INTO THE READER, not applied after it.
+
+        Reading the whole table and calling .filter() afterwards is what
+        makes a store behave like a filesystem: correct answer, no
+        pruning. Measured on the labels table before this existed - a
+        lookup for one name touched 502 KB of 711 KB, 71% of the table,
+        to return 26 episodes.
+
+        Here the predicate goes to the Parquet reader, so row groups
+        whose min/max for `column` cannot contain any requested value are
+        never decompressed. It works because build_index sorts labels by
+        (kind, value) and gives each value its own row group - sorted
+        layout is what turns statistics into an index.
+
+        bytes_touched is charged the same way: footer plus only the row
+        groups whose statistics overlap the requested values.
+        """
+        st = self.state(version)
+        stats = stats if stats is not None else QueryStats()
+        stats.files_total += len(st.files)
+        stats.corpus_bytes += st.bytes
+        want = sorted({str(v) for v in values})
+        if columns is not None:
+            columns = list(dict.fromkeys([*columns, column, "ts"]))
+        lo, hi = want[0], want[-1]
+        parts = []
+        for f in st.files:
+            p = self.dir / f.path
+            pf = pq.ParquetFile(p)
+            md = pf.metadata
+            ci = (md.schema.names.index(column)
+                  if column in md.schema.names else None)
+            if ci is None:
+                continue
+            groups, touched = [], 0
+            for g in range(md.num_row_groups):
+                rg = md.row_group(g)
+                s = rg.column(ci).statistics
+                # min/max is a RANGE test: a group can be skipped only if
+                # every requested value falls outside [min, max].
+                if s is not None and s.min is not None:
+                    if hi < str(s.min) or lo > str(s.max):
+                        continue
+                groups.append(g)
+                for c in range(rg.num_columns):
+                    nm = (md.schema.names[c] if c < len(md.schema.names)
+                          else "")
+                    if columns is None or nm in columns:
+                        touched += rg.column(c).total_compressed_size
+            stats.files_touched += 1
+            stats.bytes_touched += md.serialized_size + touched
+            if not groups:
+                continue
+            tb = pf.read_row_groups(groups, columns=columns)
+            parts.append(tb.filter(pc.field(column).isin(want)))
+        if not parts:
+            return pa.table({"ts": pa.array([], pa.int64())}), stats
+        out = pa.concat_tables(parts, promote_options="permissive")
+        stats.rows_returned += len(out)
+        return out, stats
+
     def scan(self, t0=None, t1=None, columns=None, version=None,
              stats: QueryStats | None = None) -> pa.Table:
         st = self.state(version)
