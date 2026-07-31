@@ -1,79 +1,79 @@
 {
- "corpus_bytes": 44038050,
- "episodes": 595,
- "reps": 20,
+ "corpus_bytes": 151300696,
+ "episodes": 2097,
+ "reps": 50,
  "rows": [
   {
    "query": "episode by index",
-   "p50_ms": 0.47,
-   "p99_ms": 0.593,
-   "bytes": 9770,
-   "pct_of_store": 0.02219,
-   "elided_pct": 99.978,
-   "detail": "595 episodes"
+   "p50_ms": 0.457,
+   "p99_ms": 0.584,
+   "bytes": 27746,
+   "pct_of_store": 0.01834,
+   "elided_pct": 99.982,
+   "detail": "2097 episodes"
   },
   {
    "query": "verb = open",
-   "p50_ms": 0.282,
-   "p99_ms": 0.346,
-   "bytes": 8906,
-   "pct_of_store": 0.02022,
-   "elided_pct": 99.98,
-   "detail": "421 events of 9 kinds"
+   "p50_ms": 0.289,
+   "p99_ms": 0.36,
+   "bytes": 16110,
+   "pct_of_store": 0.01065,
+   "elided_pct": 99.989,
+   "detail": "1580 events of 9 kinds"
   },
   {
    "query": "label = adjust",
-   "p50_ms": 0.491,
-   "p99_ms": 0.599,
-   "bytes": 10058,
-   "pct_of_store": 0.02284,
-   "elided_pct": 99.977,
-   "detail": "360 episodes, 9 values"
+   "p50_ms": 0.762,
+   "p99_ms": 1.484,
+   "bytes": 20776,
+   "pct_of_store": 0.01373,
+   "elided_pct": 99.986,
+   "detail": "1127 episodes, 9 values"
   },
   {
    "query": "object by id",
-   "p50_ms": 0.306,
-   "p99_ms": 0.336,
-   "bytes": 9492,
-   "pct_of_store": 0.02155,
-   "elided_pct": 99.978,
-   "detail": "2 episodes, 191 objects"
+   "p50_ms": 0.46,
+   "p99_ms": 0.772,
+   "bytes": 23718,
+   "pct_of_store": 0.01568,
+   "elided_pct": 99.984,
+   "detail": "6 episodes, 744 objects"
   },
   {
    "query": "like this clip",
-   "p50_ms": 1.22,
-   "p99_ms": 1.481,
-   "bytes": 25553,
-   "pct_of_store": 0.05802,
-   "elided_pct": 99.942,
-   "detail": "3 objects -> 32 episodes"
+   "p50_ms": 2.363,
+   "p99_ms": 3.006,
+   "bytes": 96837,
+   "pct_of_store": 0.064,
+   "elided_pct": 99.936,
+   "detail": "3 objects -> 120 episodes"
   },
   {
    "query": "2 s frame index",
-   "p50_ms": 0.689,
-   "p99_ms": 0.82,
-   "bytes": 28722,
-   "pct_of_store": 0.06522,
-   "elided_pct": 99.935,
+   "p50_ms": 0.925,
+   "p99_ms": 1.042,
+   "bytes": 43875,
+   "pct_of_store": 0.029,
+   "elided_pct": 99.971,
    "detail": "11 frames"
   },
   {
    "query": "2 s decode (pixels)",
-   "p50_ms": 32.456,
-   "p99_ms": 33.216,
-   "bytes": 86392,
-   "pct_of_store": 0.19618,
-   "elided_pct": 99.804,
+   "p50_ms": 33.968,
+   "p99_ms": 34.33,
+   "bytes": 87239,
+   "pct_of_store": 0.05766,
+   "elided_pct": 99.942,
    "detail": "11 frames decoded"
   },
   {
    "query": "full vector scan",
-   "p50_ms": 17.379,
-   "p99_ms": 18.011,
-   "bytes": 43705404,
-   "pct_of_store": 99.24464,
-   "elided_pct": 0.755,
-   "detail": "20515 vectors"
+   "p50_ms": 33.189,
+   "p99_ms": 33.608,
+   "bytes": 150125716,
+   "pct_of_store": 99.22341,
+   "elided_pct": 0.777,
+   "detail": "70436 vectors"
   }
  ]
 }
