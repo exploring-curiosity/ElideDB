@@ -1,0 +1,17 @@
+{
+ "channel": "pe",
+ "store": "lake/bridge4h",
+ "params": 2365440,
+ "train_seconds": 29.4,
+ "test_episodes": 420,
+ "fidelity": {
+  "cosine": 0.189,
+  "mean_baseline": 0.9231,
+  "lift_over_mean": -0.7341,
+  "nn_top1": 0.005,
+  "nn_recall@10": 0.2263
+ },
+ "student_ms_per_span": 0.0511,
+ "spans_per_episode": 8.0,
+ "student_ms_per_episode": 0.409
+}

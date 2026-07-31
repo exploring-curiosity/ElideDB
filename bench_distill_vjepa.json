@@ -1,0 +1,17 @@
+{
+ "channel": "vjepa",
+ "teacher": "facebook/vjepa2-vitl-fpc64-256",
+ "clips": 400,
+ "student_params_M": 2.2,
+ "teacher_params_M": 300,
+ "train_seconds": 91.8,
+ "fidelity": {
+  "cosine": 0.1537,
+  "mean_baseline": 0.9766,
+  "nn_top1": 0.0125,
+  "nn_recall@10": 0.16
+ },
+ "teacher_ms_per_clip": 43.68,
+ "student_ms_per_clip": 2.116,
+ "speedup": 20.6
+}

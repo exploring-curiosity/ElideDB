@@ -414,7 +414,8 @@ def main():
     raw_bytes = sum((SRC / f"file-{f:03d}.mp4").stat().st_size for f in files)
     out_json = {
         "store": str(out), "hours_of_video": round(hours, 3), "rows": N,
-        "seconds": {k: round(v, 2) for k, v in T.items()},
+        "seconds": {k: (round(v, 2) if isinstance(v, (int, float)) else v)
+                    for k, v in T.items()},
         "min_per_hour_video": {
             k: round(v / 60 / max(hours, 1e-9), 3)
             for k, v in T.items()
