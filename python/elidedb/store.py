@@ -55,6 +55,29 @@ def _row_width(schema: pa.Schema) -> int:
     return max(w, 1)
 
 
+def _top(md, c: int) -> str:
+    """Top-level column name for row-group column index `c`.
+
+    Parquet flattens nested types to LEAVES, and md.schema.names is the
+    leaf list: a fixed-size-list column named `vector` appears there as
+    `element`, with path_in_schema `vector.list.element`. Matching a
+    projection against the leaf name therefore never matched a vector
+    column, so its bytes were never charged - 8.7 MB per row group on
+    frame_vectors, silently absent from every elision number in a store
+    that is 87% vectors. Metrics that undercount are worse than no
+    metrics: they make the headline claim look better than it is.
+    """
+    return md.row_group(0).column(c).path_in_schema.split(".")[0]
+
+
+def _col_index(md, name: str):
+    """Row-group column index for a TOP-LEVEL column name, or None."""
+    for c in range(md.num_columns):
+        if _top(md, c) == name:
+            return c
+    return None
+
+
 def _zone(table: pa.Table, columns) -> dict:
     """File-level min/max for the columns a file is clustered on.
 
@@ -583,8 +606,7 @@ class Table:
             groups = np.unique(g_of).tolist()
             for g in groups:
                 for c in range(md.row_group(g).num_columns):
-                    name = md.schema.names[c]
-                    if want_cols is None or name in want_cols:
+                    if want_cols is None or _top(md, c) in want_cols:
                         stats.bytes_touched += \
                             md.row_group(g).column(c).total_compressed_size
             tbl = pf.read_row_groups(groups, columns=want_cols)
@@ -650,8 +672,7 @@ class Table:
             p = self.dir / f.path
             pf = pq.ParquetFile(p)
             md = pf.metadata
-            ci = (md.schema.names.index(column)
-                  if column in md.schema.names else None)
+            ci = _col_index(md, column)
             if ci is None:
                 continue
             groups, touched = [], 0
@@ -669,9 +690,7 @@ class Table:
                         pass          # mixed types: cannot prove empty
                 groups.append(g)
                 for c in range(rg.num_columns):
-                    nm = (md.schema.names[c] if c < len(md.schema.names)
-                          else "")
-                    if columns is None or nm in columns:
+                    if columns is None or _top(md, c) in columns:
                         touched += rg.column(c).total_compressed_size
             stats.files_touched += 1
             stats.bytes_touched += md.serialized_size + touched
@@ -707,7 +726,7 @@ class Table:
             pf = pq.ParquetFile(self.dir / f.path)
             md = pf.metadata
             footer_bytes = md.serialized_size
-            ts_idx = md.schema.names.index("ts") if "ts" in md.schema.names else 0
+            ts_idx = _col_index(md, "ts") or 0
             touched = 0
             for rg in range(md.num_row_groups):
                 g = md.row_group(rg)
@@ -718,8 +737,8 @@ class Table:
                     continue
                 for c in range(g.num_columns):
                     col = g.column(c)
-                    name = md.schema.names[c] if c < len(md.schema.names) else ""
-                    if columns is None or name in columns or c == ts_idx:
+                    if (columns is None or _top(md, c) in columns
+                            or c == ts_idx):
                         touched += col.total_compressed_size
             stats.bytes_touched += footer_bytes + touched
         if not files:

@@ -1,0 +1,38 @@
+{
+ "store": "/private/tmp/claude-501/-Users-sudharshanramesh-Studies-MyProjects-StreetDex/98dca676-44e6-4cc3-8fda-c9744a9c5fb3/scratchpad/smoke",
+ "hours_of_video": 1.14,
+ "rows": {
+  "frames": 20515,
+  "frame_vectors": 20515,
+  "events": 4719,
+  "instances": 1555,
+  "objects": 191,
+  "labels": 3171,
+  "episodes": 595
+ },
+ "seconds": {
+  "setup": 0.2,
+  "segment": 61.97,
+  "embed": 11.23,
+  "geometry": 3.71,
+  "embed+geometry": 15.16,
+  "identity": 149.31,
+  "index": 0.02,
+  "total": 226.65
+ },
+ "min_per_hour_video": {
+  "setup": 0.003,
+  "segment": 0.906,
+  "embed": 0.164,
+  "geometry": 0.054,
+  "identity": 2.183,
+  "index": 0.0,
+  "total": 3.314
+ },
+ "s_per_episode": 0.381,
+ "bytes": {
+  "raw_source": 207827979,
+  "store": 146309838,
+  "store_over_raw": 0.7
+ }
+}

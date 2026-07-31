@@ -1,0 +1,79 @@
+{
+ "corpus_bytes": 44038050,
+ "episodes": 595,
+ "reps": 20,
+ "rows": [
+  {
+   "query": "episode by index",
+   "p50_ms": 0.47,
+   "p99_ms": 0.593,
+   "bytes": 9770,
+   "pct_of_store": 0.02219,
+   "elided_pct": 99.978,
+   "detail": "595 episodes"
+  },
+  {
+   "query": "verb = open",
+   "p50_ms": 0.282,
+   "p99_ms": 0.346,
+   "bytes": 8906,
+   "pct_of_store": 0.02022,
+   "elided_pct": 99.98,
+   "detail": "421 events of 9 kinds"
+  },
+  {
+   "query": "label = adjust",
+   "p50_ms": 0.491,
+   "p99_ms": 0.599,
+   "bytes": 10058,
+   "pct_of_store": 0.02284,
+   "elided_pct": 99.977,
+   "detail": "360 episodes, 9 values"
+  },
+  {
+   "query": "object by id",
+   "p50_ms": 0.306,
+   "p99_ms": 0.336,
+   "bytes": 9492,
+   "pct_of_store": 0.02155,
+   "elided_pct": 99.978,
+   "detail": "2 episodes, 191 objects"
+  },
+  {
+   "query": "like this clip",
+   "p50_ms": 1.22,
+   "p99_ms": 1.481,
+   "bytes": 25553,
+   "pct_of_store": 0.05802,
+   "elided_pct": 99.942,
+   "detail": "3 objects -> 32 episodes"
+  },
+  {
+   "query": "2 s frame index",
+   "p50_ms": 0.689,
+   "p99_ms": 0.82,
+   "bytes": 28722,
+   "pct_of_store": 0.06522,
+   "elided_pct": 99.935,
+   "detail": "11 frames"
+  },
+  {
+   "query": "2 s decode (pixels)",
+   "p50_ms": 32.456,
+   "p99_ms": 33.216,
+   "bytes": 86392,
+   "pct_of_store": 0.19618,
+   "elided_pct": 99.804,
+   "detail": "11 frames decoded"
+  },
+  {
+   "query": "full vector scan",
+   "p50_ms": 17.379,
+   "p99_ms": 18.011,
+   "bytes": 43705404,
+   "pct_of_store": 99.24464,
+   "elided_pct": 0.755,
+   "detail": "20515 vectors"
+  }
+ ]
+}

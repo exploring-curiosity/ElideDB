@@ -144,6 +144,73 @@ def stream_once(model, f, spans, geom_every):
                 np.zeros((0, 1152), np.float32)), keep
 
 
+def episode_events(s, frames, t0=None, t1=None):
+    """Geometry for ONE episode -> (event rows, name crops per row).
+
+    Extracted so the one-pass writer and the full-write pipeline share
+    one implementation instead of two that drift. Every row is
+    [stream, ep_t0, ep_t1, kind, ev_t0, ev_t1, conf, name]; crops are
+    (row_index_within_this_episode, image) for the opt-in namer.
+    """
+    from build_teacher import articulated_box, cavity_series, REL_MIN, CAV_MIN
+    from extract_events import agent_track, causal_participants, motion_mags, _crop
+    a0 = s["t0"] if t0 is None else t0
+    a1 = s["t1"] if t1 is None else t1
+    rows, crops = [], []
+    times = np.linspace(a0, a1, len(frames)).astype(np.int64)
+
+    def stamp(i):
+        return int(times[min(max(i, 0), len(times) - 1)])
+
+    mg = motion_mags(frames)
+    tr, span, masks, tracks = agent_track(frames, mg)
+    abox = articulated_box(frames, masks.any(0), mg)
+    if tr is not None:
+        rows.append([s["stream"], a0, a1, "agent",
+                     stamp(tr[0][0]), stamp(tr[-1][0] + 1), float(span), ""])
+    cav = cavity_series(frames, abox)
+    if cav is not None and len(cav) >= 4:
+        b0 = float(np.median(cav[:2]))
+        run = None
+        for i in range(1, len(cav)):
+            d = float(cav[i]) - b0
+            k = ("open" if d >= CAV_MIN else
+                 "close" if d <= -CAV_MIN else None)
+            if k and run is None:
+                run = (k, i)
+            elif run and k != run[0]:
+                rows.append([s["stream"], a0, a1, run[0],
+                             stamp(run[1] - 1), stamp(i), abs(d), ""])
+                run = (k, i) if k else None
+        if run:
+            rows.append([s["stream"], a0, a1, run[0], stamp(run[1] - 1),
+                         stamp(len(cav) - 1), abs(float(cav[-1]) - b0), ""])
+    for origin, dest, onset, life, area in causal_participants(
+            tracks, tr, len(frames) - 1):
+        c0 = np.array([(origin[0] + origin[2]) / 2,
+                       (origin[1] + origin[3]) / 2])
+        c1 = np.array([(dest[0] + dest[2]) / 2, (dest[1] + dest[3]) / 2])
+        od = float(np.hypot(origin[2] - origin[0], origin[3] - origin[1]))
+        disp = float(np.linalg.norm(c1 - c0)) / max(od, 1.0)
+
+        def inside(c, r):
+            return (r is not None and r[0] <= c[0] <= r[2]
+                    and r[1] <= c[1] <= r[3])
+        k = ("adjust" if disp < REL_MIN else
+             "take_out" if (inside(c0, abox) and not inside(c1, abox))
+             else "put_into" if inside(c1, abox) else "put_on")
+        for kind, i0, i1, box, src in (
+                ("contact", onset - 1, onset, origin, frames[0]),
+                ("release", onset + life - 1, onset + life, dest, frames[-1]),
+                (k, onset, onset + life, dest, frames[0])):
+            rows.append([s["stream"], a0, a1, kind, stamp(i0), stamp(i1),
+                         1.0, ""])
+            c = _crop(src, box if kind != k else origin)
+            if c is not None and c.size:
+                crops.append((len(rows) - 1, c))
+    return rows, crops
+
+
 def main():
     argv = sys.argv
     out = Path(argv[argv.index("--out") + 1] if "--out" in argv
@@ -207,65 +274,12 @@ def main():
         for epi, frames in keep.items():
             if len(frames) < 4:
                 continue
-            s = span_of[epi]
-            times = np.linspace(s["t0"], s["t1"], len(frames)).astype(np.int64)
-            mg = motion_mags(frames)
-            tr, span, masks, tracks = agent_track(frames, mg)
-            abox = articulated_box(frames, masks.any(0), mg)
-
-            def stamp(i):
-                return int(times[min(max(i, 0), len(times) - 1)])
-
-            if tr is not None:
-                ev_rows.append([s["stream"], s["t0"], s["t1"], "agent",
-                                stamp(tr[0][0]), stamp(tr[-1][0] + 1),
-                                float(span), ""])
-            cav = cavity_series(frames, abox)
-            if cav is not None and len(cav) >= 4:
-                b0 = float(np.median(cav[:2]))
-                run = None
-                for i in range(1, len(cav)):
-                    d = float(cav[i]) - b0
-                    k = ("open" if d >= CAV_MIN else
-                         "close" if d <= -CAV_MIN else None)
-                    if k and run is None:
-                        run = (k, i)
-                    elif run and k != run[0]:
-                        ev_rows.append([s["stream"], s["t0"], s["t1"],
-                                        run[0], stamp(run[1] - 1),
-                                        stamp(i), abs(d), ""])
-                        run = (k, i) if k else None
-                if run:
-                    ev_rows.append([s["stream"], s["t0"], s["t1"], run[0],
-                                    stamp(run[1] - 1), stamp(len(cav) - 1),
-                                    abs(float(cav[-1]) - b0), ""])
-            for origin, dest, onset, life, area in causal_participants(
-                    tracks, tr, len(frames) - 1):
-                c0 = np.array([(origin[0] + origin[2]) / 2,
-                               (origin[1] + origin[3]) / 2])
-                c1 = np.array([(dest[0] + dest[2]) / 2,
-                               (dest[1] + dest[3]) / 2])
-                od = float(np.hypot(origin[2] - origin[0],
-                                    origin[3] - origin[1]))
-                disp = float(np.linalg.norm(c1 - c0)) / max(od, 1.0)
-
-                def inside(c, r):
-                    return (r is not None and r[0] <= c[0] <= r[2]
-                            and r[1] <= c[1] <= r[3])
-                k = ("adjust" if disp < REL_MIN else
-                     "take_out" if (inside(c0, abox) and not inside(c1, abox))
-                     else "put_into" if inside(c1, abox) else "put_on")
-                for kind, i0, i1, box, src in (
-                        ("contact", onset - 1, onset, origin, frames[0]),
-                        ("release", onset + life - 1, onset + life, dest,
-                         frames[-1]),
-                        (k, onset, onset + life, dest, frames[0])):
-                    ev_rows.append([s["stream"], s["t0"], s["t1"], kind,
-                                    stamp(i0), stamp(i1), 1.0, ""])
-                    c = _crop(src, box if kind != k else origin)
-                    if c is not None and c.size:
-                        name_crops.append(c)
-                        name_slot.append(len(ev_rows) - 1)
+            rows, crops = episode_events(span_of[epi], frames)
+            base = len(ev_rows)
+            ev_rows += rows
+            for j, c in crops:
+                name_crops.append(c)
+                name_slot.append(base + j)
         t_geom += time.time() - a
 
     T["stream+embed"] = t_stream
