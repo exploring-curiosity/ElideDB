@@ -127,6 +127,18 @@ def _col_index(md, name: str):
     return None
 
 
+def _max_end(table: pa.Table) -> int:
+    """Latest interval END in this table: max(t1), falling back to
+    max(ts) for a table that has no t1 (point rows end where they
+    start)."""
+    col = "t1" if "t1" in table.column_names else "ts"
+    try:
+        v = pc.max(table.column(col)).as_py()
+    except Exception:
+        return 0
+    return int(v or 0)
+
+
 def _zone(table: pa.Table, columns) -> dict:
     """File-level min/max for the columns a file is clustered on.
 
@@ -337,7 +349,8 @@ class Table:
             write_parquet(batch, path)
             tsv = batch.column("ts")
             adds.append(FileEntry(fname, len(batch), path.stat().st_size,
-                                  tsv[0].as_py(), tsv[-1].as_py()))
+                                  tsv[0].as_py(), tsv[-1].as_py(),
+                                  {}, _max_end(batch)))
         if not adds:
             raise ValueError("nothing to append (all batches empty)")
         return self.log.commit(op="append", kind=kind,
@@ -429,7 +442,7 @@ class Table:
         tsv = table.column("ts")
         add = [FileEntry(fname, len(table), path.stat().st_size,
                          tsv[0].as_py(), tsv[-1].as_py(),
-                         _zone(table, sort_by))]
+                         _zone(table, sort_by), _max_end(table))]
         return self.log.commit(
             op="replace" if replace else "append", kind=kind,
             schema=str(table.schema), add=add,
@@ -476,7 +489,8 @@ class Table:
         write_parquet(table, path)
         tsv = table.column("ts")
         add = [FileEntry(fname, len(table), path.stat().st_size,
-                         tsv[0].as_py(), tsv[-1].as_py())]
+                         tsv[0].as_py(), tsv[-1].as_py(),
+                         {}, _max_end(table))]
         return self.log.commit(op="replace", kind=kind,
                                schema=str(table.schema), add=add,
                                remove=prev,
@@ -525,7 +539,7 @@ class Table:
         st = self.state()
         removes, adds, dropped = [], [], 0
         for f in st.files:
-            if f.max_ts < t0 or f.min_ts > t1:
+            if not f.overlaps(t0, t1):
                 continue  # untouched
             removes.append(f.path)
             if t0 <= f.min_ts and f.max_ts <= t1:
@@ -763,9 +777,10 @@ class Table:
             columns = ["ts", *columns]  # ts always rides along: it is the
                                         # sort key and the alignment axis
         # layer 1: log-level file pruning (zone maps in the commit entries)
-        files = [f for f in st.files
-                 if not (t0 is not None and f.max_ts < t0)
-                 and not (t1 is not None and f.min_ts > t1)]
+        # INTERVAL overlap, not start-point containment. See
+        # FileEntry.overlaps: comparing t0 against max(ts) drops any row
+        # whose interval began before the window and had not ended.
+        files = [f for f in st.files if f.overlaps(t0, t1)]
         stats.files_touched += len(files)
         # layer 2 accounting: row-group zone maps from the Parquet footer.
         # A surviving file is charged its footer + only the row groups whose
@@ -776,11 +791,20 @@ class Table:
             md = pf.metadata
             footer_bytes = md.serialized_size
             ts_idx = _col_index(md, "ts") or 0
+            # SAME INTERVAL FIX, one layer down. A row group is skipped
+            # only if no interval in it can reach the window: compare t0
+            # against max(t1) where the table has a t1, and against
+            # max(ts) only when it does not.
+            e_idx = _col_index(md, "t1")
             touched = 0
             for rg in range(md.num_row_groups):
                 g = md.row_group(rg)
                 st_ts = g.column(ts_idx).statistics
-                if st_ts is not None and t0 is not None and st_ts.max < t0:
+                st_e = (g.column(e_idx).statistics
+                        if e_idx is not None else st_ts)
+                end = (st_e.max if st_e is not None and st_e.max is not None
+                       else (st_ts.max if st_ts is not None else None))
+                if end is not None and t0 is not None and end < t0:
                     continue
                 if st_ts is not None and t1 is not None and st_ts.min > t1:
                     continue
@@ -794,12 +818,23 @@ class Table:
             empty = pa.schema([("ts", pa.int64())])
             return pa.table({"ts": pa.array([], pa.int64())}).cast(empty)
         # layer 2: Parquet row-group pruning + projection pushdown
+        # INTERVAL OVERLAP, not start containment. `ts >= t0` asks
+        # "did it START inside the window", which is a different
+        # question and drops every row still in progress when the window
+        # opens. Overlap is (row.t1 >= t0) AND (row.ts <= t1); with no
+        # t1 column a row is a point and the two coincide.
+        has_end = "t1" in (pq.ParquetFile(
+            _uncached(self.dir / files[0].path) if _NOCACHE
+            else str(self.dir / files[0].path)).schema_arrow.names)
+        end_f = pc.field("t1") if has_end else pc.field("ts")
         filt = None
         if t0 is not None:
-            filt = pc.field("ts") >= t0
+            filt = end_f >= t0
         if t1 is not None:
             c = pc.field("ts") <= t1
             filt = c if filt is None else filt & c
+        if has_end and columns is not None and "t1" not in columns:
+            columns = [*columns, "t1"]      # the predicate needs it
         parts = [_read(self.dir / f.path, columns=columns,
                                filters=filt) for f in files]
         out = pa.concat_tables(parts, promote_options="permissive")

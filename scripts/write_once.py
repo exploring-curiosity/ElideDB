@@ -153,14 +153,14 @@ def _structures(frames, keep=6):
     segmenter runs class-agnostic.
     """
     try:
-        from elidedb.identity import detect
+        from elidedb.identity import propose
     except Exception:
         return []
     try:
-        per = detect([frames[0], frames[len(frames) // 2], frames[-1]])
+        per = propose([frames[0], frames[len(frames) // 2], frames[-1]])
     except Exception:
         return []
-    first, last = per[0][0], per[-1][0]
+    first, last = per[0], per[-1]
     if not len(first) or not len(last):
         return []
 

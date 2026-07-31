@@ -44,17 +44,47 @@ class FileEntry:
     # nothing, so the writer records these only for its sort keys -
     # a zone map that never prunes is pure metadata cost.
     zone: dict = field(default_factory=dict)
+    # END of the latest interval in this file, i.e. max(t1) - NOT
+    # max(ts). For point-like rows the two are the same and this is
+    # redundant; for INTERVALS they are not, and the difference is a
+    # wrong answer rather than a slow one.
+    #
+    # An object present from t=100 to t=900 in a file whose starts span
+    # 100..200 has max_ts=200. A query for [400, 500] overlaps that
+    # object, but `max_ts < t0` prunes the whole file and returns
+    # nothing. Verified: 0 rows where 1 was correct. Every table until
+    # now was point-like or short-lived so it never fired; presence
+    # intervals - "this object was on the table for four hours" - are
+    # exactly the shape that breaks it.
+    max_end: int = 0
 
     def to_json(self):
         d = dict(self.__dict__)
         if not d["zone"]:
             d.pop("zone")     # old readers, and old files, see no change
+        if not d["max_end"]:
+            d.pop("max_end")
         return d
 
     @staticmethod
     def from_json(d):
+        # a file written before max_end existed falls back to max_ts,
+        # which is CONSERVATIVE only for point-like rows. It is recorded
+        # as such rather than silently trusted: see overlaps().
         return FileEntry(d["path"], d["rows"], d["bytes"], d["min_ts"],
-                         d["max_ts"], d.get("zone", {}))
+                         d["max_ts"], d.get("zone", {}),
+                         int(d.get("max_end", 0)))
+
+    def overlaps(self, t0, t1) -> bool:
+        """True unless this file provably holds no interval meeting
+        [t0, t1]. Compares against the interval END, so a long-lived row
+        that starts before the window is not pruned away."""
+        end = self.max_end or self.max_ts
+        if t0 is not None and end < t0:
+            return False
+        if t1 is not None and self.min_ts > t1:
+            return False
+        return True
 
     def may_contain(self, column, lo, hi) -> bool:
         """False only when this file PROVABLY holds nothing in [lo, hi].

@@ -154,6 +154,52 @@ def _load():
     return _M
 
 
+PROPOSER = os.environ.get("ELIDEDB_PROPOSER", "FastSAM-s.pt")
+
+
+def propose(frames, imgsz=DET_SZ, batch=DET_BATCH, conf=0.25):
+    """CLASS-AGNOSTIC region proposal. Not YOLO-with-single_cls.
+
+    MEASURED, same frames, same model: single_cls=True and
+    single_cls=False give byte-identical output - 3.10 det/frame, all of
+    it {oven, sink, bowl, person, spoon, wine glass}. single_cls is a
+    TRAINING flag; at inference the detector still fires only on
+    COCO-shaped things. Everything built on it inherited an 80-class
+    prior that was never intended, which is why looking for a container
+    found 0.7 regions per episode and they were ovens.
+
+    FastSAM is trained on SA-1B with no class list at all, and on this
+    corpus returns 45.3 regions/frame against COCO YOLO's 2.6, with 3.5
+    large structures per frame against 1.1.
+
+    It costs 24.93 ms/frame batched fp16 = 7.48 min per hour of video,
+    which is 7x the write budget - so this is a TEACHER. It is paid once
+    to make training pairs and then distilled, exactly like every other
+    teacher here. Never put it on the write path directly.
+    """
+    from ultralytics import FastSAM
+    if "prop" not in _M:
+        _M["prop"] = FastSAM(PROPOSER)
+    out = []
+    kw = {"quantize": "fp16"} if DET_FP16 else {}
+    for i in range(0, len(frames), batch):
+        chunk = frames[i:i + batch]
+        res = _M["prop"].predict(chunk, device=device(), verbose=False,
+                                 imgsz=imgsz, conf=conf, **kw)
+        for im, r in zip(chunk, res):
+            H, W = im.shape[:2]
+            if r.boxes is None or not len(r.boxes):
+                out.append(np.zeros((0, 4), np.int32))
+                continue
+            b = r.boxes.xyxy.cpu().numpy()
+            b = np.stack([b[:, 0].clip(0, W), b[:, 1].clip(0, H),
+                          b[:, 2].clip(0, W), b[:, 3].clip(0, H)],
+                         1).astype(np.int32)
+            wh = (b[:, 2] - b[:, 0]), (b[:, 3] - b[:, 1])
+            out.append(b[(wh[0] >= MIN_SIDE) & (wh[1] >= MIN_SIDE)])
+    return out
+
+
 def detect(frames, imgsz=DET_SZ, batch=DET_BATCH, conf=0.25):
     """Class-agnostic regions per frame: [(boxes Nx4, conf N, area N)].
 
