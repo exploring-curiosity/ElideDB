@@ -91,9 +91,58 @@ def _uncached(path):
     return f
 
 
+class _PF:
+    """pq.ParquetFile that OWNS its file object and closes it.
+
+    The first version handed `_uncached(path)` straight to ParquetFile
+    and returned. ParquetFile does not take ownership, so every footer
+    read leaked one open file object - and a leaked Python file object
+    with a live buffer makes the interpreter hang at SHUTDOWN, not at
+    the point of the leak. That is why an inspection script printed all
+    of its output and then sat at 0% CPU for 27 minutes holding nothing
+    visible: it was stuck tearing down, and `lsof` showed zero because
+    the fd table was already gone.
+
+    Every read path since the no-cache change was leaking. Closing is
+    the fix; being a context manager as well means callers can be
+    explicit where it matters.
+    """
+
+    __slots__ = ("_fh", "pf")
+
+    def __init__(self, path):
+        self._fh = _uncached(path) if _NOCACHE else None
+        self.pf = pq.ParquetFile(self._fh if self._fh is not None
+                                 else str(path))
+
+    def __getattr__(self, k):
+        return getattr(self.pf, k)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        self.close()
+
+    def close(self):
+        try:
+            self.pf.close()
+        except Exception:
+            pass
+        if self._fh is not None:
+            try:
+                self._fh.close()
+            except Exception:
+                pass
+            self._fh = None
+
+    def __del__(self):
+        self.close()
+
+
 def _pf(path):
-    """pq.ParquetFile honouring the no-cache policy."""
-    return pq.ParquetFile(_uncached(path) if _NOCACHE else str(path))
+    """pq.ParquetFile honouring the no-cache policy, and closing."""
+    return _PF(path)
 
 
 def _read(path, **kw):

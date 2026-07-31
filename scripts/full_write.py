@@ -52,7 +52,7 @@ from elidedb import Store                                      # noqa: E402
 from elidedb.fdnnvideo import fdnnv_dir, load_encoder          # noqa: E402
 from elidedb.fftools import find                               # noqa: E402
 from elidedb.transitions import discover, profile                # noqa: E402
-from elidedb.video import scan_video_packets                   # noqa: E402
+from elidedb.video import FrameSet, scan_video_packets         # noqa: E402
 from write_once import (CAM, DATA, EPOCH_NS, FILE_STRIDE_NS,   # noqa: E402
                         FPS, NGEOM, episode_events,
                         episode_spans, stream_once)
@@ -265,45 +265,113 @@ def stage_embed_geometry(db, spans, shift, model):
     return len(ts), len(ev_rows), t_stream, t_geom
 
 
-def stage_identity(db, n_ep):
-    """Tracks -> one id per physical object, and where each was seen."""
-    from build_identity import collect
-    from elidedb.identity import Gallery, calibrate
-    rows, pairs, _ = collect(db, n_ep, False, run=True)
+def stage_presence(db, batch=64, proposer="agnostic"):
+    """PRESENCE INTERVALS over the continuous stream. Idle included.
+
+    Replaces the per-episode identity stage, and fixes the largest
+    violation in the audit (L0): the element path was entirely
+    motion-triggered, so an object that sat still produced no track, no
+    event and no row. "Every clip where a banana is on the table" was
+    not badly answered, it was structurally unanswerable.
+
+    Here every frame is proposed on and tracked, so a thing that never
+    moves is still a thing that was THERE, and its presence is one
+    interval row however long it lasted.
+
+    Streamed in ts order across the whole stream rather than per
+    episode: raw capture is continuous, and episodes are something the
+    engine produces, not something it is given.
+    """
+    from elidedb.identity import (Gallery, Stream, calibrate, detect,
+                                  features, propose)
+    ft = db.table("frames").scan()
+    ft = ft.take(pc.sort_indices(ft, sort_keys=[("stream", "ascending"),
+                                                ("ts", "ascending")]))
+    streams = sorted(set(ft.column("stream").to_pylist()))
+    rows, cost = [], defaultdict(float)
+    n_frames = 0
+    for sname in streams:
+        sub = ft.filter(pc.equal(ft.column("stream"), sname))
+        tss = [int(v) for v in sub.column("ts").to_pylist()]
+        st = Stream()
+        for i in range(0, len(sub), batch):
+            a = time.time()
+            chunk = FrameSet(db, "frames", sub.slice(i, batch)).decode()
+            cost["decode"] += time.time() - a
+            if not chunk:
+                continue
+            chunk = sorted(chunk)
+            ims = [c[1] for c in chunk]
+            n_frames += len(ims)
+            a = time.time()
+            dets = (propose(ims) if proposer == "agnostic"
+                    else [d[0] for d in detect(ims)])
+            cost["propose"] += time.time() - a
+            a = time.time()
+            for (ts, im), b in zip(chunk, dets):
+                b = np.asarray(b, np.int32).reshape(-1, 4)
+                d = (b, np.ones(len(b), np.float32),
+                     np.ones(len(b), np.float32))
+                for tid, t in st.update(int(ts), d, im):
+                    rows.append((sname, t))
+            cost["track"] += time.time() - a
+        for tid, t in st.flush():
+            rows.append((sname, t))
     if not rows:
-        return 0, 0
-    V = np.stack([r["vec"] for r in rows])
+        return 0, 0, dict(cost)
+
+    # one ReID call per CLOSED track, on the views retained while it was
+    # open - the same "one question per sighting" that made identity
+    # work, now without an episode to tell it when to ask
+    a = time.time()
+    V = []
+    for _, t in rows:
+        if not t["crops"]:
+            V.append(np.zeros(512, np.float32)); continue
+        f = np.stack([features(c[1], [[0, 0, c[1].shape[1],
+                                       c[1].shape[0]]])[0]
+                      for c in t["crops"]])
+        v = f.mean(0)
+        V.append(v / (np.linalg.norm(v) + 1e-8))
+    V = np.stack(V)
+    cost["reid"] = time.time() - a
+
+    # free negatives: two presence intervals that OVERLAP IN TIME on the
+    # same stream are two different objects - one thing cannot be in two
+    # places. No episode needed to scope it.
+    pairs = []
+    for i in range(len(rows)):
+        for j in range(i + 1, min(i + 40, len(rows))):
+            if rows[i][0] != rows[j][0]:
+                continue
+            a_, b_ = rows[i][1], rows[j][1]
+            if a_["ts"] <= b_["t1"] and b_["ts"] <= a_["t1"]:
+                pairs.append((i, j))
     fit, _ = calibrate(V, pairs)
     ids = Gallery(match=fit).assign(V)
-    for r, o in zip(rows, ids):
-        r["object_id"] = int(o)
-    inst = pa.table({
-        "ts": pa.array([r["ts"] for r in rows], pa.int64()),
-        "t1": pa.array([r["t1"] for r in rows], pa.int64()),
-        "stream": pa.array([r["stream"] for r in rows]),
-        "ep_ts": pa.array([r["ep_ts"] for r in rows], pa.int64()),
-        "object_id": pa.array([r["object_id"] for r in rows], pa.int32()),
-        "n_frames": pa.array([r["n_frames"] for r in rows], pa.int32()),
-        "conf": pa.array([r["conf"] for r in rows], pa.float32()),
-        "box": pa.array([r["box"] for r in rows], pa.list_(pa.int32(), 4)),
+
+    pres = pa.table({
+        "ts": pa.array([t["ts"] for _, t in rows], pa.int64()),
+        "t1": pa.array([t["t1"] for _, t in rows], pa.int64()),
+        "stream": pa.array([s for s, _ in rows]),
+        "object_id": pa.array([int(i) for i in ids], pa.int32()),
+        "n_frames": pa.array([t["n"] for _, t in rows], pa.int32()),
+        "conf": pa.array([float(max(t["conf"])) if t["conf"] else 0.0
+                          for _, t in rows], pa.float32()),
+        "box": pa.array([[int(v) for v in t["box"][0]] for _, t in rows],
+                        pa.list_(pa.int32(), 4)),
     })
-    db.table("instances").set_layout("object_id",
-                                     sort_by=["object_id", "ts"],
-                                     min_group_rows=256)
-    db.table("instances").append(inst.take(pc.sort_indices(inst.column("ts"))),
-                                 kind="index", meta={"unit": "track"})
-    by, cnt = defaultdict(set), defaultdict(int)
-    for r in rows:
-        by[r["object_id"]].add(r["ep_ts"]); cnt[r["object_id"]] += 1
-    oids = sorted(cnt)
-    db.table("objects").append(pa.table({
-        "ts": pa.array([min(by[o]) for o in oids], pa.int64()),
-        "t1": pa.array([max(by[o]) for o in oids], pa.int64()),
-        "object_id": pa.array(oids, pa.int32()),
-        "n_instances": pa.array([cnt[o] for o in oids], pa.int32()),
-        "n_episodes": pa.array([len(by[o]) for o in oids], pa.int32()),
-    }), kind="index", meta={"match_cut": round(float(fit), 3)})
-    return len(rows), len(oids)
+    pres = pres.take(pc.sort_indices(pres.column("ts")))
+    db.table("presence").set_layout("object_id",
+                                    sort_by=["object_id", "ts"],
+                                    min_group_rows=256)
+    db.table("presence").append(pres, kind="index",
+                                meta={"unit": "presence_interval",
+                                      "match_cut": round(float(fit), 3),
+                                      "proposer": proposer})
+    n_obj = len(set(int(i) for i in ids))
+    cost["frames"] = n_frames
+    return len(rows), n_obj, dict(cost)
 
 
 def stage_index(db):
@@ -430,7 +498,10 @@ def main():
     N["frame_vectors"], N["events"] = nf, nev
 
     a = time.time()
-    N["instances"], N["objects"] = stage_identity(db, len(spans))
+    N["presence"], N["objects"], pcost = stage_presence(
+        db, proposer=("agnostic" if "--coco" not in argv else "coco"))
+    T["presence_detail"] = {k: (round(v, 2) if isinstance(v, float) else v)
+                            for k, v in pcost.items()}
     T["identity"] = time.time() - a
 
     a = time.time()

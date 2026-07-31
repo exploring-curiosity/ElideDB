@@ -141,7 +141,10 @@ def device():
 
 
 def _load():
-    if _M:
+    # check for THIS function's own keys, not for _M being non-empty:
+    # propose() also caches into _M, so `if _M` short-circuited here and
+    # left reid unloaded the moment a proposer had run first.
+    if "reid" in _M:
         return _M
     from ultralytics import YOLO
     from ultralytics.trackers.utils.reid import ReID
@@ -269,13 +272,108 @@ def _tracker(gmc=None):
     return BOTSORT(args=SimpleNamespace(**cfg))
 
 
+class Stream:
+    """CONTINUOUS tracking over a stream. No episode boundaries.
+
+    link() below takes one episode's frames and builds a fresh tracker
+    for each - correct when a corpus ships discrete demos, and an
+    assumption the engine has no right to make. Raw capture is a
+    continuous recording; episodes are something the engine must
+    PRODUCE. A driving log, a surveillance feed and a surgical recording
+    have no cuts to reset on.
+
+    So the tracker runs for the life of the stream and a track ends when
+    the OBJECT does - it leaves frame, is occluded past the buffer, or
+    is carried away. That track's span is exactly a PRESENCE INTERVAL:
+    "this object was here, from t0 to t1", one row however long it
+    lasted. An object sitting still for four hours is one row, not
+    72,000, and it is finally recorded at all - the motion-triggered
+    element path never produced a row for anything that did not move.
+
+    Online by construction: detections go in frame by frame, closed
+    tracks come out as they close, and only the open tracks are held.
+    A stream that does not fit in memory is the normal case, not an
+    edge case.
+
+    Exemplar crops are retained per OPEN track and embedded once, at
+    close - the same "ask the object store one question per track, with
+    a whole sighting behind it" that made identity work, now without
+    needing the episode to know when to ask.
+    """
+
+    def __init__(self, gmc=None, views=EXEMPLARS, buffer_s=6.0):
+        self.tr = _tracker(gmc)
+        self.views = views
+        # how long a track survives with no detection before it is
+        # declared ended, in SECONDS not frames: a frame count means
+        # different things at 5 fps and 30 fps, and the corpus chooses
+        # the frame rate.
+        self.buffer_s = buffer_s
+        self.open: dict[int, dict] = {}
+        self.last_ts = None
+
+    def update(self, ts, det, frame=None):
+        """One frame in; the tracks that CLOSED at this frame out.
+
+        `det` is (boxes Nx4, conf N, area N) from detect()/propose().
+        """
+        b, c, a = det
+        self.last_ts = int(ts)
+        seen = set()
+        if len(b):
+            xywh = np.stack([(b[:, 0] + b[:, 2]) / 2,
+                             (b[:, 1] + b[:, 3]) / 2,
+                             b[:, 2] - b[:, 0], b[:, 3] - b[:, 1]], 1)
+            rows = self.tr.update(
+                _Dets(xywh.astype(np.float32), c,
+                      np.zeros(len(b), np.float32)), frame)
+            for row in rows:
+                tid, di = int(row[-4]), int(row[-1])
+                if di >= len(b):
+                    continue
+                seen.add(tid)
+                t = self.open.setdefault(tid, {
+                    "ts": int(ts), "t1": int(ts), "n": 0,
+                    "box": [], "conf": [], "area": [], "crops": []})
+                t["t1"] = int(ts)
+                t["n"] += 1
+                t["box"].append(b[di])
+                t["conf"].append(float(c[di]))
+                t["area"].append(float(a[di]))
+                # retain a bounded, spread set of views for the one
+                # ReID call this track will ever cost
+                if frame is not None and len(t["crops"]) < self.views:
+                    x0, y0, x1, y1 = (int(v) for v in b[di])
+                    if x1 > x0 and y1 > y0:
+                        t["crops"].append((b[di], frame[y0:y1, x0:x1]))
+        return self._reap(seen)
+
+    def _reap(self, seen):
+        gap = self.buffer_s * 1e9
+        done = []
+        for tid in list(self.open):
+            if tid in seen:
+                continue
+            if self.last_ts - self.open[tid]["t1"] > gap:
+                done.append((tid, self.open.pop(tid)))
+        return done
+
+    def flush(self):
+        """End of stream: everything still open is still real."""
+        out = list(self.open.items())
+        self.open = {}
+        return out
+
+
 def link(dets, frames=None, gmc=None):
     """Associate one episode's consecutive detections into tracks.
 
     Returns {track_id: {"f": [frame idx], "box": [...], "conf": [...],
-    "area": [...]}}. A fresh tracker per episode: a new episode is a new
-    scene, and carrying Kalman state across a cut invents motion that
-    never happened.
+    "area": [...]}}. A fresh tracker per call, which is right only when
+    the caller really does have a scene cut. Prefer Stream for
+    continuous capture; this remains for corpora that ship discrete
+    clips, where resetting at a genuine cut avoids carrying Kalman state
+    across it.
     """
     tr = _tracker(gmc)
     out: dict[int, dict] = {}
