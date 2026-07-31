@@ -72,6 +72,34 @@ def detect_phrases(images, phrases, threshold=0.3):
     return per
 
 
+def detect_regions(images, prompt="object", threshold=0.25):
+    """ALL boxes above threshold, per image — a class-agnostic REGION
+    PROPOSER rather than a phrase verifier.
+
+    detect_phrases keeps the single best box per phrase, which is right
+    when you are asking "where is the lid" and wrong when you are asking
+    "where are the objects": it returns at most one region per frame and
+    an object store needs every region in the frame.
+    """
+    import torch
+    g = _load()
+    text = prompt.lower().strip(". ") + " ."
+    inputs = g["proc"](images=images, text=[text] * len(images),
+                       return_tensors="pt").to(g["dev"])
+    with torch.no_grad():
+        out = g["model"](**inputs)
+    res = g["proc"].post_process_grounded_object_detection(
+        out, inputs.input_ids, threshold=threshold, text_threshold=0.2,
+        target_sizes=[im.size[::-1] for im in images])
+    per = []
+    for r in res:
+        boxes = [([float(v) for v in b], float(sc))
+                 for b, sc in zip(r["boxes"], r["scores"])]
+        boxes.sort(key=lambda x: -x[1])
+        per.append(boxes)
+    return per
+
+
 def _ioa(a, b):
     """Intersection over area of A — how much of X sits inside Y."""
     x0 = max(a[0], b[0]); y0 = max(a[1], b[1])
