@@ -85,7 +85,72 @@ def flag_lookup(store, kinds, stats: QueryStats | None = None):
     return {(str(ss[i]), int(ts[i])) for i in np.where(m)[0]}, stats
 
 
-def plan(store, text, nouns=None, kinds=None):
+def objects_in(store, stream, t0, t1, stats: QueryStats | None = None):
+    """Which object ids were visible in [t0, t1] of `stream`.
+
+    A time-range scan of `instances`, which is a timeseries table, so
+    the commit-log zone map on ts drops files and the row-group
+    statistics drop groups. Returns ids, not names - there are no names.
+    """
+    if "instances" not in store.tables():
+        return set(), stats
+    stats = stats or QueryStats()
+    tb = store.table("instances").scan(
+        t0=t0, t1=t1, columns=["stream", "object_id", "n_frames"],
+        stats=stats)
+    if not len(tb):
+        return set(), stats
+    m = pc.equal(tb.column("stream"), stream)
+    tb = tb.filter(m)
+    return {int(v) for v in tb.column("object_id").to_pylist()}, stats
+
+
+def object_lookup(store, object_ids, stats: QueryStats | None = None):
+    """Episodes containing ANY of these physical objects.
+
+    The point of the whole object store, expressed as a database
+    operation: an equality predicate on a CLUSTERED column, answered by
+    statistics. `instances` is sorted and grouped by object_id, so the
+    lookup is a contiguous range - the commit log drops files, the
+    footer drops row groups, the page index drops pages, and only then
+    does anything decompress.
+
+    No embedding is touched and no video is opened. This is layer 1 of
+    the planner for identity, exactly as `labels` is for vocabulary.
+    """
+    if "instances" not in store.tables() or not object_ids:
+        return None, stats
+    stats = stats or QueryStats()
+    tb, stats = store.table("instances").scan_values(
+        "object_id", [int(o) for o in object_ids],
+        columns=["stream", "ep_ts", "object_id"], stats=stats)
+    return set(zip([str(s) for s in tb.column("stream").to_pylist()],
+                   [int(a) for a in tb.column("ep_ts").to_pylist()])), stats
+
+
+def like_this_clip(store, stream, t0, t1):
+    """Query by example, metadata only: same physical objects, elsewhere.
+
+    Identify the objects in the given window, then find every other
+    episode holding one of them. Two index lookups, no vector scan, no
+    text anywhere in the path - which is what having a stable id per
+    physical object buys.
+    """
+    stats = QueryStats()
+    ids, stats = objects_in(store, stream, t0, t1, stats)
+    before = stats.bytes_touched
+    eps, stats = object_lookup(store, ids, stats)
+    return {"objects": sorted(ids), "episodes": eps,
+            "steps": [{"stage": "objects_in", "kept": len(ids),
+                       "bytes": before},
+                      {"stage": "object_lookup",
+                       "kept": len(eps or ()),
+                       "bytes": stats.bytes_touched - before}],
+            "bytes_touched": stats.bytes_touched,
+            "corpus_bytes": stats.corpus_bytes}
+
+
+def plan(store, text, nouns=None, kinds=None, object_ids=None):
     """Narrow by metadata, report what each layer cost.
 
     The return value is deliberately auditable: a caller can see how many
@@ -109,6 +174,16 @@ def plan(store, text, nouns=None, kinds=None):
         got, stats = flag_lookup(store, kinds, stats=stats)
         if got is not None:
             steps.append({"stage": "flags", "asked": sorted(kinds),
+                          "kept": len(got),
+                          "bytes": stats.bytes_touched - before})
+            cand = got if cand is None else (cand & got)
+
+    if object_ids:
+        before = stats.bytes_touched
+        got, stats = object_lookup(store, object_ids, stats=stats)
+        if got is not None:
+            steps.append({"stage": "objects",
+                          "asked": sorted(int(o) for o in object_ids),
                           "kept": len(got),
                           "bytes": stats.bytes_touched - before})
             cand = got if cand is None else (cand & got)

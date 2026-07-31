@@ -55,6 +55,29 @@ def _row_width(schema: pa.Schema) -> int:
     return max(w, 1)
 
 
+def _zone(table: pa.Table, columns) -> dict:
+    """File-level min/max for the columns a file is clustered on.
+
+    Recorded in the commit log, so a value predicate can drop whole
+    files from JSON already in memory - before any Parquet footer is
+    opened. Strings are kept as strings and numbers as numbers; the
+    comparison at read time is the caller's, and it must compare like
+    with like or it will prune wrongly rather than merely badly.
+    """
+    z = {}
+    for c in columns or ():
+        if c not in table.column_names or c == "ts":
+            continue      # ts already has its own dedicated pair
+        col = table.column(c)
+        try:
+            lo, hi = pc.min(col).as_py(), pc.max(col).as_py()
+        except pa.ArrowNotImplementedError:
+            continue      # lists, structs: no order, no zone map
+        if lo is not None and hi is not None:
+            z[c] = [lo, hi]
+    return z
+
+
 def write_parquet(table: pa.Table, path):
     """One writer for every file in the store. `ts` gets
     DELTA_BINARY_PACKED — timestamps are near-arithmetic, so delta encoding
@@ -290,7 +313,8 @@ class Table:
         st = self.state()
         tsv = table.column("ts")
         add = [FileEntry(fname, len(table), path.stat().st_size,
-                         tsv[0].as_py(), tsv[-1].as_py())]
+                         tsv[0].as_py(), tsv[-1].as_py(),
+                         _zone(table, sort_by))]
         return self.log.commit(
             op="replace" if replace else "append", kind=kind,
             schema=str(table.schema), add=add,
@@ -553,12 +577,22 @@ class Table:
         stats = stats if stats is not None else QueryStats()
         stats.files_total += len(st.files)
         stats.corpus_bytes += st.bytes
-        want = sorted({str(v) for v in values})
+        # Values keep their OWN type. Stringifying them first, as this
+        # did, silently breaks numeric columns: "51" < "7" lexically, so
+        # a lookup for object 7 would drop the group holding it. A
+        # comparison against Parquet statistics has to be in the
+        # column's order, not in string order.
+        want = sorted(set(values))
         if columns is not None:
             columns = list(dict.fromkeys([*columns, column, "ts"]))
         lo, hi = want[0], want[-1]
         parts = []
         for f in st.files:
+            # LAYER 0: the commit log's zone map, already in memory. A
+            # file that provably holds nothing in [lo, hi] is dropped
+            # here, before its footer is even opened.
+            if not f.may_contain(column, lo, hi):
+                continue
             p = self.dir / f.path
             pf = pq.ParquetFile(p)
             md = pf.metadata
@@ -570,11 +604,15 @@ class Table:
             for g in range(md.num_row_groups):
                 rg = md.row_group(g)
                 s = rg.column(ci).statistics
-                # min/max is a RANGE test: a group can be skipped only if
-                # every requested value falls outside [min, max].
+                # LAYER 1: row-group statistics. min/max is a RANGE
+                # test, so a group is skipped only when every requested
+                # value falls outside [min, max].
                 if s is not None and s.min is not None:
-                    if hi < str(s.min) or lo > str(s.max):
-                        continue
+                    try:
+                        if hi < s.min or lo > s.max:
+                            continue
+                    except TypeError:
+                        pass          # mixed types: cannot prove empty
                 groups.append(g)
                 for c in range(rg.num_columns):
                     nm = (md.schema.names[c] if c < len(md.schema.names)

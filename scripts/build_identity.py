@@ -276,9 +276,17 @@ def main():
     # evolve: the unit of a row changed from frame-crop to track, which
     # adds n_frames. The store refuses silent schema drift, so the
     # widening is stated here rather than discovered by a reader later.
+    #
+    # min_group_rows=256 is the measured knee of this table's U-curve,
+    # not a value copied from labels. Average bytes a single-object
+    # lookup must touch (footer + surviving groups), over all 132
+    # objects: one group 29,833 -> 512 rows 17,665 -> 256 rows 15,912
+    # -> 128 rows 16,266 -> one group per object 202,812, where 132
+    # groups x 9 columns of footer swamp 111 KB of data. Halving the
+    # lookup against a single row group, and the small end is a cliff.
     db.table("instances").append_grouped(
         inst, "object_id", kind="index", replace=True, evolve=True,
-        sort_by=["object_id", "ts"], min_group_rows=512,
+        sort_by=["object_id", "ts"], min_group_rows=256,
         meta={"builder": "build_identity", "unit": "track"})
 
     by_obj, cnt = defaultdict(set), defaultdict(int)

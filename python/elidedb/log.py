@@ -30,13 +30,44 @@ class FileEntry:
     bytes: int
     min_ts: int
     max_ts: int
+    # Zone map for columns BEYOND ts: {column: [min, max]}. min_ts/max_ts
+    # are the same idea hard-coded for the one column every table has;
+    # this generalises it to whatever a table is clustered on, so
+    # "object_id == 7" can drop a file from the LOG - kilobytes of JSON
+    # already in memory - instead of opening its Parquet footer. That is
+    # a layer below Parquet: layer 0 costs nothing per file, the footer
+    # costs a seek and a read per surviving file, and at a thousand
+    # files the difference is the query.
+    #
+    # Only meaningful for a column the file is CLUSTERED on. A min/max
+    # over an unsorted column spans nearly the whole domain and prunes
+    # nothing, so the writer records these only for its sort keys -
+    # a zone map that never prunes is pure metadata cost.
+    zone: dict = field(default_factory=dict)
 
     def to_json(self):
-        return self.__dict__
+        d = dict(self.__dict__)
+        if not d["zone"]:
+            d.pop("zone")     # old readers, and old files, see no change
+        return d
 
     @staticmethod
     def from_json(d):
-        return FileEntry(d["path"], d["rows"], d["bytes"], d["min_ts"], d["max_ts"])
+        return FileEntry(d["path"], d["rows"], d["bytes"], d["min_ts"],
+                         d["max_ts"], d.get("zone", {}))
+
+    def may_contain(self, column, lo, hi) -> bool:
+        """False only when this file PROVABLY holds nothing in [lo, hi].
+
+        Absent statistics must answer True: a missing zone map means
+        unknown, never empty. Every file written before zone maps
+        existed takes that branch, so the optimisation degrades to the
+        old behaviour instead of silently losing rows.
+        """
+        z = self.zone.get(column)
+        if not z:
+            return True
+        return not (hi < z[0] or lo > z[1])
 
 
 @dataclass
