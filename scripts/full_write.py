@@ -270,7 +270,7 @@ def stage_presence(db, batch=64, proposer="agnostic"):
     engine produces, not something it is given.
     """
     from elidedb.identity import (Gallery, Stream, calibrate, detect,
-                                  features, propose)
+                                  propose)
     ft = db.table("frames").scan()
     ft = ft.take(pc.sort_indices(ft, sort_keys=[("stream", "ascending"),
                                                 ("ts", "ascending")]))
@@ -281,9 +281,32 @@ def stage_presence(db, batch=64, proposer="agnostic"):
         sub = ft.filter(pc.equal(ft.column("stream"), sname))
         tss = [int(v) for v in sub.column("ts").to_pylist()]
         st = Stream()
-        for i in range(0, len(sub), batch):
+        # BATCH BY SEGMENT, NEVER BY A FIXED COUNT. Each media segment
+        # carries exactly ONE IDR, at its first frame - that is the
+        # design that makes a 2 s read a byte range. So a decode whose
+        # range STARTS mid-segment has no keyframe to start from and
+        # silently returns only the frames it could reach.
+        #
+        # Measured on this store: a 64-frame batch spanning 2 segments
+        # decoded 35 of 64, spanning 3 decoded 24 of 64, and one whole
+        # segment decoded 35 of 35. Over the corpus that was 20,663 of
+        # 70,436 frames - 29.3% - so tracking saw under a third of the
+        # footage and tracks broke at every boundary. Identity then
+        # fragmented: 15,584 "objects" for 2,097 episodes, 81% of them
+        # seen exactly once.
+        #
+        # Segments are episode-sized (~35 frames here), so this is also
+        # the natural unit: a track that ends at a segment boundary
+        # ended because the demo ended.
+        src = sub.column("source").to_pylist()
+        bounds, start = [], 0
+        for i in range(1, len(src) + 1):
+            if i == len(src) or src[i] != src[start]:
+                bounds.append((start, i - start))
+                start = i
+        for i, n_b in bounds:
             a = time.time()
-            chunk = FrameSet(db, "frames", sub.slice(i, batch)).decode()
+            chunk = FrameSet(db, "frames", sub.slice(i, n_b)).decode()
             cost["decode"] += time.time() - a
             if not chunk:
                 continue
@@ -300,28 +323,22 @@ def stage_presence(db, batch=64, proposer="agnostic"):
                 d = (b, np.ones(len(b), np.float32),
                      np.ones(len(b), np.float32))
                 for tid, t in st.update(int(ts), d, im):
-                    rows.append((sname, t))
+                    # SAME FIX AS commit_presence, which this stage never
+                    # received: holding t["crops"] until the end is
+                    # O(corpus x tracks x pixels) and is what took the
+                    # machine to 0.2 GB free pages and 43 of 44 GB of
+                    # swap on a 2,097-episode run. close_track makes the
+                    # 512-d descriptor now and drops the images.
+                    rows.append(close_track(sname, t))
             cost["track"] += time.time() - a
         for tid, t in st.flush():
-            rows.append((sname, t))
+            rows.append(close_track(sname, t))
     if not rows:
         return 0, 0, dict(cost)
 
-    # one ReID call per CLOSED track, on the views retained while it was
-    # open - the same "one question per sighting" that made identity
-    # work, now without an episode to tell it when to ask
-    a = time.time()
-    V = []
-    for _, t in rows:
-        if not t["crops"]:
-            V.append(np.zeros(512, np.float32)); continue
-        f = np.stack([features(c[1], [[0, 0, c[1].shape[1],
-                                       c[1].shape[0]]])[0]
-                      for c in t["crops"]])
-        v = f.mean(0)
-        V.append(v / (np.linalg.norm(v) + 1e-8))
-    V = np.stack(V)
-    cost["reid"] = time.time() - a
+    # Descriptors were made as tracks closed (see close_track), so there
+    # is no end-of-run ReID pass and no corpus of pixels to hold for it.
+    V = np.stack([v for _, _, v in rows])
 
     # free negatives: two presence intervals that OVERLAP IN TIME on the
     # same stream are two different objects - one thing cannot be in two
@@ -338,14 +355,13 @@ def stage_presence(db, batch=64, proposer="agnostic"):
     ids = Gallery(match=fit).assign(V)
 
     pres = pa.table({
-        "ts": pa.array([t["ts"] for _, t in rows], pa.int64()),
-        "t1": pa.array([t["t1"] for _, t in rows], pa.int64()),
-        "stream": pa.array([s for s, _ in rows]),
+        "ts": pa.array([t["ts"] for _, t, _ in rows], pa.int64()),
+        "t1": pa.array([t["t1"] for _, t, _ in rows], pa.int64()),
+        "stream": pa.array([s for s, _, _ in rows]),
         "object_id": pa.array([int(i) for i in ids], pa.int32()),
-        "n_frames": pa.array([t["n"] for _, t in rows], pa.int32()),
-        "conf": pa.array([float(max(t["conf"])) if t["conf"] else 0.0
-                          for _, t in rows], pa.float32()),
-        "box": pa.array([[int(v) for v in t["box"][0]] for _, t in rows],
+        "n_frames": pa.array([t["n"] for _, t, _ in rows], pa.int32()),
+        "conf": pa.array([t["conf"] for _, t, _ in rows], pa.float32()),
+        "box": pa.array([t["box"] for _, t, _ in rows],
                         pa.list_(pa.int32(), 4)),
     })
     pres = pres.take(pc.sort_indices(pres.column("ts")))
@@ -356,6 +372,36 @@ def stage_presence(db, batch=64, proposer="agnostic"):
                                 meta={"unit": "presence_interval",
                                       "match_cut": round(float(fit), 3),
                                       "proposer": proposer})
+
+    # PERSIST THE DESCRIPTORS. They were computed for every track, used
+    # once to assign an id, and thrown away - so "find objects that look
+    # like this one" had nothing to search, and identity could not be
+    # diagnosed from the store at all without a 54-minute recompute.
+    #
+    # One row per INTERVAL, not per object. Per object would pool away
+    # the different views of a thing, and it is precisely the spread
+    # WITHIN an id that says whether the match cut is right: intervals
+    # sharing an object_id are the positive distribution the free
+    # negatives have no counterpart for. Pooling per id at query time is
+    # a mean over a footer-pruned read; un-pooling is impossible.
+    ov = pa.table({
+        "ts": pa.array([t["ts"] for _, t, _ in rows], pa.int64()),
+        "t1": pa.array([t["t1"] for _, t, _ in rows], pa.int64()),
+        "stream": pa.array([s_ for s_, _, _ in rows]),
+        "object_id": pa.array([int(i) for i in ids], pa.int32()),
+        "vector": pa.FixedSizeListArray.from_arrays(
+            pa.array(np.ascontiguousarray(V, np.float32).reshape(-1)),
+            int(V.shape[1])),
+    })
+    ov = ov.take(pc.sort_indices(ov.column("ts")))
+    db.table("object_vectors").set_layout("object_id",
+                                          sort_by=["object_id", "ts"],
+                                          min_group_rows=256)
+    db.table("object_vectors").append(
+        ov, kind="embeddings",
+        meta={"unit": "presence_interval", "dim": int(V.shape[1]),
+              "source": "reid track descriptor",
+              "match_cut": round(float(fit), 3)})
     n_obj = len(set(int(i) for i in ids))
     cost["frames"] = n_frames
     return len(rows), n_obj, dict(cost)
