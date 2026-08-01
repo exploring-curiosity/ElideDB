@@ -48,7 +48,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
 
 # channel -> (script, table it must fill)
+# `motion` is first because it costs seconds and needs no model: it is
+# the normalised delta of appearance across each event span, so it rides
+# on frame_vectors the write already wrote. Ordering it first means a run
+# that gets interrupted still leaves the direction channel in place.
 CHANNELS = {
+    "motion": ("motion_ingest.py", "motion_vectors"),
     "pe": ("pe_ingest.py", "pe_vectors"),
     "sig2": ("sig2_ingest.py", "sig2_vectors"),
     "iv2": ("iv2_ingest.py", "iv2_vectors"),

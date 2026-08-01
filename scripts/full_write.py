@@ -760,7 +760,16 @@ def stage_index(db):
 
 # name -> (script, the table it must fill). The table is not decoration:
 # it is how this stage decides whether the channel worked.
-CHANNELS = [("pe", "pe_ingest.py", "pe_vectors"),
+# `motion` runs FIRST and costs seconds: it has no model, being the
+# normalised difference between mean appearance at the end and the start
+# of each event span, so it rides on frame_vectors the write just made.
+# It was absent from this list AND had no caller anywhere, so the channel
+# the transition anchor is built on never existed in any store - silently,
+# because the anchor guards the missing table and contributes nothing.
+# Direction is the one thing text cannot express (open/close cosine
+# 0.957), so a run without it is not a measurement of this system.
+CHANNELS = [("motion", "motion_ingest.py", "motion_vectors"),
+            ("pe", "pe_ingest.py", "pe_vectors"),
             ("sig2", "sig2_ingest.py", "sig2_vectors"),
             ("iv2", "iv2_ingest.py", "iv2_vectors"),
             ("xclip", "xclip_ingest.py", "xclip_vectors"),
