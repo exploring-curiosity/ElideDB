@@ -146,11 +146,28 @@ def _pf(path):
 
 
 def _read(path, **kw):
-    """pq.read_table honouring the no-cache policy."""
+    """pq.read_table honouring the no-cache policy.
+
+    Reads through a _PF and COPIES the result, so the file object cannot
+    outlive this call. `with _uncached(path) as fh: pq.read_table(fh)`
+    looks safe and is not - pyarrow keeps a reference to the handle for
+    lazy access, so the `with` closes nothing and the leaked handle hangs
+    the interpreter at shutdown. That is the same failure the _pf fix
+    addressed, surviving in the other reader: a two-table scan would sit
+    at 0% CPU forever while a single-table one exited fine.
+    """
     if not _NOCACHE:
         return pq.read_table(str(path), **kw)
-    with _uncached(path) as fh:
-        return pq.read_table(fh, **kw)
+    f = _PF(path)
+    try:
+        cols = kw.get("columns")
+        filters = kw.get("filters")
+        t = f.pf.read(columns=cols)
+        if filters is not None:
+            t = t.filter(filters)
+        return t.combine_chunks()      # materialise before the handle dies
+    finally:
+        f.close()
 
 
 def _top(md, c: int) -> str:
