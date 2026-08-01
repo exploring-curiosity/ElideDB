@@ -54,7 +54,7 @@ def act_lookup(store, text, contrast=None):
         w = contrast
     else:
         w = query_class_weights(text)
-        sq = directional_swap(text)
+        sq = directional_swap(text, store)
         if sq is not None:
             w = w - query_class_weights(sq)
     sc = np.asarray(probs) @ w

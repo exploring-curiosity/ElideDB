@@ -656,7 +656,7 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
     # swap and the parsed relation are dictionary knowledge; every
     # dataset-facing decision below is derived from the corpus at
     # query time.
-    sq = directional_swap(text)
+    sq = directional_swap(text, store)
     rel = parse_relation(text)
     tl = text.lower()
 
@@ -1136,6 +1136,9 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
         # to fix instead of leaving the whole ranking as the suspect.
         # Diagnostic only: same arrays the fusion already computed, no
         # extra work, and only materialised when asked for.
+        **({"contrast_scores": {c: [float(v[i]) for i in order]
+                                for c, v in contrast_ch.items()}}
+           if return_ranking else {}),
         **({"channel_scores": {c: [float(v[i]) for i in order]
                                for c, v in ch.items()},
             "channel_weights": {c: float(weights.get(c, 1.0))

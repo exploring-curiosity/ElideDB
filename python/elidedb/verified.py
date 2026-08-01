@@ -275,7 +275,7 @@ def search_verified(store, text, k=8, pool=48, frames_per_clip=2,
     # same as one text.
     from .context import embed_texts
     from .rerank import directional_swap
-    sq = directional_swap(text)
+    sq = directional_swap(text, store)
     # SUBJECT ANCHORING, self-observed: SigLIP only lands near the right
     # images when the corpus's dominant subject is NAMED in the query
     # (measured: "folding the cloth" ranks the true clip #537 bare, #17
@@ -779,7 +779,7 @@ def _verify_segments(store, segs, text, qh, frames_per_clip=2):
     # query cancels the appearance bias: 2B AUC 0.86 (see directional_swap).
     # One extra VLM pass, only when the query has a direction to invert.
     raw = np.array(score_clip_sequences(clips, question), dtype=float)
-    sq = directional_swap(text)
+    sq = directional_swap(text, store)
     if sq:
         raw = raw - np.array(score_clip_sequences(clips, q_form(sq)),
                              dtype=float)
@@ -845,7 +845,7 @@ def _deep_rerank(store, hits, text, deep, vmap):
             clips7, as_clip_question(text), model_id=DEEP_VLM), dtype=float)
         # same swap-contrast as the 2B tier: 7B is also direction-inverted
         # on absolute questions (AUC 0.36) and 0.91 on the difference
-        sq = directional_swap(text)
+        sq = directional_swap(text, store)
         if sq:
             deep_m = deep_m - np.array(score_clip_sequences(
                 clips7, as_clip_question(sq), model_id=DEEP_VLM),

@@ -151,7 +151,7 @@ def rerank_hits(store, hits, query, top_n: int = 12, alpha: float = 0.7,
 # ===========================================================================
 # Multi-frame (clip-level) verification — actions live BETWEEN frames
 # ===========================================================================
-def directional_swap(query: str) -> str | None:
+def directional_swap(query: str, store=None) -> str | None:
     """The query with its first STATE-REVERSAL term inverted (open<->close,
     into<->out of, ...), or None when the query has no true direction.
 
@@ -173,11 +173,31 @@ def directional_swap(query: str) -> str | None:
     training-time hard negatives, where nonsense negatives are harmless.)
     Multiword pairs are tried first so "picks up" wins before any single
     word could."""
-    from .lexicon import VERB_SWAPS
+    # THE CORPUS GETS ASKED FIRST. This function imported VERB_SWAPS and
+    # nothing else, so the direction mechanism - the only thing that
+    # separates "opens the drawer" from "closes the drawer", and the
+    # reason those queries score at all - ran entirely on 81 hand-written
+    # pairs whose own comment reads "Every entry here is a hardwiring
+    # violation that derived_swaps() supersedes as soon as a corpus has
+    # been ingested". derived_swaps existed and was never called from
+    # here, so the supersession never happened.
+    #
+    # It takes a store to ask, so callers that have one now pass it.
+    # Without a store, or on a corpus whose attested vocabulary is too
+    # thin to name any opposition, the hand list is still the only thing
+    # left - but that is now a FALLBACK that a caller can detect
+    # (swap_source) rather than the silent default.
+    from .lexicon import VERB_SWAPS, derived_swaps
+    src = "corpus"
+    pairs = list(derived_swaps(store)) if store is not None else []
+    if not pairs:
+        src = "hardwired-fallback"
+        pairs = list(VERB_SWAPS)
+    directional_swap.last_source = src
     weak = {frozenset(p) for p in ((("left", "right")),
                                    (("up", "down")),
                                    (("front", "back")))}
-    pairs = [p for p in VERB_SWAPS if frozenset(p) not in weak]
+    pairs = [p for p in pairs if frozenset(p) not in weak]
     pairs.sort(key=lambda p: -max(len(p[0]), len(p[1])))
     t = " " + query.lower() + " "
     for a, b in pairs:
