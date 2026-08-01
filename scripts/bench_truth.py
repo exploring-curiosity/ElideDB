@@ -199,10 +199,25 @@ def main():
         yld = tru / sup if sup else None
         rows.append((qi, q, len(clips), tru, ung, sup, prec, yld,
                      r["ms"], r["bytes"], r["elided"]))
+        # PRECISION AMONG GRADED RETURNS, printed beside precision.
+        # Each query was graded on its OWN retrieved pool - 9-23% of the
+        # corpus - and everything outside it is scored FALSE. So a
+        # ranking that surfaces a true episode the graders never saw is
+        # punished for it, and `prec` is bounded by pool coverage rather
+        # than by ranking quality. Measured on fresh_bench at k=1.5xsup:
+        # q05 prec 0.28 but 0.90 among the 58 returns anyone judged.
+        # Neither number alone is honest - prec understates the system,
+        # prec_g flatters it (the pool was an earlier system's top-k, so
+        # it is a biased sample). Print both, and the coverage that
+        # explains the gap.
+        n_g = len(clips) - ung
+        prec_g = (tru / n_g) if n_g else None
         print(f"q{qi:02d} k {K:3d} ret {len(clips):3d} true {tru:3d} "
               f"sup {sup:3d}  "
               f"yield {yld if yld is None else f'{yld:.2f}'}  "
               f"prec {prec if prec is None else f'{prec:.2f}'}  "
+              f"prec_g {prec_g if prec_g is None else f'{prec_g:.2f}'}"
+              f" ({n_g}/{len(clips)} judged)  "
               f"{r['ms']:6.0f}ms  {r['bytes']:>11,}B  "
               f"{r['elided']:6.2f}%  {q}", flush=True)
 
