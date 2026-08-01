@@ -128,7 +128,7 @@ def main():
     verb_of = {i: ans["verb"][rows_of[i][0]] for i in rows_of}
     # v2 verbs from scripts/verb_recompute.py when present
     import json as _json
-    vp = ROOT / "ml/verbs_v2.json"
+    vp = ROOT / "artifacts/verbs_v2.json"
     if vp.exists():
         v2 = _json.loads(vp.read_text())
         hit = 0

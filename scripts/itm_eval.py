@@ -34,7 +34,7 @@ QUERIES = queries()
 def main():
     argv = sys.argv
     cut = float(argv[argv.index("--cut") + 1]) if "--cut" in argv else 0.5
-    d = np.load(ROOT / "ml/itm_scores.npz", allow_pickle=True)
+    d = np.load(ROOT / "artifacts/itm_scores.npz", allow_pickle=True)
     S, qids = d["S"], [int(q) for q in d["qids"]]
     streams, ts = d["streams"], d["ts"]
     t = pq.read_table(ROOT / "eval/truthsets/bridge4h.parquet").to_pydict()

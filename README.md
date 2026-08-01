@@ -114,16 +114,30 @@ landing page. See [deploy/README.md](deploy/README.md).
 ## Repository layout
 
 ```
-python/elidedb/     the database (store, log, video, retrieval, cli, desk)
-deploy/             cloud demo: Dockerfile, store builder, Space stager
+python/elidedb/     THE ENGINE. Everything that runs: store, log, video,
+                    planner, retrieval, cli, desk. Python on Parquet.
+scripts/            entry points only — ingest, benchmark, fit. A file with
+                    a main() is a program; anything imported lives in the
+                    package above. Never both.
+tests/              the live test suite (pytest)
+artifacts/          fitted state: teacher scores, thresholds, verb partitions
+                    — see artifacts/README.md
+eval/               truth set. EVAL ONLY: nothing is ever fitted on it.
+deploy/             the Hugging Face Space: Dockerfile, store builder, stager
 site/               landing page (static, single file)
-notebooks/          executed demo notebook
 desk/               macOS app bundle (thin launcher for elidedb.desk)
-src/, tests/        v1: the original C++20 engine with hand-built formats
-                    (SDX/SFI), the mechanisms ElideDB now hosts on Parquet
-scripts/            ingest tooling, benchmark + fit scripts, ETL adapters
+notebooks/          executed demo notebook
+FDNN_BrainModel/    reference MLP carrying the FDNN architecture, kept as the
+                    canonical statement of the three rules the students obey
+rust/               a vertical slice against the same on-disk format — store
+                    open, tx log, parquet scan, zone-map prune, counted
+                    reads. NOT WIRED: no pyo3, no ctypes, nothing in Python
+                    imports it. It reads what Python writes; it does not
+                    serve. See deprecated/README.md for the language history.
+deprecated/         the C++20 era and its Python sidecar. Off every code
+                    path, kept as provenance — see deprecated/README.md
 ```
 
 Raw data (`data/`), generated databases (`lake/`), model weights
-(`models/`), evaluation ground truth (`eval/`), and build output are
-git-ignored: the repo carries code and docs only.
+(`models/`), and build output are git-ignored: the repo carries code,
+docs, and fitted state only.

@@ -64,7 +64,7 @@ def main():
     depth = int(argv[argv.index("--depth") + 1]) if "--depth" in argv \
         else 60
 
-    d = np.load(ROOT / "ml/teacher_base.npz", allow_pickle=True)
+    d = np.load(ROOT / "artifacts/teacher_base.npz", allow_pickle=True)
     B, qids = d["B"], [int(q) for q in d["qids"]]
     keys = list(zip([str(s) for s in d["streams"]],
                     [int(v) for v in d["ts"]], [int(v) for v in d["t1"]]))
@@ -211,7 +211,7 @@ def main():
               f"yield {y0:.2f} -> {y1:.2f}  "
               f"({(time.time() - t0) / len(band):.1f}s/clip)", flush=True)
 
-    (ROOT / "ml/presence_margins.json").write_text(json.dumps(margins_out))
+    (ROOT / "artifacts/presence_margins.json").write_text(json.dumps(margins_out))
     if results:
         print(f"\nmean yield on staged queries: "
               f"{np.mean([v[0] for v in results.values()]):.2f} -> "

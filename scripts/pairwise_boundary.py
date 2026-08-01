@@ -97,7 +97,7 @@ def main():
         else 2
     W = int(argv[argv.index("--w") + 1]) if "--w" in argv else 15
 
-    d = np.load(ROOT / "ml/teacher_base.npz", allow_pickle=True)
+    d = np.load(ROOT / "artifacts/teacher_base.npz", allow_pickle=True)
     B, qids = d["B"], [int(q) for q in d["qids"]]
     keys = list(zip([str(s) for s in d["streams"]],
                     [int(v) for v in d["ts"]], [int(v) for v in d["t1"]]))

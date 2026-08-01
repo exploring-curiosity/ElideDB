@@ -29,7 +29,7 @@ articulation displacement), so this recomputes without re-extracting:
                contained - the track died)
     put_on     it relocated and ended outside any articulated region
 
-Writes ml/verbs_v2.json (demo key -> verb) so the change can be
+Writes artifacts/verbs_v2.json (demo key -> verb) so the change can be
 measured before it is baked into the extractor.
 
   python scripts/verb_recompute.py
@@ -102,7 +102,7 @@ def main():
     diag = float(np.hypot(640, 480))
 
     cav = {}
-    cp = ROOT / "ml/cavity.json"
+    cp = ROOT / "artifacts/cavity.json"
     if cp.exists():
         cav = json.loads(cp.read_text())
     out, old = {}, {}
@@ -120,7 +120,7 @@ def main():
                            float(cav.get(kk, 0.0)))
         old[f"{k[0]}|{k[1]}"] = ans["verb"][rr[0]]
 
-    (ROOT / "ml/verbs_v2.json").write_text(json.dumps(out))
+    (ROOT / "artifacts/verbs_v2.json").write_text(json.dumps(out))
     co, cn = Counter(old.values()), Counter(out.values())
     print(f"{'verb':>10} {'v1':>6} {'v2':>6}")
     for v in sorted(set(co) | set(cn)):

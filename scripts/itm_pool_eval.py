@@ -32,7 +32,7 @@ POOLS = {
 
 
 def main():
-    d = np.load(ROOT / "ml/itm_scores3.npz", allow_pickle=True)
+    d = np.load(ROOT / "artifacts/itm_scores3.npz", allow_pickle=True)
     S3, qids = d["S3"], [int(q) for q in d["qids"]]
     streams = [str(s) for s in d["streams"]]
     ts = [int(v) for v in d["ts"]]

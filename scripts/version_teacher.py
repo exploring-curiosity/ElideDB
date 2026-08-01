@@ -102,7 +102,7 @@ def main():
                             "rows": db.table(t).scan().num_rows}
     for a in ("_set_weights.json", "_vocab.json", "_channel_weights.json"):
         man["artifacts"][a] = digest(Path("lake/bench") / a)
-    for a in ("ml/verbs_v2.json", "ml/cavity.json"):
+    for a in ("artifacts/verbs_v2.json", "artifacts/cavity.json"):
         man["artifacts"][a] = digest(ROOT / a)
 
     out = ROOT / f"models/teacher_{tag}.json"

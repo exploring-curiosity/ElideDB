@@ -154,7 +154,7 @@ def main() -> None:
         "embed_text_cmd": embed_text_cmd,
     }, indent=2))
     print(f"run {run_id}: {len(windows)} windows, dim {dim} -> {run_dir}")
-    print(f"next: python3 ml/cluster.py --store {args.store} --run-id {run_id}")
+    print(f"next: python3 deprecated/sidecar/cluster.py --store {args.store} --run-id {run_id}")
 
 
 if __name__ == "__main__":

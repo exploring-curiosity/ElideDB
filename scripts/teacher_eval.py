@@ -17,7 +17,7 @@ the first evaluation and REVERTED - not only was the net negative
 after seeing outcomes, which this file's whole premise forbids. The
 declared recipe stands.
 
-Saves ml/teacher_base.npz for the pairwise stage, prints the two
+Saves artifacts/teacher_base.npz for the pairwise stage, prints the two
 product metrics (yield = true/support at k = ceil(1.5 x support),
 prec = true/returned) for the base alone.
 
@@ -51,8 +51,8 @@ def z(x):
 
 
 def main():
-    d3 = np.load(ROOT / "ml/itm_scores3.npz", allow_pickle=True)
-    df = np.load(ROOT / "ml/itm_fullspan.npz", allow_pickle=True)
+    d3 = np.load(ROOT / "artifacts/itm_scores3.npz", allow_pickle=True)
+    df = np.load(ROOT / "artifacts/itm_fullspan.npz", allow_pickle=True)
     S3, qids = d3["S3"], [int(q) for q in d3["qids"]]
     SF = df["S"]
     assert list(df["streams"]) == list(d3["streams"])
@@ -114,10 +114,10 @@ def main():
         ys.append(tru / sup[qi]); ps.append(tru / K)
         print(f"q{qi:02d} {sup[qi]:>4} {K:>4} {tru / sup[qi]:>6.2f} "
               f"{tru / K:>6.2f}   {rr[:10]}")
-    np.savez(ROOT / "ml/teacher_base.npz", B=B, qids=np.array(qids),
+    np.savez(ROOT / "artifacts/teacher_base.npz", B=B, qids=np.array(qids),
              streams=d3["streams"], ts=d3["ts"], t1=d3["t1"])
     print(f"\nbase alone: mean yield {np.mean(ys):.2f}  "
-          f"mean prec {np.mean(ps):.2f}  -> ml/teacher_base.npz")
+          f"mean prec {np.mean(ps):.2f}  -> artifacts/teacher_base.npz")
 
 
 if __name__ == "__main__":

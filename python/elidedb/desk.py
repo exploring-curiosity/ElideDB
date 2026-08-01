@@ -605,8 +605,8 @@ def api_architecture(key: str):
          "1B — the ITM cross-encoder, cost-gated"),
         ("models/fdnnv", "fdnnv", "FDNN-V encoder — embeds every frame "
          "at ingest, 1,109 fps"),
-        ("ml/verbs_v2.json", "verbs_v2", "geometry verb partition"),
-        ("ml/cavity.json", "cavity", "cavity/articulation thresholds"),
+        ("artifacts/verbs_v2.json", "verbs_v2", "geometry verb partition"),
+        ("artifacts/cavity.json", "cavity", "cavity/articulation thresholds"),
     ):
         b = _sz(RT / path)
         if b:

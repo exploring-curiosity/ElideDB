@@ -26,7 +26,7 @@ Two lessons from the first full pass are baked in here:
                         the pooling is chosen by measurement, offline.
 
 Writes the raw (episodes x queries) logit-margin matrix to
-ml/itm_scores3.npz. Evaluation is a separate script so re-scoring is
+artifacts/itm_scores3.npz. Evaluation is a separate script so re-scoring is
 never needed to re-analyze.
 
   python scripts/itm_full.py [--limit N]
@@ -134,7 +134,7 @@ def main():
             print(f"  {done}/{len(keys)}  {el:.0f}s  "
                   f"ETA {el / done * len(keys) / 60:.0f}min", flush=True)
 
-    out = ROOT / "ml/itm_scores3.npz"
+    out = ROOT / "artifacts/itm_scores3.npz"
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez(out, S=np.nanmax(S3, axis=2), S3=S3, qids=np.array(QIDS),
              streams=np.array([k[0] for k in keys]),

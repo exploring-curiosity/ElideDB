@@ -63,7 +63,7 @@ def main() -> None:
         print("wrote umap.npy (visualization only)")
     except ImportError:
         print("umap-learn not installed; skipping 2D map")
-    print(f"next: python3 ml/register_run.py --store {args.store} "
+    print(f"next: python3 deprecated/sidecar/register_run.py --store {args.store} "
           f"--run-id {args.run_id}")
 
 

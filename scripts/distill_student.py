@@ -161,7 +161,7 @@ def main():
     from elidedb.pe import _text_vec as pe_text
     # teacher labels are the expensive part (575s for 200 queries);
     # cache them so the student can be retrained in seconds
-    cache = ROOT / "ml/teacher_labels.npz"
+    cache = ROOT / "artifacts/teacher_labels.npz"
     t0 = time.time()
     if cache.exists():
         z = np.load(cache, allow_pickle=True)

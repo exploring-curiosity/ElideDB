@@ -90,7 +90,7 @@ def main():
             print(f"  {done}/{len(keys)}  {el:.0f}s  "
                   f"ETA {el / done * len(keys) / 60:.0f}min", flush=True)
 
-    out = ROOT / "ml/itm_fullspan.npz"
+    out = ROOT / "artifacts/itm_fullspan.npz"
     np.savez(out, S=S, qids=np.array(QIDS),
              streams=np.array([k[0] for k in keys]),
              ts=np.array([k[1] for k in keys], np.int64),
