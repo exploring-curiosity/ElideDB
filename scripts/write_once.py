@@ -181,6 +181,21 @@ def _structures(frames, keep=6):
     return out[:keep]
 
 
+_TYPE_ID = __import__("re").compile(r"^t[0-9]+$")
+
+
+def _role_of(kind):
+    """Which of the five elements an event row belongs to."""
+    k = (kind or "").strip()
+    if k == "agent":
+        return "agent"
+    if k in ("open", "close"):
+        return "container"
+    if k in ("contact", "release") or _TYPE_ID.match(k):
+        return "participant"
+    return ""
+
+
 def episode_events(s, frames, t0=None, t1=None):
     """Geometry for ONE episode -> (event rows, name crops per row).
 
@@ -445,7 +460,16 @@ def main():
         "t1": pa.array([r[2] for r in ev_rows], pa.int64()),
         "stream": pa.array([r[0] for r in ev_rows]),
         "kind": pa.array([r[3] for r in ev_rows]),
-        "role": pa.array(["" for _ in ev_rows]),
+        # ROLE IS ONE OF THE FIVE ELEMENTS, not a spare column. This
+        # hardcoded "" and left 15,175 rows with no role, so `agent`,
+        # `participants` and `container` were indistinguishable in one
+        # table - the fast one-pass path silently dropped an element that
+        # build_teacher.py assigns correctly. Mapping taken from
+        # build_teacher rather than invented, so the two writers agree:
+        # agent -> agent, contact/release -> participant, open/close ->
+        # container. Discovered transition ids (t0..t14) are relocations
+        # OF a participant, so they take participant too.
+        "role": pa.array([_role_of(r[3]) for r in ev_rows]),
         "ev_t0": pa.array([r[4] for r in ev_rows], pa.int64()),
         "ev_t1": pa.array([r[5] for r in ev_rows], pa.int64()),
         "name": pa.array([r[7] for r in ev_rows]),

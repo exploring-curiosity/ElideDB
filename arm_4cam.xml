@@ -1,0 +1,12 @@
+<mujoco model="panda_4cam">
+  <include file="mujoco_menagerie/franka_emika_panda/scene.xml"/>
+
+  <!-- offscreen buffer sized for a 2x2 tile grid at 192x144 -->
+  <visual><global offwidth="384" offheight="288"/></visual>
+
+  <worldbody>
+    <camera name="over_shoulder" pos="1.0 -0.8 1.2" mode="targetbody" target="link0"/>
+    <camera name="side"          pos="0.0 -1.3 0.7" mode="targetbody" target="link0"/>
+    <camera name="top"           pos="0.4  0.0 1.8" mode="targetbody" target="link0"/>
+  </worldbody>
+</mujoco>
