@@ -159,6 +159,71 @@ def _auto_action_support(store, text):
             "support_ratio": round(ratio, 2)}
 
 
+def corroboration_weights(ch, floor=0.0):
+    """Per-query channel weights from the scores alone. No labels, no
+    channel names, no query types.
+
+    WHY THIS EXISTS. Every channel used to vote with weight 1.0 whatever
+    it measured. Against the truthset (diagnostic only, never fitted on)
+    the shipped fusion scored BELOW its own best input on all three
+    high-support queries, because inputs at AUC 0.94 and 0.33 were given
+    the same voice. The worst case was q05, where `act` measured AUC
+    0.330 - not weak, INVERTED, ranking true episodes below false ones -
+    and still voted at full strength.
+
+    THE RULE. For each channel, build the pooled opinion of the OTHERS
+    (leave-one-out, so a channel never corroborates itself) and take the
+    correlation to it, clipped at zero. A channel that ranks opposite to
+    everything else is refused a vote; a channel that agrees keeps one.
+    Nothing here knows what a channel measures, so it transfers to a
+    corpus with different channels entirely.
+
+    Measured effect, unsupervised weights vs uniform:
+        q04  AUC 0.855 -> 0.887   prec@support 0.333 -> 0.394
+        q05  AUC 0.813 -> 0.877   prec@support 0.235 -> 0.311
+    The gain is almost entirely from ZEROING inverted channels (act on
+    both, mot on q05), not from the shape of the weighting.
+
+    KNOWN LIMIT, recorded because it bounds this whole approach: the best
+    single channel is often the one that agrees LEAST. iv2 carries q03 at
+    AUC 0.940 and ranks fourth by corroboration. Agreement can veto a bad
+    channel; it cannot identify the good one. Doing that needs a signal
+    of query-specific responsiveness, which this is not.
+
+    VETO ONLY, AND THAT IS DELIBERATE. The first version of this returned
+    a graded weight per channel (the corroboration value itself,
+    renormalised). Measured end to end that was a REGRESSION - mean
+    precision 0.29 -> 0.16 across q00-q10 - for two reasons found only by
+    running it: the fusion is RRF over RANKS, which does not respond to
+    weight the way the z-score sums in the diagnostic did, and rescaling
+    everything also stripped prf_q of its fitted voice. Graded weighting
+    is therefore NOT shipped.
+
+    What survives is the part the evidence actually supports: a channel
+    whose correlation to the pooled others is NEGATIVE is inverted, and
+    inverted channels get zero. Everything else keeps weight 1.0, so
+    prf_q and the fitted alphas are untouched.
+    """
+    names = [c for c in ch]
+    if len(names) < 3:
+        return {c: 1.0 for c in names}
+    Z = {}
+    for c in names:
+        v = np.asarray(ch[c], float)
+        sd = v.std()
+        Z[c] = (v - v.mean()) / sd if sd > 0 else np.zeros_like(v)
+    w = {}
+    for c in names:
+        others = [Z[o] for o in names if o != c]
+        pool = np.mean(others, axis=0)
+        if pool.std() <= 0 or Z[c].std() <= 0:
+            w[c] = 1.0
+            continue
+        r = float(np.corrcoef(Z[c], pool)[0, 1])
+        w[c] = 0.0 if (r == r and r < 0.0) else 1.0
+    return w
+
+
 _EVK: dict = {}
 
 # The right-hand sides of this table used to be put_on / put_into /
@@ -177,16 +242,75 @@ _REL_CUES = {"containment": ("into", "in", "inside", "within"),
              "separation": ("out of", "from", "off", "away")}
 
 
-def _query_transitions(tl):
-    need = {_VERBK[w] for w in tl.split() if w in _VERBK}
-    if not need:
-        for pat, k in _PREPK:
-            if pat in tl:
-                need.add(k)
-                break
-    if "from the drawer" in tl or "out of" in tl:
-        need = {"take_out"} | (need - {"put_on", "put_into"})
-    return need
+def _relation_cue(tl):
+    """Which spatial relation a query asks for, from prepositions alone.
+
+    Prepositions are CLOSED-CLASS grammar, not corpus vocabulary: English
+    gains new nouns and verbs constantly and new prepositions almost
+    never. "into" encodes containment whether the thing entered is a
+    drawer, a lane, a shelf or a shipping container. That is why this
+    survives the no-hardwire rule while a verb table does not.
+
+    Longest match wins so "on top" is not shadowed by "on".
+    """
+    best, blen = None, 0
+    for rel, pats in _REL_CUES.items():
+        for p in pats:
+            if p in tl and len(p) > blen:
+                best, blen = rel, len(p)
+    return best
+
+
+def _query_transitions(tl, store=None):
+    """Transition kinds a query asks about, resolved against the types
+    THIS CORPUS discovered - no table of verbs anywhere.
+
+    WHAT WAS HERE BEFORE. A dict `_VERBK` mapped hand-authored verbs to
+    hand-authored transition names, plus this:
+
+        if "from the drawer" in tl or "out of" in tl:
+            need = {"take_out"} | (need - {"put_on", "put_into"})
+
+    A literal furniture name and three invented task labels, matched
+    against the raw query. The violations pass deleted _VERBK's and
+    _PREPK's DEFINITIONS and left their USES, so this function has raised
+    NameError on every query since - the events channel has been dead,
+    silently, recorded only as `channel events failed` in a benchmark
+    footer nobody had to read.
+
+    WHAT IT DOES NOW. The corpus discovers transition types from geometry
+    (transitions.FIELDS: displacement, direction, duration, scale,
+    enclosure change, ...) and names none of them. A query names one the
+    same way it names anything else - by the relation it asks for. The
+    bridge is `enclosure_delta`, a physical measurement of whether the
+    moved thing became more or less enclosed:
+
+        containment ("into", "inside")  -> enclosure rises
+        separation  ("out of", "from")  -> enclosure falls
+        support     ("on", "onto")      -> enclosure says nothing, so
+                                           this gates nothing and the
+                                           ranking channels decide
+
+    The split is the corpus's own median, not zero: descriptors are
+    standardised per corpus, so zero is an artefact of the scaler while
+    the median is where this corpus actually divides. On a corpus of
+    forklifts and pallets the same code returns that corpus's types.
+    """
+    if store is None or "transition_types" not in store.tables():
+        return set()
+    rel = _relation_cue(tl)
+    if rel is None or rel == "support":
+        return set()
+    from .transitions import FIELDS
+    t = store.table("transition_types").scan().to_pydict()
+    if not t.get("type_id"):
+        return set()
+    ei = FIELDS.index("enclosure_delta")
+    enc = np.array([float(c[ei]) for c in t["centroid"]], np.float32)
+    ids = [int(i) for i in t["type_id"]]
+    mid = float(np.median(enc))
+    sel = enc > mid if rel == "containment" else enc < mid
+    return {f"t{ids[i]}" for i in range(len(ids)) if bool(sel[i])}
 
 
 def _demo_transitions(store, keys):
@@ -701,7 +825,7 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
             contrast_ch.pop(c, None)
 
     directional = sq is not None
-    weights = {c: 1.0 for c in ch}
+    weights = corroboration_weights(ch)
     filter_q = 1 / 3
     fnames = None       # None => legacy: every contrast channel
     cut_alpha = 0.0     # 0 => fill to k_max (legacy, pre-cut)
@@ -840,7 +964,7 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
     try:
         if "events" in store.tables():
             from .itm import _S as _itm_unused        # noqa: F401
-            need = _query_transitions(tl)
+            need = _query_transitions(tl, store)
             # membership first (DOES this episode have the transition),
             # then direction (which WAY it went). Membership alone is
             # weak - 'close' covers 58% of this corpus, 'open' 80% - so
@@ -989,6 +1113,17 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
         # refused to return them" - two failures with opposite fixes.
         **({"ranking": [(keys[i][0], keys[i][1], float(fused[i]))
                         for i in order]} if return_ranking else {}),
+        # PER-CHANNEL scores, aligned with `ranking`. "the ranking is
+        # weak" is not an actionable finding - the fusion has seven
+        # inputs and they can fail independently. Measured against the
+        # truthset these give a per-channel AUC, which says WHICH input
+        # to fix instead of leaving the whole ranking as the suspect.
+        # Diagnostic only: same arrays the fusion already computed, no
+        # extra work, and only materialised when asked for.
+        **({"channel_scores": {c: [float(v[i]) for i in order]
+                               for c, v in ch.items()},
+            "channel_weights": {c: float(weights.get(c, 1.0))
+                                for c in ch}} if return_ranking else {}),
     }
 
 
