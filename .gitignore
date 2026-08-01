@@ -83,3 +83,6 @@ models/weights/
 bench/*.json
 bench/*.jsonl
 scratch_*/
+
+# MuJoCo model library: cloned, not ours
+mujoco_menagerie/
