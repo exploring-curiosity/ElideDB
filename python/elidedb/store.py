@@ -1084,26 +1084,6 @@ class Store:
             Table.scan, Table.scan_values = scan, values
 
 
-_NULL = None
-
-
-def _fold(dst, src):
-    """Accumulate one QueryStats into another.
-
-    corpus_bytes takes a MAX, not a sum: it is a denominator, and adding
-    denominators across calls would inflate it until the elision figure
-    became meaningless. The measure() block seeds it with the whole
-    store, which is the largest and the correct one; a caller's own
-    stats keeps whatever per-table denominator it had.
-    """
-    if dst is None:
-        return
-    dst.files_total += src.files_total
-    dst.files_touched += src.files_touched
-    dst.bytes_touched += src.bytes_touched
-    dst.rows_returned += src.rows_returned
-    dst.corpus_bytes = max(dst.corpus_bytes, src.corpus_bytes)
-
     def describe(self) -> list[dict]:
         out = []
         for name in self.tables():
@@ -1499,3 +1479,24 @@ def _fold(dst, src):
         """The teacher's own description of what happens in a window."""
         from .context import explain
         return explain(self, t0, t1, stream=stream)
+
+
+_NULL = None
+
+
+def _fold(dst, src):
+    """Accumulate one QueryStats into another.
+
+    corpus_bytes takes a MAX, not a sum: it is a denominator, and adding
+    denominators across calls would inflate it until the elision figure
+    became meaningless. The measure() block seeds it with the whole
+    store, which is the largest and the correct one; a caller's own
+    stats keeps whatever per-table denominator it had.
+    """
+    if dst is None:
+        return
+    dst.files_total += src.files_total
+    dst.files_touched += src.files_touched
+    dst.bytes_touched += src.bytes_touched
+    dst.rows_returned += src.rows_returned
+    dst.corpus_bytes = max(dst.corpus_bytes, src.corpus_bytes)
