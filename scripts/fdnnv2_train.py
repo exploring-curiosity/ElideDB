@@ -428,7 +428,7 @@ def main():
         report["stage_b"]["train_s"] = round(time.time() - t0, 1)
         print("[stage B ]", report["stage_b"], flush=True)
         save_v2(model, adapter, {"report": report}, OUT)
-    Path("bench_fdnnv2.json").write_text(json.dumps(report, indent=2))
+    Path("bench") / "bench_fdnnv2.json".write_text(json.dumps(report, indent=2))
     print(f"saved -> {OUT}")
 
 

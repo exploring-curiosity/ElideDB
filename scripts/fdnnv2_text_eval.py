@@ -71,7 +71,7 @@ def main():
             report[qt] = row
             print(f"{qt!r:40s} {row}", flush=True)
 
-    Path("bench_fdnnv2_text.json").write_text(json.dumps(report, indent=2))
+    Path("bench") / "bench_fdnnv2_text.json".write_text(json.dumps(report, indent=2))
     print("saved -> bench_fdnnv2_text.json")
 
 

@@ -75,3 +75,11 @@ docs/logs/
 
 # ---- stale experiment cache: LanguageBind weights (never in git) -----------
 .cache_lb/
+
+# Model weights: re-downloadable artifacts, never in git. 62 MB of these
+# were committed because ultralytics downloads into the CWD by default.
+models/weights/
+# Benchmark outputs are results, not source
+bench/*.json
+bench/*.jsonl
+scratch_*/

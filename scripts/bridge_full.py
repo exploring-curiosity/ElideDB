@@ -231,7 +231,7 @@ def main():
     print(f"\nTOTAL {total:.1f}s "
           f"({n_frames / total:,.0f} frames/s, "
           f"{n_frames / FPS / total:.0f}x real time)")
-    Path("bench_bridge_full.json").write_text(json.dumps(
+    Path("bench") / "bench_bridge_full.json".write_text(json.dumps(
         {"frames": n_frames, "hours": round(n_frames / FPS / 3600, 2),
          "files": len(files), "total_s": round(total, 1),
          "stages": {k: round(v, 1) for k, v in stamp.items()}}, indent=2))

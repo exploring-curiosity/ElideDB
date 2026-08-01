@@ -220,7 +220,7 @@ def main():
            "student_ms_per_clip": round(t_stu * 1000, 3),
            "speedup": round(t_teach / max(t_stu, 1e-9), 1)}
     print(json.dumps(out, indent=1))
-    (ROOT / "bench_distill_vjepa.json").write_text(json.dumps(out, indent=1))
+    (ROOT / "bench" / "bench_distill_vjepa.json").write_text(json.dumps(out, indent=1))
 
 
 if __name__ == "__main__":

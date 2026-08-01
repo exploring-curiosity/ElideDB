@@ -170,7 +170,7 @@ def main():
     cache_n = len(db.table("teacher_windows").scan())
     print(f"\ncracked cache after 100 queries: {cache_n}/{len(wins)} windows "
           f"({100 * cache_n / len(wins):.1f}% of corpus teacher-embedded)")
-    Path("bench_bridge4h_query.json").write_text(json.dumps(
+    Path("bench") / "bench_bridge4h_query.json".write_text(json.dumps(
         {"summary": summary, "queries": len(queries),
          "episodes": len(eps), "tasks": len(by_task),
          "cache_windows": cache_n, "total_windows": len(wins)}, indent=2))

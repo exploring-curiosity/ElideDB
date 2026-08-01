@@ -155,7 +155,7 @@ def main():
     print(f"\nfull 477 h BridgeData2 corpus, EVERY frame, single process: "
           f"{full:.1f} h  (was 38.5 h with SigLIP-fast)")
 
-    Path("bench_fdnnv_ingest.json").write_text(json.dumps({
+    Path("bench") / "bench_fdnnv_ingest.json".write_text(json.dumps({
         "frames": int(total_frames), "wall_s": round(wall, 1),
         "frames_per_s": round(total_frames / wall, 1),
         "decode_ms_per_frame": round(dec_total / total_frames * 1000, 3),

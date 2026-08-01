@@ -191,7 +191,7 @@ def main():
               f"{agg['R@10']:6.3f} {agg['MRR']:6.3f} {agg['nDCG@10']:6.3f} "
               f"{agg['median_ms']:8.1f}")
 
-    Path("bench_bridge.json").write_text(json.dumps(
+    Path("bench") / "bench_bridge.json".write_text(json.dumps(
         {"summary": summary, "queries": len(queries),
          "episodes": len(eps), "distinct_tasks": len(by_task)}, indent=2))
     print("\nwrote bench_bridge.json")

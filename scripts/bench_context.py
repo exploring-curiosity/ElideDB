@@ -134,7 +134,7 @@ def main():
                      "channels": meta["cfg"]["n_hidden"],
                      "params": meta.get("pruned", {}).get("after", {})
                      .get("params")}
-    Path("bench_context.json").write_text(json.dumps(
+    Path("bench") / "bench_context.json".write_text(json.dumps(
         {"summary": out, "held_out_windows": len(Wh),
          "queries": ctx_eval.QUERIES}, indent=2))
     print("\nwrote bench_context.json")

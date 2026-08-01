@@ -892,7 +892,7 @@ def main():
                   "store_over_raw": round(store_bytes / raw_bytes, 2)},
     }
     print(json.dumps(out_json, indent=1))
-    (ROOT / "bench_write.json").write_text(json.dumps(out_json, indent=1))
+    (ROOT / "bench" / "bench_write.json").write_text(json.dumps(out_json, indent=1))
 
 
 if __name__ == "__main__":

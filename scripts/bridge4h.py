@@ -285,7 +285,7 @@ def main():
     print(f"\nTOTAL {total:.1f}s of {BUDGET_S:.0f}s budget -> {verdict} "
           f"({n_frames / total:,.0f} frames/s, "
           f"{n_frames / FPS / total:.0f}x real time)")
-    Path("bench_bridge4h.json").write_text(json.dumps(
+    Path("bench") / "bench_bridge4h.json".write_text(json.dumps(
         {"frames": n_frames, "hours": round(n_frames / FPS / 3600, 2),
          "total_s": round(total, 1), "budget_s": BUDGET_S,
          "verdict": verdict, "stages": {k: round(v, 1)

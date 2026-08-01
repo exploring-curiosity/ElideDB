@@ -312,7 +312,7 @@ def main():
     save_encoder(model, {"teacher": "mlx-community/siglip-so400m-patch14-384",
                          "report": report, "stem": stem,
                          "input_hw": [144, 192]}, OUT)
-    Path("bench_fdnnv.json").write_text(json.dumps(report, indent=2))
+    Path("bench") / "bench_fdnnv.json".write_text(json.dumps(report, indent=2))
     print(f"saved -> {OUT}  |  bench_fdnnv.json", flush=True)
 
 

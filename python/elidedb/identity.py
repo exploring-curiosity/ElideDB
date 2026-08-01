@@ -82,8 +82,22 @@ import numpy as np
 
 _M: dict = {}
 
-SEG_MODEL = os.environ.get("ELIDEDB_SEG", "yolo11n-seg.pt")
-REID_MODEL = os.environ.get("ELIDEDB_REID", "yolo26n-reid.onnx")
+# WEIGHTS LIVE IN models/weights, not the repo root. ultralytics
+# downloads into the CWD by default, which is how 86 MB of checkpoints
+# ended up beside the README with 62 MB of it committed to git. _weights
+# resolves a bare name against models/weights and falls back to the bare
+# name so a missing file still auto-downloads - into models/weights,
+# because that is where we then look.
+def _weights(name):
+    from pathlib import Path as _P
+    d = _P(__file__).resolve().parents[2] / "models" / "weights"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / name
+    return str(p) if p.exists() else str(d / name)
+
+
+SEG_MODEL = os.environ.get("ELIDEDB_SEG") or _weights("yolo11n-seg.pt")
+REID_MODEL = os.environ.get("ELIDEDB_REID") or _weights("yolo26n-reid.onnx")
 # imgsz 448 rather than 384, deliberately paying 0.5 ms/frame for it.
 # 384 is cheaper (3.76 vs 4.23 ms/frame with fp16) and finds MORE boxes
 # (2.63 vs 2.44 per frame), but the extra boxes are marginal ones: its
@@ -157,7 +171,7 @@ def _load():
     return _M
 
 
-PROPOSER = os.environ.get("ELIDEDB_PROPOSER", "FastSAM-s.pt")
+PROPOSER = os.environ.get("ELIDEDB_PROPOSER") or _weights("FastSAM-s.pt")
 
 
 def propose(frames, imgsz=DET_SZ, batch=DET_BATCH, conf=0.25):

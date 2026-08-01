@@ -157,7 +157,7 @@ def main():
            "spans_per_episode": round(spans_per_ep, 2),
            "student_ms_per_episode": round(ms_span * spans_per_ep, 3)}
     print(json.dumps(out, indent=1))
-    (ROOT / f"bench_distill_{ch}.json").write_text(json.dumps(out, indent=1))
+    (ROOT / "bench" / f"bench_distill_{ch}.json").write_text(json.dumps(out, indent=1))
 
 
 if __name__ == "__main__":

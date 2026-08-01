@@ -167,7 +167,7 @@ def main():
               f"{r['elided_pct']:>8.3f}%   {r['detail']}")
     print(f"\nstore {corpus:,} B over {len(db.tables())} tables, "
           f"{n_ep} episodes")
-    (ROOT / "bench_read.json").write_text(json.dumps(
+    (ROOT / "bench" / "bench_read.json").write_text(json.dumps(
         {"corpus_bytes": corpus, "episodes": n_ep, "reps": reps,
          "rows": rows}, indent=1))
 

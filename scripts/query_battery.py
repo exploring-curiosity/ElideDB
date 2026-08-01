@@ -134,7 +134,7 @@ def main():
     total = sum(r["label_ok_top3"] for r in report)
     print(f"\n=== battery: {total}/{3 * len(QUERIES)} top-3 hits "
           f"label-verified across {len(QUERIES)} queries ===")
-    Path("bench_query_battery.json").write_text(
+    Path("bench") / "bench_query_battery.json".write_text(
         json.dumps(report, indent=2))
 
 
