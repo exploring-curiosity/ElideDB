@@ -40,6 +40,18 @@ def main():
     # PER-ITERATION progress. The old "every 200th recording"
     # print moved a bar three times over a 600-item run, which
     # tells you nothing about whether it is alive between them.
+    # LOAD BEFORE THE BAR EXISTS. clip_action_probs lazy-loads through
+    # action_probe._load() on FIRST USE - V-JEPA 2 ViT-L plus the SSv2
+    # attentive probe checkpoint - i.e. inside iteration one, so the
+    # longest single step of the run would hide behind a bar reading
+    # 0/N and look hung. This is the same failure iv2 had; it was fixed
+    # there and not here.
+    print("loading V-JEPA 2 ViT-L + SSv2 probe (first use only)...",
+          flush=True)
+    _t = time.time()
+    from elidedb.action_probe import _load
+    _load()
+    print(f"  model ready in {time.time() - _t:.0f}s", flush=True)
     from tqdm import tqdm
     # tqdm wraps the ITERABLE, so the count advances when an iteration
     # COMPLETES. Updating at the top of the body instead reports work
