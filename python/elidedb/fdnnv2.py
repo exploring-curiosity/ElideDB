@@ -46,15 +46,22 @@ CTX_DIM = 256
 
 # Verb/direction swaps for L3 hard negatives: shared lexicon (moved to
 # lexicon.py so the QUERY path can import it without this module's mlx)
-from .lexicon import VERB_SWAPS  # noqa: E402,F401
+from .lexicon import derived_swaps  # noqa: E402,F401
 
 
-def swap_verbs(text: str, rng) -> str | None:
+def swap_verbs(text: str, rng, store=None) -> str | None:
     """One randomly chosen applicable swap -> a hard negative. None if no
     swap applies (caption has no directional content to invert)."""
+    # Training negatives obey the no-hardwire rule too: a model taught
+    # from hand-written oppositions has the hand-writing baked into its
+    # weights, which is worse than a lookup table because it cannot be
+    # grepped out afterwards.
+    pairs = list(derived_swaps(store)) if store is not None else []
+    if not pairs:
+        return None
     t = " " + text.lower() + " "
     hits = []
-    for a, b in VERB_SWAPS:
+    for a, b in pairs:
         if f" {a} " in t:
             hits.append((a, b))
         if f" {b} " in t:

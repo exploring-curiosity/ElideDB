@@ -45,37 +45,17 @@ def derived_swaps(store, vec=None, min_count=2):
         return ()
 
 
-# COLD-START FALLBACK ONLY - not knowledge, and not to be extended.
-# Every entry here is a hardwiring violation that derived_swaps()
-# supersedes as soon as a corpus has been ingested.
-VERB_SWAPS = [
-    ("open", "close"), ("opens", "closes"), ("opening", "closing"),
-    ("opened", "closed"), ("into", "out of"), ("inside", "outside"),
-    ("picks up", "puts down"), ("picking up", "putting down"),
-    ("lifts", "lowers"), ("lifting", "lowering"),
-    ("pushes", "pulls"), ("pushing", "pulling"),
-    ("left", "right"), ("up", "down"), ("onto", "off"),
-    ("toward", "away from"), ("front", "back"),
-]
-
-# The un- REVERSAL family: verbs whose opposite is their morphological
-# negation. A query like "folding cloth" without a swap gets an
-# ABSOLUTE contrast question, and encoders answer absolute questions
-# with concept PRESENCE, not action direction (measured twice: open
-# clips outscored close clips 0.36; tiger-in-drawer outscored
-# fold-cloth +1.6 vs +0.17 because the drawer clip contains cloth).
-# The swap-contrast cancels that bias by construction. Generic
-# English, generated inflections, zero dataset words.
-_UN_BASES = ["fold", "wrap", "roll", "stack", "cover", "screw", "plug",
-             "zip", "tie", "load", "lock", "pack", "buckle", "hook",
-             "fasten", "tangle"]
-
-
-def _inflect(v):
-    ing = (v[:-1] + "ing") if v.endswith("e") else (v + "ing")
-    ed = (v + "d") if v.endswith("e") else (v + "ed")
-    return [v, v + "s", ing, ed]
-
-
-VERB_SWAPS += [(a, b) for base in _UN_BASES
-               for a, b in zip(_inflect(base), _inflect("un" + base))]
+# THERE IS NO VERB TABLE. VERB_SWAPS (17 hand-authored pairs) and
+# _UN_BASES (16 hand-authored stems that generated ~64 more) lived here
+# as a "cold-start fallback", labelled a violation by their own comment
+# and kept anyway. A fallback that always fires is not a fallback: on
+# every store measured, derived_swaps returned 0 pairs, so the hand list
+# WAS the direction mechanism, and it was also feeding the student's
+# training negatives.
+#
+# Removed. derived_swaps() above is the only source of oppositions: what
+# THIS corpus attests, scored in its own embedding space. A corpus that
+# cannot express an opposition now yields None, and callers must handle
+# that honestly rather than borrow English from a list. A forklift
+# corpus gets forklift oppositions or it gets nothing - which is the
+# rule, and the point.

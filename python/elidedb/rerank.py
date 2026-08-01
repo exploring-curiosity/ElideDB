@@ -37,6 +37,8 @@ import re
 
 import numpy as np
 
+from .lexicon import derived_swaps
+
 DEFAULT_VLM = "mlx-community/Qwen2-VL-2B-Instruct-4bit"
 _VLM_CACHE: dict = {}
 
@@ -169,31 +171,24 @@ def directional_swap(query: str, store=None) -> str | None:
     live when "pick up a green toy..." swapped to "pick DOWN..." and the
     motion channel fired at weight 2.5 on a garbage direction, putting a
     pot-on-stove clip at rank 1. A swap that is not a meaningful sentence
-    is worse than no swap. (The full pair list stays in VERB_SWAPS for
-    training-time hard negatives, where nonsense negatives are harmless.)
+    is worse than no swap.
     Multiword pairs are tried first so "picks up" wins before any single
     word could."""
-    # THE CORPUS GETS ASKED FIRST. This function imported VERB_SWAPS and
-    # nothing else, so the direction mechanism - the only thing that
-    # separates "opens the drawer" from "closes the drawer", and the
-    # reason those queries score at all - ran entirely on 81 hand-written
-    # pairs whose own comment reads "Every entry here is a hardwiring
-    # violation that derived_swaps() supersedes as soon as a corpus has
-    # been ingested". derived_swaps existed and was never called from
-    # here, so the supersession never happened.
+    # THE CORPUS IS THE ONLY SOURCE. This used to import VERB_SWAPS -
+    # 81 hand-authored pairs - and never call derived_swaps at all, so
+    # the direction mechanism, the one thing separating "opens the
+    # drawer" from "closes the drawer", was hand-written English. Making
+    # it a "fallback" was not a fix: derived_swaps returns 0 pairs on
+    # every store measured, so the fallback fired every time and the
+    # hand list remained the mechanism.
     #
-    # It takes a store to ask, so callers that have one now pass it.
-    # Without a store, or on a corpus whose attested vocabulary is too
-    # thin to name any opposition, the hand list is still the only thing
-    # left - but that is now a FALLBACK that a caller can detect
-    # (swap_source) rather than the silent default.
-    from .lexicon import VERB_SWAPS, derived_swaps
-    src = "corpus"
+    # Gone. A corpus that cannot attest an opposition yields None, and
+    # the caller loses its contrast rather than borrowing one. That is
+    # the honest state of a corpus with no vocabulary, and it is visible
+    # in the numbers instead of hidden behind a list.
     pairs = list(derived_swaps(store)) if store is not None else []
     if not pairs:
-        src = "hardwired-fallback"
-        pairs = list(VERB_SWAPS)
-    directional_swap.last_source = src
+        return None
     weak = {frozenset(p) for p in ((("left", "right")),
                                    (("up", "down")),
                                    (("front", "back")))}

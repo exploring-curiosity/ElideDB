@@ -33,7 +33,7 @@ import mlx.optimizers as optim                               # noqa: E402
 
 from elidedb.fdnnvideo import fdnnv_dir, load_encoder                   # noqa: E402
 from elidedb.fdnnv2 import (CTX_DIM, FDNNv2, TextAdapter,    # noqa: E402
-                            VERB_SWAPS, pool_event, save_v2, swap_verbs)
+                            pool_event, save_v2, swap_verbs)
 
 CACHE = Path("data/cache/b4h")
 OUT = Path("lake/bridge4h/models/fdnnv2")
@@ -256,11 +256,18 @@ def stage_b(model, adapter, px, sid, ts, streams, val, epochs=6, lr=3e-4,
     # pick/place vs close, so uniform sampling teaches the adapter to map
     # every query toward the majority verb mode (put-in AUC 0.83 while close
     # and open sank below chance). Each caption is weighted by the inverse
-    # sqrt document-frequency of its rarest verb from the GENERIC swap
-    # vocabulary — frequencies come from the corpus, words from plain
-    # English; nothing dataset-specific enters.
-    vocab = {w for pair in VERB_SWAPS for term in pair for w in term.split()}
+    # sqrt document-frequency of its RAREST WORD.
+    #
+    # This used to restrict the vocabulary to VERB_SWAPS - a hand-written
+    # list, described in this very comment as "words from plain English;
+    # nothing dataset-specific enters", which was the excuse the rule
+    # exists to refuse. The list is gone, and with it the restriction:
+    # document frequency over the corpus's OWN words says which terms are
+    # rare here without anyone deciding which words count. A corpus of
+    # forklift captions weights forklift verbs; nothing in code prefers a
+    # vocabulary.
     docs = [set(re.findall(r"[a-z]+", t.lower())) for t in texts]
+    vocab = set().union(*docs) if docs else set()
     df = {}
     for d in docs:
         for w in d & vocab:
