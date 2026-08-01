@@ -93,18 +93,48 @@ def main():
                 f"to produce the per-fold configs")
         folds = _json.loads(fp.read_text())
         print(f"HONEST (leave-one-query-out) mode: {len(folds)} folds")
-    # ELIDEDB_TRUTHSET: the demo-separation migration re-keys episodes
-    # (timeline gains gaps), so its gate run needs the remapped copy —
-    # the original truthset file is never modified.
+    # THE TRUTHSET IS KEYED ON episode_index, NEVER ON A TIMESTAMP.
+    # The old file keyed on (stream, t0) and, once demo separation
+    # re-gapped the timeline, joined to 4 of 1122 rows - SILENTLY, since
+    # a missing key is an empty join and not an error. This bench would
+    # have printed yield and precision over a support of zero and called
+    # it a result. t0 is a property of the WRITE; episode_index comes
+    # from the source dataset and survives re-writes, re-gaps, subsetting
+    # and compression. scripts/rekey_truthset.py rebuilds it from the raw
+    # verdicts.
     t = pq.read_table(os.environ.get(
-        "ELIDEDB_TRUTHSET", "eval/truthsets/bridge4h.parquet")).to_pydict()
-    truth = {}
-    support = {}
-    for q, s, t0, v in zip(t["query_id"], t["stream"], t["t0"],
-                           t["true"]):
-        truth[(int(q), s, int(t0))] = int(v)
-        support[int(q)] = support.get(int(q), 0) + int(v)
-    covered = sorted(support)
+        "ELIDEDB_TRUTHSET", "eval/truthsets/graded.parquet")).to_pydict()
+    ept = db.table("episodes").scan()
+    idx_of = {(s, int(a)): int(i) for s, a, i in
+              zip(ept.column("stream").to_pylist(),
+                  ept.column("ts").to_pylist(),
+                  ept.column("episode_index").to_pylist())}
+    in_store = set(idx_of.values())
+    truth, support = {}, {}
+    for q, ei, v in zip(t["query_id"], t["episode_index"], t["true"]):
+        ei = int(ei)
+        truth[(int(q), ei)] = int(v)
+        # SUPPORT IS WHAT THIS STORE HOLDS, not what the file records.
+        # Scoring a 600-episode store against a 2,097-episode truthset
+        # puts yield out of reach by construction and reads as a model
+        # regression instead of a corpus mismatch.
+        if ei in in_store:
+            support[int(q)] = support.get(int(q), 0) + int(v)
+
+    # SAY IT, DO NOT SCORE IT. A truthset that does not describe this
+    # corpus is the one failure this bench must never render as a number.
+    joined = sum(1 for (_, ei) in truth if ei in in_store)
+    if joined < len(truth) // 2:
+        raise SystemExit(
+            f"truthset joins to {joined} of {len(truth)} graded rows in "
+            f"{store_path} - refusing to report a number over a corpus "
+            f"the truthset does not describe. Either the store is a "
+            f"subset (rebuild it at full size) or the keys drifted "
+            f"(rerun scripts/rekey_truthset.py).")
+    if joined < len(truth):
+        print(f"note: {joined}/{len(truth)} graded rows present in "
+              f"{store_path}; support is computed over those only")
+    covered = sorted(q for q, s in support.items() if s)
     rows = []
     degraded = {}   # channel -> error, union over all queries
     only = (int(sys.argv[sys.argv.index("--only") + 1])
@@ -155,7 +185,11 @@ def main():
             continue
         tru = ung = 0
         for c in clips:
-            v = truth.get((qi, c["stream"], int(c["t0"])))
+            # A returned clip is graded through the store's own
+            # (stream, ts) -> episode_index map, so grading never
+            # depends on how this write laid out its clock.
+            ei = idx_of.get((c["stream"], int(c["t0"])))
+            v = None if ei is None else truth.get((qi, ei))
             if v is None:
                 ung += 1
             elif v == 1:
