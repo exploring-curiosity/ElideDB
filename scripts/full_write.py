@@ -270,7 +270,7 @@ def stage_presence(db, batch=64, proposer="agnostic"):
     engine produces, not something it is given.
     """
     from elidedb.identity import (Gallery, Stream, calibrate, detect,
-                                  propose)
+                                  fit_cut, interval_pairs, propose)
     ft = db.table("frames").scan()
     ft = ft.take(pc.sort_indices(ft, sort_keys=[("stream", "ascending"),
                                                 ("ts", "ascending")]))
@@ -340,18 +340,38 @@ def stage_presence(db, batch=64, proposer="agnostic"):
     # is no end-of-run ReID pass and no corpus of pixels to hold for it.
     V = np.stack([v for _, _, v in rows])
 
-    # free negatives: two presence intervals that OVERLAP IN TIME on the
-    # same stream are two different objects - one thing cannot be in two
-    # places. No episode needed to scope it.
-    pairs = []
-    for i in range(len(rows)):
-        for j in range(i + 1, min(i + 40, len(rows))):
-            if rows[i][0] != rows[j][0]:
-                continue
-            a_, b_ = rows[i][1], rows[j][1]
-            if a_["ts"] <= b_["t1"] and b_["ts"] <= a_["t1"]:
-                pairs.append((i, j))
-    fit, _ = calibrate(V, pairs)
+    # Proven-different AND proven-same pairs, both from box geometry.
+    #
+    # THE BUG THIS REPLACES. What stood here tested TIME OVERLAP ONLY and
+    # dropped the box-disjointness half of free_negatives - the half its
+    # docstring says is load-bearing. A detector that puts two boxes on
+    # ONE object makes two tracks that co-exist and look identical; they
+    # were being counted as proof of DIFFERENCE. Measured on fresh_bench
+    # they are 0.5% of co-existing pairs, and q=99.5 reads the top 0.5%,
+    # so the cut was very nearly a readout of the contamination: 0.739,
+    # where only 26% of proven-same pairs pass, and 78% of objects were
+    # seen exactly once.
+    #
+    # The same pass now also returns those double detections as the
+    # proven-SAME set, so the cut is fitted against both distributions
+    # instead of one tail. See interval_pairs and calibrate.
+    neg, pos = interval_pairs(rows)
+    # ...and the cut itself is fitted by SWEEPING it against the thing
+    # identity exists to produce - objects that recur across episodes -
+    # rather than by reading a percentile off one of two same-frame
+    # samples, neither of which is evidence about a cross-episode match.
+    # calibrate stays as the fallback for a corpus with no episodes.
+    ep = episode_of(db, rows)
+    if ep is None:
+        fit, _ = calibrate(V, neg, pos)
+    else:
+        fit, report = fit_cut(V, ep, neg, pos)
+        print("  identity cut fitted on cross-episode recurrence:")
+        for r in report:
+            print(f"    cut {r['cut']:.3f}  objects {r['objects']:>7,}  "
+                  f"recur {r['recur']:>6,}  singl {r['singleton_pct']:>5.1f}%"
+                  f"  false-merge {r.get('false_merge_pct', 0):.3f}%"
+                  + ("   <- fit" if r["cut"] == fit else ""))
     ids = Gallery(match=fit).assign(V)
 
     pres = pa.table({
@@ -709,6 +729,39 @@ def commit_events(db, ev_rows, spans):
     return len(E)
 
 
+def episode_of(db, rows):
+    """Which episode each closed track sits in, or None if unknowable.
+
+    fit_cut needs a GROUP per interval to measure recurrence across, and
+    the episode is that group. It is not the stream: fresh_bench has
+    2,097 episodes across 4 streams, so grouping by stream would ask
+    "does this object recur across cameras", which is a different and
+    much weaker question.
+    """
+    if "episodes" not in db.tables():
+        return None
+    ep = db.table("episodes").scan().to_pydict()
+    if not len(ep.get("ts", ())):
+        return None
+    by = {}
+    for s, a, b in zip(ep["stream"], ep["ts"], ep["t1"]):
+        by.setdefault(str(s), []).append((int(a), int(b)))
+    for v in by.values():
+        v.sort()
+    out, nxt = [], {}
+    for s, meta, *_ in rows:
+        spans = by.get(str(s), ())
+        k = -1
+        for n, (a, b) in enumerate(spans):
+            if a <= meta["ts"] <= b:
+                k = nxt.setdefault((str(s), n), len(nxt))
+                break
+        if k < 0:                       # outside every episode: its own
+            k = nxt.setdefault(("~", meta["ts"]), len(nxt))
+        out.append(k)
+    return np.asarray(out, np.int64)
+
+
 def close_track(stream, t):
     """A closed track reduced to what presence actually needs.
 
@@ -750,19 +803,16 @@ def close_track(stream, t):
 
 def commit_presence(db, rows):
     """rows: (stream, meta, descriptor) from close_track."""
-    from elidedb.identity import Gallery, calibrate
+    from elidedb.identity import (Gallery, calibrate, fit_cut,
+                                  interval_pairs)
     if not rows:
         return 0, 0
     V = np.stack([v for _, _, v in rows])
-    pairs = []
-    for i in range(len(rows)):
-        for j in range(i + 1, min(i + 40, len(rows))):
-            if rows[i][0] != rows[j][0]:
-                continue
-            a_, b_ = rows[i][1], rows[j][1]
-            if a_["ts"] <= b_["t1"] and b_["ts"] <= a_["t1"]:
-                pairs.append((i, j))
-    fit, _ = calibrate(V, pairs)
+    # same fix as stage_presence: co-existence alone counts a detector's
+    # double detection as proof of DIFFERENCE. Box geometry separates the
+    # two, and hands back the double detections as proof of SAMENESS.
+    neg, pos = interval_pairs(rows)
+    fit, _ = calibrate(V, neg, pos)
     ids = Gallery(match=fit).assign(V)
     pres = pa.table({
         "ts": pa.array([t["ts"] for _, t, _ in rows], pa.int64()),

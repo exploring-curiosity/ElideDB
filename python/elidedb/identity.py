@@ -526,26 +526,215 @@ def free_negatives(tracks, iou_max=0.1):
     return out
 
 
-def calibrate(V, pairs, q=CAL_Q, floor=0.5, ceil=0.95):
-    """Fit the match cut from the free negatives, on this corpus.
+def free_positives(tracks, iou_min=0.8):
+    """Track-id pairs that are CERTAINLY the SAME physical object.
 
-    The cut is the q-th percentile of similarity over pairs proven
-    different, i.e. "tighter than all but q% of what I can show is not
-    the same object". Hand-picking a number here would be exactly the
-    dataset prior this codebase forbids, and it would also be wrong: the
-    right cut moved from 0.85 to 0.65 the moment descriptors became
-    track-pooled instead of single-crop.
+    The mirror of free_negatives, from the mirror of its argument. That
+    one says two tracks in DISJOINT regions of one frame are two objects,
+    because one object cannot be in two places at once. This one says two
+    tracks in the SAME region of one frame are ONE object, because two
+    objects cannot occupy one place at once. Both are geometry; neither
+    needs an annotation, a label or a dataset prior.
 
-    Fails safe: too few negatives to estimate from, keep MATCH.
+    These pairs are DOUBLE DETECTIONS - the detector put two boxes on one
+    thing - which is why free_negatives works to exclude them. They were
+    treated as waste. They are not waste: they are the only proven-same
+    evidence this corpus can produce for free, and without them the cut
+    was fitted from one side of a two-sided decision.
+
+    iou_min is high on purpose. Overlap alone does not prove identity:
+    nested and contacting things - a lid on a jar, a hand on a pot -
+    overlap heavily and are two objects. Measured on fresh_bench, the
+    positive sample gets monotonically cleaner as the bar rises, and the
+    AUC it implies rises with it (0.860 at IoU>0.5 to 0.902 at IoU>0.95),
+    i.e. the loose bands are contaminated by exactly those nested pairs.
+    0.8 keeps thousands of pairs while paying most of that gap.
+
+    BIAS, stated, because it bounds what this can conclude: a same-frame
+    positive is the EASIEST positive there is - one instant, one
+    viewpoint, one exposure - while a same-frame negative is the HARDEST
+    negative. So the fitted cut is bracketed by two optimistic samples
+    pulling in opposite directions, and a genuine cross-episode
+    re-identification is harder than anything measured here.
+    """
+    out, ids = [], list(tracks)
+    for x in range(len(ids)):
+        a = tracks[ids[x]]
+        fa = {f: i for i, f in enumerate(a["f"])}
+        for y in range(x + 1, len(ids)):
+            b = tracks[ids[y]]
+            shared = [f for f in b["f"] if f in fa]
+            if not shared:
+                continue
+            bf = {f: i for i, f in enumerate(b["f"])}
+            if all(_iou(a["box"][fa[f]], b["box"][bf[f]]) >= iou_min
+                   for f in shared):
+                out.append((ids[x], ids[y]))
+    return out
+
+
+def interval_pairs(rows, iou_diff=0.1, iou_same=0.8, start_frac=0.25):
+    """free_negatives and free_positives over CLOSED intervals.
+
+    The write path does not hold tracks - it holds closed presence
+    intervals, each reduced to one box. Same two geometric arguments,
+    applied to what the writer actually has.
+
+    APPROXIMATION, stated: the retained box is the track's FIRST box, so
+    two boxes are only comparable when the tracks START together. That is
+    always true of the double detections the positive test is looking
+    for, and start_frac enforces it rather than assuming it. The negative
+    test does not need the guard - a pair wrongly called disjoint is a
+    pair dropped, not a pair mislabelled.
+
+    Args:
+        rows: (stream, meta) or (stream, meta, vec) as close_track emits;
+              meta carries ts, t1 and box.
+    Returns:
+        (neg, pos) index-pair lists into `rows`.
+    """
+    n = len(rows)
+    key = sorted(range(n), key=lambda i: (rows[i][0], rows[i][1]["ts"]))
+    neg, pos = [], []
+    for a in range(len(key)):
+        i = key[a]
+        si, mi = rows[i][0], rows[i][1]
+        for b in range(a + 1, len(key)):
+            j = key[b]
+            sj, mj = rows[j][0], rows[j][1]
+            if sj != si or mj["ts"] > mi["t1"]:
+                break                       # sorted: no later one overlaps
+            ov = _iou(mi["box"], mj["box"])
+            # the sweep runs in time order, so emit (min, max) rather
+            # than (earlier, later) - a pair is unordered and callers
+            # should not have to know which way round it came out.
+            e = (i, j) if i < j else (j, i)
+            if ov <= iou_diff:
+                neg.append(e)
+            elif ov >= iou_same:
+                span = min(mi["t1"] - mi["ts"], mj["t1"] - mj["ts"])
+                if abs(mj["ts"] - mi["ts"]) <= start_frac * max(span, 1):
+                    pos.append(e)
+    return neg, pos
+
+
+def calibrate(V, pairs, pos=None, q=CAL_Q, floor=0.5, ceil=0.95):
+    """Fit the match cut from proven pairs, on this corpus.
+
+    TWO-SIDED when proven-same pairs are supplied, and that is the
+    correction. The one-sided form below reads the q-th percentile of the
+    proven-DIFFERENT similarities - "tighter than all but q% of what I
+    can show is not the same object" - which is sound only if that sample
+    is clean. On fresh_bench it was not: double detections are 0.5% of
+    co-existing pairs and q=99.5 reads the top 0.5%, so the cut was very
+    nearly a readout of the contamination. It sat at 0.739, where only
+    26% of proven-same pairs are accepted, and the store fragmented to
+    78% singletons.
+
+    Fixing the contamination alone moves it to 0.692 - still 34% recall.
+    A one-sided fit cannot do better, because the tail of the negatives
+    says nothing about where the positives are. Hence Youden's J over
+    both: the cut that maximises (true accept rate - false merge rate),
+    the standard criterion when neither error has a stated price. It is
+    fitted, not chosen; no number here is hand-picked.
+
+    Fails safe in stages: no positives, use the one-sided percentile; too
+    few negatives to estimate at all, keep MATCH.
 
     Args:
         V: (N, D) unit-norm track descriptors.
-        pairs: index pairs into V, from free_negatives().
+        pairs: proven-DIFFERENT index pairs, from free_negatives.
+        pos: proven-SAME index pairs, from free_positives. Optional.
     """
     if len(pairs) < 20:
         return MATCH, len(pairs)
     neg = np.array([float(V[i] @ V[j]) for i, j in pairs])
-    return float(np.clip(np.percentile(neg, q), floor, ceil)), len(neg)
+    if pos is None or len(pos) < 20:
+        return float(np.clip(np.percentile(neg, q), floor, ceil)), len(neg)
+    p = np.array([float(V[i] @ V[j]) for i, j in pos])
+    grid = np.linspace(0.0, 1.0, 201)
+    j = ((p[None, :] >= grid[:, None]).mean(1)
+         - (neg[None, :] >= grid[:, None]).mean(1))
+    return float(np.clip(grid[int(j.argmax())], floor, ceil)), len(neg)
+
+
+def fit_cut(V, groups, neg, pos=None, grid=None):
+    """Fit the cut by MAXIMISING what identity is actually for.
+
+    Both free samples - proven-different and proven-same - are SAME-FRAME
+    pairs. The decision the gallery actually makes is not that one. It is
+    "is this new track the object I saw in a different episode?", and no
+    same-frame pair is evidence about it. So a statistic of those pairs
+    can bound the descriptor's quality but cannot choose the operating
+    point, and choosing it from one anyway is how the cut ended up where
+    it did.
+
+    The target quantity is measurable directly and needs no annotation:
+    HOW MANY OBJECTS RECUR ACROSS GROUPS. That is the whole point of a
+    persistent id, and it is self-limiting as an objective - too tight
+    and every sighting is a new id that recurs nowhere; too loose and
+    distinct objects collapse into one attractor, which also recurs
+    nowhere because there are no longer distinct objects to recur. It
+    therefore has an interior maximum, and that maximum is the fit.
+
+    Measured on fresh_bench (2,097 episodes, 73,521 intervals):
+
+        cut    objects  singletons  RECUR   worst false-merge
+        0.75    34,063     80.2%    6,447        0.18%
+        0.70    26,159     74.0%    6,475        0.22%   <- peak
+        0.60    14,011     57.3%    5,732        0.54%
+        0.50     6,320     36.8%    3,876        1.05%
+        0.42     2,618     19.4%    2,075        1.72%
+
+    which also disposes of the singleton rate as a target: driving it
+    from 80% to 19% costs two thirds of the recurrence and multiplies
+    proven-wrong merges by eight. Fewer, bigger, wronger objects.
+
+    Sweeping a cut used to be impossible - Gallery.assign was ~20 minutes
+    per pass - so the fit had to be a closed-form statistic. It is now
+    seconds, and an objective beats a proxy.
+
+    Args:
+        V: (N, D) unit-norm descriptors.
+        groups: (N,) group label per descriptor - the episode it sits in.
+        neg: proven-different pairs, for the reported false-merge rate.
+        pos: proven-same pairs, for the reported recovery rate.
+        grid: candidate cuts. Defaults to percentiles of the proven-
+              different similarities, so the range adapts to the corpus
+              rather than being a hand-written span.
+    Returns:
+        (cut, report) - report lists every candidate that was tried.
+    """
+    g = np.asarray(groups)
+    g = g - g.min() + 1
+    span = int(g.max()) + 2
+    N = np.asarray(neg, np.int64).reshape(-1, 2)
+    Pp = np.asarray(pos if pos is not None else [], np.int64).reshape(-1, 2)
+    if grid is None:
+        s = (np.einsum("ij,ij->i", V[N[:, 0]], V[N[:, 1]]) if len(N)
+             else np.array([MATCH]))
+        grid = np.unique(np.round(np.percentile(
+            s, [90, 95, 97.5, 99, 99.3, 99.5, 99.7, 99.9]), 3))
+    report = []
+    for cut in grid:
+        ids = Gallery(match=float(cut)).assign(V)
+        n = int(ids.max()) + 1
+        # objects present in more than one group
+        u = np.unique(ids.astype(np.int64) * span + g)
+        per = np.bincount((u // span).astype(np.int64), minlength=n)
+        row = {"cut": float(cut), "objects": n,
+               "recur": int((per > 1).sum()),
+               "singleton_pct": round(100.0 * float(
+                   (np.bincount(ids) == 1).mean()), 1)}
+        if len(N):
+            row["false_merge_pct"] = round(100.0 * float(
+                (ids[N[:, 0]] == ids[N[:, 1]]).mean()), 3)
+        if len(Pp):
+            row["recovered_pct"] = round(100.0 * float(
+                (ids[Pp[:, 0]] == ids[Pp[:, 1]]).mean()), 1)
+        report.append(row)
+    best = max(report, key=lambda r: r["recur"])
+    return best["cut"], report
 
 
 class Gallery:
@@ -567,15 +756,45 @@ class Gallery:
         self.match, self.max_ex, self.admit = match, max_ex, admit
         self.ex: list[np.ndarray] = []
         self.n: list[int] = []
+        # every exemplar of every object in ONE matrix, plus which object
+        # owns each row. self.ex stays the public view of the same thing.
+        self._M = np.zeros((0, 0), np.float32)
+        self._own = np.zeros(0, np.int32)
+        self._m = 0
+
+    def _grow(self, dim):
+        if self._M.shape[0] > self._m:
+            return
+        cap = max(1024, self._M.shape[0] * 2)
+        M = np.zeros((cap, dim), np.float32)
+        if self._m:
+            M[:self._m] = self._M[:self._m]
+        own = np.zeros(cap, np.int32)
+        own[:self._m] = self._own[:self._m]
+        self._M, self._own = M, own
 
     def assign(self, feats):
+        """Which object is each descriptor, in arrival order.
+
+        ONE matrix-vector product per descriptor, not one per object.
+        The old form looped over self.ex in Python, so a 73,521-track
+        corpus that had grown 32,756 objects did 2.4 billion iterations
+        of a two-line body - about 20 of the write's 54 minutes, and slow
+        enough that the cut could not be swept to find out it was wrong.
+
+        The reduction is exact, not an approximation: the best object is
+        the one owning the best EXEMPLAR, because max over objects of
+        (max over that object's exemplars) IS the max over all exemplars.
+        So a single argmax replaces the per-object max-then-compare.
+        """
         ids = []
         for v in feats:
+            v = np.ascontiguousarray(v, np.float32)
             best, bs = -1, -1.0
-            for i, E in enumerate(self.ex):
-                s = float((E @ v).max())
-                if s > bs:
-                    best, bs = i, s
+            if self._m:
+                s = self._M[:self._m] @ v
+                k = int(s.argmax())
+                best, bs = int(self._own[k]), float(s[k])
             if best >= 0 and bs >= self.match:
                 ids.append(best)
                 self.n[best] += 1
@@ -587,10 +806,19 @@ class Gallery:
                 if (len(E) < self.max_ex and bs < 0.95
                         and float((E @ v).min()) >= self.admit):
                     self.ex[best] = np.vstack([E, v])
+                    self._grow(len(v))
+                    self._M[self._m] = v
+                    self._own[self._m] = best
+                    self._m += 1
             else:
                 self.ex.append(v[None, :])
                 self.n.append(1)
-                ids.append(len(self.ex) - 1)
+                best = len(self.ex) - 1
+                ids.append(best)
+                self._grow(len(v))
+                self._M[self._m] = v
+                self._own[self._m] = best
+                self._m += 1
         return np.asarray(ids, np.int32)
 
     def centroids(self):

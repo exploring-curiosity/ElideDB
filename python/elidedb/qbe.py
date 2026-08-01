@@ -125,6 +125,16 @@ def spaces(store, drop_pc=DROP_PC):
             continue
         if t == "frame_vectors":
             continue                      # per-frame, not per-episode
+        # A CHANNEL IS SOMETHING A MODEL PRODUCED. Selecting on the name
+        # suffix alone silently enrolled object_vectors - the identity
+        # index - as an eighth retrieval channel the moment that table
+        # was first persisted, diluting the fusion with ReID appearance
+        # descriptors that exist to answer "is this the same object",
+        # not "does this episode match the query". Every encoder output
+        # already declares its `model`; an index declares a cut instead,
+        # so the distinction is recorded rather than guessed from a name.
+        if not (store.table(t).state().meta or {}).get("model"):
+            continue
         try:
             p = _pooled(store, t)
         except Exception:

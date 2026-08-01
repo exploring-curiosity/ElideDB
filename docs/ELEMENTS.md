@@ -85,23 +85,76 @@ MISSING — the joins the architecture needs
 ## Ordering: identity is core
 
 Everything joins on `object_id`, so joins built on unreliable ids inherit the
-unreliability. Current state: **73,521 intervals resolve to 32,756 objects,
-78% seen exactly once**, at a match cut of **0.739**.
+unreliability. Settled 2026-08-01, once `object_vectors` persisted the
+descriptors and made all of this measurable.
 
-The cut is the 99.5th percentile of *proven-different* pairs (co-existing
-tracks — 200k+ of them), clipped to [0.50, 0.95]. It is fitted, not
-hand-picked, exactly as the no-hardwire rule requires. Two readings remain and
-they were not separable until now:
+### The negatives were contaminated
 
-- **cut too strict** — genuine same-object pairs fall below 0.739
-- **descriptor too weak** — same-object pairs are *also* ~0.74, so no threshold
-  separates them and the percentile is doing its job on a signal with none
+The cut is the 99.5th percentile of *proven-different* pairs. `free_negatives`
+proves difference with two tests — the tracks **co-exist** and their boxes are
+**disjoint** — and says the second is load-bearing, because a detector that
+puts two boxes on one object makes two tracks that co-exist and look identical.
+Both writers tested co-existence only. Those double detections are **0.5% of
+co-existing pairs** and `q=99.5` reads the top 0.5%, so the cut was very nearly
+a readout of the contamination.
 
-`object_vectors` makes this decidable: intervals sharing an `object_id` are the
-**positive** distribution the free negatives never had a counterpart for. Sweep
-`ELIDEDB_OBJ_CAL_Q`, measure singleton rate and cross-episode reuse, and if no
-cut produces a plausible object count, the descriptor is at fault and must be
-replaced.
+```
+cut on contaminated negatives   0.748
+cut on clean negatives          0.692
+```
+
+### The mirror argument is free supervision
+
+Two tracks in *disjoint* regions of one frame are two objects. Two tracks in
+the *same* region are one object. Same geometry, no annotation — so the double
+detections are not waste, they are the **proven-same** set the calibration
+never had (`free_positives`, `interval_pairs`).
+
+### But the cut is not the blocker — the descriptor is
+
+Fitted honestly against those two sets, the descriptor's separability is
+**AUC 0.90**, not the near-perfect number an earlier circular sample suggested
+(that sample drew "positives" from pairs already *assigned* the same id, which
+they could only be by passing the cut). Even at IoU>0.95 — same object, same
+frame, same instant, nearly the same box — **5% of pairs score below 0.465**.
+The easiest possible case fails one time in twenty.
+
+### The singleton rate is the wrong target
+
+Sweeping the cut against cross-episode recurrence — the thing a persistent id
+exists to produce — gives an interior maximum:
+
+| cut | objects | singletons | **recur** | false-merge |
+|---|---|---|---|---|
+| 0.843 | 49,944 | 89.5% | 5,070 | 0.101% |
+| 0.749 | 34,468 | 79.7% | 6,695 | 0.224% |
+| **0.692** | **25,629** | **71.8%** | **6,901** | 0.278% |
+| 0.603 | 14,754 | 56.1% | 6,215 | 0.481% |
+| 0.408 | 2,345 | 16.7% | 1,927 | 1.709% |
+
+Driving singletons from 80% to 17% costs **two thirds of the recurrence** and
+multiplies proven-wrong merges by eight. Fewer, bigger, wronger objects. The
+store now sits at the peak (`scripts/refit_identity.py`).
+
+`fit_cut` replaces the percentile because both free samples are *same-frame*
+pairs, and the decision the gallery actually makes — "is this the object from a
+**different episode**?" — has no same-frame evidence at all. An objective that
+measures the target quantity beats a statistic of a proxy.
+
+### Assignment order matters more than the cut
+
+`Gallery.assign` is greedy, so arrival order changes the result. At a **fixed**
+cut of 0.739, order alone moves recurrence from 6,484 to 6,821 — larger than
+the entire gain from re-fitting the cut. Globally-ts-sorted order is the worst
+measured, because it interleaves all four cameras; the writer's track-close
+order is among the best. Any tool that re-assigns ids must reproduce it.
+
+### Next, and it is a descriptor question
+
+`yolo26n-reid.onnx` is a nano model, and AUC 0.90 with a 5% floor failure on
+trivial pairs is its ceiling, not the threshold's. Improving identity means a
+stronger ReID encoder (vision-only, per [[no-text-identity]] — no CLIP,
+SigLIP or DINOv2), not further tuning of the cut.
 
 ## Two write-path bugs worth remembering
 
