@@ -161,27 +161,46 @@ SigLIP or DINOv2), not further tuning of the cut.
 One model per task; a backbone earns its place by serving more than one.
 Redundancy measured above, not assumed.
 
+Corrected same day: **no FDNN anywhere in the teacher.** FDNN was never
+distilled properly, so putting it under the teacher poisons the thing the
+teacher exists to prove. FDNN is the *compression step at the end* — it
+returns only as the student, distilled from a teacher that already works.
+
 | task | model | note |
 |---|---|---|
-| frame embedding, every frame | **FDNN-V** (ours, 1.95M) | substrate for scene + all distillation |
-| scene element (scene→scene series) | FDNN-V vectors | no new model — a time series over what exists |
+| frame embedding, every frame | **DINOv3-S** | teacher-grade substrate; SSL, no text tower, SOTA instance features |
+| scene element (scene→scene series) | DINOv3 frame series | no extra model — a time series over the frame embeddings |
+| identity descriptor | **DINOv3-S** on track crops | same backbone, crop granularity; replaces yolo26n-reid (AUC 0.90 ceiling) |
 | region proposal (write) | **YOLO11n-seg** single_cls | unchanged |
 | association → presence | **BoT-SORT** geometry | no weights at all |
-| identity descriptor | **DINOv3-S** teacher → distilled student | replaces yolo26n-reid (AUC 0.90 ceiling); student trained on the corpus's own free geometric pairs |
 | trajectory channel (replaces mot) | tracker boxes + **Depth Pro** z | geometry, not an encoder; Depth Pro benchmark is user-gated |
 | physics/dynamics per participant | **V-JEPA2 ViT-L** | tubelets seeded from elements, never whole-frame |
-| act | same V-JEPA2 backbone + SSv2 probe | kept ONLY until trajectory lands; re-measure, delete if covered |
-| story on top of answer | **SigLIP2** + **InternVideo2** | the two non-redundant survivors |
-| text→video (later) | SigLIP2 / IV2 text towers | the reason they stay: DINOv3 has no text tower |
+| text bridge (query-time nouns) | **SigLIP2** | the ONE text-aligned model kept; see redundancy note |
+| final write path (after teacher hits target) | FDNN student, distilled fresh | trained against the DINOv3 teacher + corpus free pairs; nothing carried over from the old FDNN-V |
 
-**Dropped:** PE-Core (0.89 rank-dup of sig2, 36 vs 23 min build), X-CLIP
-(0.70 dup, its one distinct ability — cross-frame attention — was discarded
-at write anyway), delta-appearance mot (wrong by design), yolo26n-reid
-(replaced), FastSAM stays teacher-only.
+**Dropped:** PE-Core (0.89 rank-dup of sig2), X-CLIP (0.70 dup, its one
+distinct ability discarded at write anyway), **act** (user call: no earned
+purpose; its SSv2 probe rode V-JEPA2 for free but free is not a reason),
+delta-appearance mot (wrong by design), yolo26n-reid (replaced), FDNN-V as
+teacher substrate (never properly distilled), FastSAM stays teacher-only.
 
-Backbone count: 10 → 6. "Find this object elsewhere" is served by the
-identity index (`object_vectors` + joins), not by episode-level fusion —
-which is why `spaces()` excludes it.
+**CLIP-family redundancy under this roster:** DINOv3 takes ALL appearance
+similarity — QbE, identity, scene. What remains of the text-aligned family
+is one job: mapping a query's nouns into vision space at read time. That
+needs exactly one text tower, so of sig2/IV2, **IV2 is the redundancy
+candidate**: verbs/actions now come from trajectory + events (text
+embeddings erase them anyway — measured, open/close cos 0.957), which
+leaves IV2 doing sig2's noun job at 1B params, gated, and video-native
+temporal attention the elements now provide structurally. Kept in the
+store until one A/B on the new stack confirms — IV2 was the strongest
+independent channel of the old fusion, so its deletion gets a measurement,
+not an assumption. MobileCLIP2/Unicom were DINOv3 fallbacks; moot once
+access lands.
+
+Backbone count: 10 → **5** (DINOv3, YOLO11n-seg, V-JEPA2, SigLIP2, Depth
+Pro) + the end-stage FDNN student. "Find this object elsewhere" is served
+by the identity index (`object_vectors` + joins), not by episode-level
+fusion — which is why `spaces()` excludes it.
 
 ## Two write-path bugs worth remembering
 
