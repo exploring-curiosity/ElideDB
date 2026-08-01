@@ -26,7 +26,8 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "python"))
 
 from elidedb import Store                                    # noqa: E402
 
@@ -170,12 +171,26 @@ def bridge_and_eval(db):
             sc = space @ tq(q)
             rep[f"{name}_{cname}_top10"] = int(
                 mask[np.argsort(-sc)[:10]].sum())
-    np.save(db.dir / "models" / "vjepa_bridge_W.npy", W)
+    # MODELS LIVE OUTSIDE THE STORE TREE. `db.dir / "models"` never
+    # existed in any store, so this raised FileNotFoundError - and it
+    # would have been wrong even if it worked: a store holds data, and a
+    # fitted matrix is not data (see the model-out-of-the-store-tree
+    # change). Keyed by store name so two corpora do not overwrite each
+    # other's bridge.
+    out = ROOT / "models" / f"vjepa_bridge_W.{db.name}.npy"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    np.save(out, W)
     return rep
 
 
 def main():
-    db = Store.open("lake/bridge4h")
+    # TAKE THE STORE FROM argv LIKE EVERY OTHER INGEST. This was
+    # hardcoded to lake/bridge4h, so build_teachers.py invoked it with
+    # lake/fresh_bench and it spent 20 minutes embedding a different
+    # store, then reported 0 rows for the one that was asked for. Five
+    # sibling ingests all read sys.argv[1]; this was the only exception,
+    # and nothing catches a script that quietly ignores its argument.
+    db = Store.open(sys.argv[1] if len(sys.argv) > 1 else "lake/bridge4h")
     try:
         have = len(db.table("vjepa_vectors").scan())
     except Exception:
@@ -183,7 +198,14 @@ def main():
     out = {}
     if not have:
         out["ingest"] = ingest(db)
-    out["eval"] = bridge_and_eval(db)
+    # THE EVAL MUST NOT BE ABLE TO DESTROY THE INGEST. ingest() commits
+    # before this runs, so the vectors are already durable - but a raise
+    # here exits non-zero and reads as a failed channel. A diagnostic
+    # that fails is a diagnostic that failed, not a lost ingest.
+    try:
+        out["eval"] = bridge_and_eval(db)
+    except Exception as e:
+        out["eval"] = f"SKIPPED - {type(e).__name__}: {e}"
     print(json.dumps(out, indent=1))
 
 
