@@ -1062,8 +1062,24 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
     # product ratio is true/returned -> returned/support; padding to
     # k_max buys yield with junk, and the fitted alpha prices that
     # trade on the truthset instead of a fixed count.
-    cut = (confidence_cut(fused[order], cut_alpha, k_max)
-           if sw.exists() else min(_knee(fused[order]), k_max))
+    # ALWAYS the confidence cut. This used to read
+    #     confidence_cut(...) if sw.exists() else min(_knee(...), k_max)
+    # and NO STORE HAS A FITTED WEIGHTS FILE - it is produced by
+    # fit_set_weights.py, which fits on the truthset and so cannot ship.
+    # Every query therefore took the `else`: `_knee`, the rule this
+    # module's own docstring records as broken - "the biggest gap on an
+    # RRF curve is at the very top, so it returned 3 clips for a query
+    # with 196 true episodes". Measured on fresh_bench it returned 6, 15
+    # and 12 clips for supports of 247, 165 and 196, while the
+    # unsupervised cut sitting unreachable behind the branch selected
+    # 194, 156 and 184 - i.e. the right answer was already being
+    # computed and thrown away.
+    #
+    # With cut_alpha 0 (no fitted alpha, the only shippable state)
+    # confidence_cut delegates to the median+3*MAD outlier test, which
+    # needs no evaluation data: matches are the episodes scoring unlike
+    # the corpus background, however many that turns out to be.
+    cut = confidence_cut(fused[order], cut_alpha, k_max)
     chosen = order[:cut]
     borderline = order[cut:cut + 20]
 
