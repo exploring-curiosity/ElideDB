@@ -142,7 +142,46 @@ def fidelity(P, Y, k=10):
                 [len(set(a) & set(b)) / kk for a, b in zip(rp, rt)])), 4)}
 
 
-def report(V, labels=None, groups=None, teacher=None):
+def code_agreement(student, teacher, C, min_frac=0.05):
+    """Layer 3b: does the student land in the TEACHER'S codebook cell?
+
+    This metric exists because of how this store prunes. `code` is a
+    clustered column and the planner reads only the row groups a query's
+    probe selects, so a student that produces a beautiful vector in the
+    WRONG cell puts its row in a row group the planner never opens. The
+    row is then unreachable at any k. Cosine cannot see that failure and
+    neither can nn_recall.
+
+    Two numbers, and the second is the one that decides:
+
+      code@1        student cell == teacher cell. Informative, but a
+                    miss here is survivable - probe() widens.
+      code_recall   the teacher's cell is INSIDE the probe set the
+                    student's own vector selects. A miss here is
+                    permanent data loss: nothing the reader does at
+                    query time recovers that row.
+
+    A student at code@1 0.70 with code_recall 0.99 ships. One at code@1
+    0.95 with code_recall 0.95 silently loses 5% of the corpus.
+    """
+    from .teacher import assign, probe as _probe
+    C = np.asarray(C, np.float32)
+    ts_code, _ = assign(np.asarray(teacher, np.float32), C)
+    st_code, _ = assign(np.asarray(student, np.float32), C)
+    top1 = float(np.mean(st_code == ts_code))
+    hit, widths = 0, []
+    for i, v in enumerate(_l2(np.asarray(student, np.float32))):
+        cells = _probe(v, C, min_frac=min_frac)
+        widths.append(len(cells))
+        if int(ts_code[i]) in cells:
+            hit += 1
+    return {"code@1": round(top1, 4),
+            "code_recall": round(hit / max(len(student), 1), 4),
+            "mean_probe_cells": round(float(np.mean(widths)), 2),
+            "cells": int(len(C))}
+
+
+def report(V, labels=None, groups=None, teacher=None, codebook=None):
     """One channel, all three layers. `labels` is {name: bool array}."""
     out = {"separability": separability(V)}
     if labels:
@@ -153,10 +192,12 @@ def report(V, labels=None, groups=None, teacher=None):
         out["retrieval_map"] = retrieval_map(V, groups)
     if teacher is not None:
         out["fidelity"] = fidelity(V, teacher)
+        if codebook is not None:
+            out["code"] = code_agreement(V, teacher, codebook)
     return out
 
 
-def verdict(student, teacher, tol=0.03):
+def verdict(student, teacher, tol=0.03, code_recall_min=0.98):
     """The shipping gate: task AUC within `tol` of the teacher's.
 
     Deliberately NOT fidelity. A student that disagrees with its teacher
@@ -170,5 +211,11 @@ def verdict(student, teacher, tol=0.03):
         return {"ship": False,
                 "reason": f"teacher itself is uninformative (AUC {t}) - "
                           "fix the teacher target before distilling"}
+    cr = (student.get("code") or {}).get("code_recall")
+    if cr is not None and cr < code_recall_min:
+        return {"ship": False, "student_auc": s, "teacher_auc": t,
+                "reason": f"code_recall {cr} < {code_recall_min}: rows "
+                          "whose teacher cell falls outside the student's "
+                          "probe are unreachable at any k"}
     return {"ship": bool(s >= t - tol), "student_auc": s, "teacher_auc": t,
-            "gap": round(s - t, 4), "tolerance": tol}
+            "gap": round(s - t, 4), "tolerance": tol, "code_recall": cr}
