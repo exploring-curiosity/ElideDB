@@ -61,7 +61,14 @@ def main():
             vecs.append(v.astype(np.float32))
         buf.clear(); meta_buf.clear()
 
+    # PER-ITERATION progress. The old "every 200th recording" print
+    # moved a bar three times over a 600-item run, which tells you
+    # nothing about whether it is alive between them.
+    from tqdm import tqdm
+    _bar = tqdm(total=len(recs), desc="xclip", unit="rec",
+                dynamic_ncols=True, mininterval=0.3)
     for ri, (s, a, b) in enumerate(recs):
+        _bar.update(1)
         sel = frames_tbl.filter(pc.and_(
             pc.equal(frames_tbl.column("stream"), s),
             pc.and_(pc.greater_equal(frames_tbl.column("ts"), a),
@@ -76,10 +83,8 @@ def main():
         meta_buf.append((s, a, b))
         if len(buf) >= 4:
             flush()
-        if (ri + 1) % 200 == 0:
-            print(f"  {ri + 1}/{len(recs)} (t={time.time() - t0:.0f}s)",
-                  flush=True)
     flush()
+    _bar.close()
     V = np.stack(vecs)
     dim = V.shape[1]
     tbl = pa.table({

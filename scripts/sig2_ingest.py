@@ -42,7 +42,14 @@ def main():
     frames_tbl = store.table("frames").scan()
     rows_s, rows_a, rows_b, vecs = [], [], [], []
     t0 = time.time()
+    # PER-ITERATION progress. The old "every 200th recording"
+    # print moved a bar three times over a 600-item run, which
+    # tells you nothing about whether it is alive between them.
+    from tqdm import tqdm
+    _bar = tqdm(total=len(recs), desc="sig2", unit="rec",
+                dynamic_ncols=True, mininterval=0.3)
     for ri, (s, a, b) in enumerate(recs):
+        _bar.update(1)
         sel = frames_tbl.filter(pc.and_(
             pc.equal(frames_tbl.column("stream"), s),
             pc.and_(pc.greater_equal(frames_tbl.column("ts"), a),
@@ -66,9 +73,7 @@ def main():
         for v in f:
             rows_s.append(s); rows_a.append(a); rows_b.append(b)
             vecs.append(v.astype(np.float32))
-        if (ri + 1) % 200 == 0:
-            el = time.time() - t0
-            print(f"  {ri + 1}/{len(recs)} {el:.0f}s", flush=True)
+    _bar.close()
     V = np.stack(vecs)
     tbl = pa.table({
         "ts": pa.array(rows_a, pa.int64()),
