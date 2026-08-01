@@ -270,6 +270,32 @@ class _Dets:
     def __getitem__(self, m):
         return _Dets(self.xywh[m], self.conf[m], self.cls[m])
 
+    @property
+    def xyxy(self):
+        """Corner boxes, which global motion compensation asks for.
+
+        byte_tracker.py calls `self.gmc.apply(img, results_high.xyxy)` to
+        mask moving objects out before estimating camera motion, inside a
+        try/except that WARNS and falls back to an identity warp. Without
+        this property every frame took that fallback: 1,434 warnings in
+        the first two minutes of a write, and camera motion silently not
+        compensated.
+
+        It was invisible on this corpus because Bridge's camera is fixed,
+        where identity is the correct warp anyway - so the bug cost
+        nothing here and everything on a corpus that moves. A robot that
+        drives or a vehicle camera would have had its tracks fragmented
+        by exactly the motion GMC exists to remove.
+
+        xywh is centre-based (built that way in Stream.push, and what
+        ultralytics' xywh2ltwh assumes), so the corners are centre +/-
+        half-extent.
+        """
+        cx, cy, w, h = (self.xywh[:, 0], self.xywh[:, 1],
+                        self.xywh[:, 2], self.xywh[:, 3])
+        return np.stack([cx - w / 2, cy - h / 2,
+                         cx + w / 2, cy + h / 2], 1)
+
 
 def _tracker(gmc=None):
     from ultralytics.trackers.bot_sort import BOTSORT

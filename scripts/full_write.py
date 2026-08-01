@@ -758,9 +758,24 @@ def stage_index(db):
     return len(L["ts"])
 
 
-CHANNELS = [("pe", "pe_ingest.py"), ("sig2", "sig2_ingest.py"),
-            ("iv2", "iv2_ingest.py"), ("xclip", "xclip_ingest.py"),
-            ("vjepa", "vjepa_channel.py"), ("act", "action_ingest.py")]
+# name -> (script, the table it must fill). The table is not decoration:
+# it is how this stage decides whether the channel worked.
+CHANNELS = [("pe", "pe_ingest.py", "pe_vectors"),
+            ("sig2", "sig2_ingest.py", "sig2_vectors"),
+            ("iv2", "iv2_ingest.py", "iv2_vectors"),
+            ("xclip", "xclip_ingest.py", "xclip_vectors"),
+            ("vjepa", "vjepa_channel.py", "vjepa_vectors"),
+            ("act", "action_ingest.py", "action_probs")]
+
+
+def _channel_rows(out, table):
+    """Rows in a channel table right now, 0 if absent. Opened fresh so it
+    sees what the child just committed, not what we had cached."""
+    try:
+        db = Store.open(str(out))
+        return len(db.table(table).scan()) if table in db.tables() else 0
+    except Exception:
+        return 0
 
 
 def stage_channels(out, only=None):
@@ -772,21 +787,42 @@ def stage_channels(out, only=None):
     the entire FDNN-V ingest - which is the number that matters far more
     than the total, because it says the retrieval path costs an order of
     magnitude more than the write budget allows.
+
+    Two rules this stage used to break, both of which cost an hour:
+
+    THE CHILD OWNS THE TERMINAL. Every ingest carries a per-recording
+    tqdm bar. Capturing its stdout hides that bar, and a hidden bar makes
+    a slow channel indistinguishable from a hung one - which is the whole
+    reason the bars were added. So no capture_output here.
+
+    THE ARTIFACT IS THE TEST. `pe_ingest` once printed "DONE in 434s",
+    exited 0, and wrote an empty table. An exit code reports that a
+    process ended, not that it did the work. Count the rows.
+
+    Pass --channels with a name that matches nothing (e.g. `none`) to
+    skip the stage entirely and build channels separately with
+    scripts/build_teachers.py, which is resumable.
     """
     T = {}
-    for name, script in CHANNELS:
-        if only and name not in only:
+    for name, script, table in CHANNELS:
+        if only is not None and name not in only:
             continue
+        before = _channel_rows(out, table)
         a = time.time()
-        r = subprocess.run([sys.executable, f"scripts/{script}", str(out)],
-                           capture_output=True, text=True)
-        T[name] = round(time.time() - a, 2)
-        if r.returncode != 0:
-            T[name] = f"FAILED after {T[name]}s: {r.stderr.strip()[-200:]}"
-            print(f"  channel {name}: FAILED\n{r.stderr[-600:]}", flush=True)
+        proc = subprocess.run(
+            [sys.executable, f"scripts/{script}", str(out)])
+        secs = round(time.time() - a, 2)
+        after = _channel_rows(out, table)
+        if after > before:
+            T[name] = secs
+            print(f"  channel {name}: ok - {after:,} rows in {table} "
+                  f"({secs}s)", flush=True)
         else:
-            print(f"  channel {name}: {T[name]}s  {r.stdout.strip()[-160:]}",
-                  flush=True)
+            T[name] = (f"FAILED after {secs}s: {table} still has "
+                       f"{after} rows (exit {proc.returncode})")
+            print(f"  channel {name}: FAILED - wrote no rows to {table} "
+                  f"({secs}s, exit {proc.returncode}); scroll up for its "
+                  "own error output", flush=True)
     return T
 
 

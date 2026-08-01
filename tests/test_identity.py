@@ -25,7 +25,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 
-from elidedb.identity import (MATCH, Gallery, calibrate,  # noqa: E402
+from elidedb.identity import (MATCH, Gallery, _Dets,  # noqa: E402
+                              calibrate,
                               free_negatives, _views)
 
 
@@ -99,6 +100,23 @@ def test_views_spread_across_the_track():
     v = _views(t, k=4)
     assert len(v) == 4 and v == sorted(v)
     assert max(v) - min(v) >= 12
+
+
+def test_dets_exposes_corner_boxes_for_gmc():
+    """byte_tracker asks a detection batch for .xyxy to mask moving
+    objects out of its camera-motion estimate, inside a try/except that
+    warns and falls back to an identity warp. Without the property the
+    fallback fired on EVERY frame - silent, because a fixed-camera corpus
+    cannot tell identity from a correct warp. This test is the tripwire a
+    moving-camera corpus would otherwise have to find for us."""
+    b = np.array([[10., 20., 50., 80.], [0., 0., 4., 6.]], np.float32)
+    xywh = np.stack([(b[:, 0] + b[:, 2]) / 2, (b[:, 1] + b[:, 3]) / 2,
+                     b[:, 2] - b[:, 0], b[:, 3] - b[:, 1]], 1)
+    d = _Dets(xywh.astype(np.float32), np.array([.9, .5], np.float32),
+              np.array([0, 1]))
+    assert np.allclose(d.xyxy, b), "xywh -> xyxy must round-trip"
+    # the tracker slices high/low confidence before asking for xyxy
+    assert np.allclose(d[np.array([True, False])].xyxy, b[:1])
 
 
 if __name__ == "__main__":
