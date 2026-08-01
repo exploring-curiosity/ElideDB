@@ -136,14 +136,41 @@ def nms_keep(order, sid, pos, r):
 
 
 def filter_mask(ch, names, q):
-    """Median rank-fraction over the named filter channels; episodes
-    in the bottom-q die. Quantile, never sign: AUC-validated channels
-    have uncalibrated zero points (a sign test executed 130/183 true
-    closes, measured). All-alive when no named channel has evidence or
-    q is 0."""
+    """UNANIMOUS rank-fraction filter: an episode dies only when EVERY
+    named filter channel puts it in the bottom q.
+
+    Quantile, never sign: AUC-validated channels have uncalibrated zero
+    points (a sign test executed 130/183 true closes, measured).
+    All-alive when no named channel has evidence or q is 0.
+
+    WHY UNANIMITY, NOT THE MEDIAN. scenario.py's contract has always read
+    "an episode BOTH direction-aware channels score negative is dropped"
+    - and this computed a MEDIAN, which is not that. The difference is
+    not cosmetic: deletion happens BEFORE ranking, so nothing downstream
+    can recover an episode this drops, and the median lets a majority of
+    weak channels delete on evidence no single trustworthy channel
+    supports.
+
+    Measured on fresh_bench, where q05's contrast channels are act
+    (AUC 0.330 - inverted, it ranks true episodes BELOW false ones) and
+    mot (0.529 - chance): the median rule destroyed 68 of 196 known
+    positives before ranking, capping achievable yield at 0.65 no matter
+    what the ranking or the cut did afterwards. q04 lost 18 of 165.
+
+    Unanimity is the conservative reading and the one the docstring
+    promised: a single channel that disagrees is enough to spare an
+    episode, so an inverted channel can no longer carry a deletion on
+    its own. It cannot make the filter delete MORE than the median did,
+    only less, which is the right direction for an irreversible step.
+
+    An earlier attempt fixed this by dropping vetoed channels from
+    `names` instead. That REGRESSED (q05 yield 0.27 -> 0.21) because the
+    median over fewer channels is more decisive, not less - the fix has
+    to change the rule, not the membership.
+    """
     con = [rankfrac(ch[c]) for c in names
            if c in ch and np.isfinite(ch[c]).any()]
     size = len(next(iter(ch.values()))) if ch else 0
     if not con or q <= 0:
         return np.ones(size, bool)
-    return ~(np.median(np.stack(con), 0) < q)
+    return ~np.all(np.stack(con) < q, axis=0)
