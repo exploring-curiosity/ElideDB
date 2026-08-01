@@ -35,11 +35,22 @@ def main():
     # PER-ITERATION progress. The old "every 200th recording"
     # print moved a bar three times over a 600-item run, which
     # tells you nothing about whether it is alive between them.
+    # Load the model BEFORE the bar exists. clip_vec lazy-loads a 4 GB
+    # checkpoint on FIRST USE, i.e. inside iteration one, so the bar
+    # sat at 0/600 for minutes and looked hung. The longest step in the
+    # run deserves to be announced, not hidden behind a frozen bar.
+    print('loading InternVideo2 (~4 GB, first use only)...', flush=True)
+    _t = time.time()
+    from elidedb.iv2 import load_model
+    load_model()
+    print(f'  model ready in {time.time() - _t:.0f}s', flush=True)
     from tqdm import tqdm
-    _bar = tqdm(total=len(recs), desc="iv2", unit="rec",
-                dynamic_ncols=True, mininterval=0.3)
-    for ri, (s, a, b) in enumerate(recs):
-        _bar.update(1)
+    # tqdm wraps the ITERABLE, so the count advances when an iteration
+    # COMPLETES. Updating at the top of the body instead reports work
+    # that has not happened yet.
+    _bar = tqdm(recs, desc="iv2", unit="rec", dynamic_ncols=True,
+                mininterval=0.3)
+    for ri, (s, a, b) in enumerate(_bar):
         sel = frames_tbl.filter(pc.and_(
             pc.equal(frames_tbl.column("stream"), s),
             pc.and_(pc.greater_equal(frames_tbl.column("ts"), a),

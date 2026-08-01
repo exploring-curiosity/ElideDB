@@ -41,10 +41,12 @@ def main():
     # print moved a bar three times over a 600-item run, which
     # tells you nothing about whether it is alive between them.
     from tqdm import tqdm
-    _bar = tqdm(total=len(recs), desc="act", unit="rec",
-                dynamic_ncols=True, mininterval=0.3)
-    for ri, (s, a, b) in enumerate(recs):
-        _bar.update(1)
+    # tqdm wraps the ITERABLE, so the count advances when an iteration
+    # COMPLETES. Updating at the top of the body instead reports work
+    # that has not happened yet.
+    _bar = tqdm(recs, desc="act", unit="rec", dynamic_ncols=True,
+                mininterval=0.3)
+    for ri, (s, a, b) in enumerate(_bar):
         sel = frames_tbl.filter(pc.and_(
             pc.equal(frames_tbl.column("stream"), s),
             pc.and_(pc.greater_equal(frames_tbl.column("ts"), a),
