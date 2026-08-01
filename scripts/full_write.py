@@ -394,7 +394,7 @@ def stage_one_pass(db, spans, shift, model, proposer="agnostic",
 
     cols = defaultdict(list)
     all_ts, all_vec, all_stream, ev_rows = [], [], [], []
-    pres_rows, pres_crops = [], []
+    pres_rows = []          # (stream, meta, descriptor)
     cost = defaultdict(float)
     n_frames = 0
 
@@ -494,7 +494,7 @@ def stage_one_pass(db, spans, shift, model, proposer="agnostic",
                 for tid, t in st_track.update(
                         int(ts_), (b, np.ones(len(b), np.float32),
                                    np.ones(len(b), np.float32)), im):
-                    pres_rows.append((sp[0]["stream"], t))
+                    pres_rows.append(close_track(sp[0]["stream"], t))
             cost["track"] += time.time() - a
             prop_batch, prop_ts = [], []
 
@@ -551,7 +551,7 @@ def stage_one_pass(db, spans, shift, model, proposer="agnostic",
         close_seg(); flush_embed(); flush_prop()
         dec.wait()
         for tid, t in st_track.flush():
-            pres_rows.append((sp[0]["stream"], t))
+            pres_rows.append(close_track(sp[0]["stream"], t))
 
         a = time.time()
         for epi, frames in keep.items():
@@ -663,20 +663,51 @@ def commit_events(db, ev_rows, spans):
     return len(E)
 
 
-def commit_presence(db, rows):
-    from elidedb.identity import Gallery, calibrate, features
-    if not rows:
-        return 0, 0
-    V = []
-    for _, t in rows:
-        if not t["crops"]:
-            V.append(np.zeros(512, np.float32)); continue
+def close_track(stream, t):
+    """A closed track reduced to what presence actually needs.
+
+    THE MEMORY BUG THIS FIXES. `stage_one_pass` used to append the whole
+    track - crops included - to `pres_rows`, and `commit_presence` turned
+    crops into descriptors only at the very END of the run. So every
+    object crop from every episode stayed resident for the whole write:
+    O(corpus x tracks x pixels) held to produce O(tracks x 512 floats).
+
+    At 600 episodes it fit. At 2,097 it took the machine to 0.2 GB free
+    pages and 26 GB in the compressor, with 43 of 44 GB of swap gone, and
+    the run had to be killed 53 minutes in. RSS read only 7 GB throughout,
+    which is exactly why it was missed - RSS does not count what the
+    compressor is holding.
+
+    The crops exist only to make one 512-d vector. Making it here, at the
+    moment the track closes, and dropping the pixels turns the peak into
+    a few hundred bytes per track. Same descriptor, same number of ReID
+    calls - they just happen as tracks close instead of all at the end.
+    """
+    from elidedb.identity import features
+    if not t["crops"]:
+        v = np.zeros(512, np.float32)
+    else:
         f = np.stack([features(c[1], [[0, 0, c[1].shape[1],
                                        c[1].shape[0]]])[0]
                       for c in t["crops"]])
-        v = f.mean(0)
-        V.append(v / (np.linalg.norm(v) + 1e-8))
-    V = np.stack(V)
+        m = f.mean(0)
+        v = (m / (np.linalg.norm(m) + 1e-8)).astype(np.float32)
+    # `conf` and `box` are lists over the track's life, but presence reads
+    # only max(conf) and box[0]. Reduce them here too rather than carrying
+    # every frame's copy.
+    return (stream,
+            {"ts": t["ts"], "t1": t["t1"], "n": t["n"],
+             "conf": float(max(t["conf"])) if t["conf"] else 0.0,
+             "box": [int(x) for x in t["box"][0]]},
+            v)
+
+
+def commit_presence(db, rows):
+    """rows: (stream, meta, descriptor) from close_track."""
+    from elidedb.identity import Gallery, calibrate
+    if not rows:
+        return 0, 0
+    V = np.stack([v for _, _, v in rows])
     pairs = []
     for i in range(len(rows)):
         for j in range(i + 1, min(i + 40, len(rows))):
@@ -688,14 +719,13 @@ def commit_presence(db, rows):
     fit, _ = calibrate(V, pairs)
     ids = Gallery(match=fit).assign(V)
     pres = pa.table({
-        "ts": pa.array([t["ts"] for _, t in rows], pa.int64()),
-        "t1": pa.array([t["t1"] for _, t in rows], pa.int64()),
-        "stream": pa.array([s for s, _ in rows]),
+        "ts": pa.array([t["ts"] for _, t, _ in rows], pa.int64()),
+        "t1": pa.array([t["t1"] for _, t, _ in rows], pa.int64()),
+        "stream": pa.array([s for s, _, _ in rows]),
         "object_id": pa.array([int(i) for i in ids], pa.int32()),
-        "n_frames": pa.array([t["n"] for _, t in rows], pa.int32()),
-        "conf": pa.array([float(max(t["conf"])) if t["conf"] else 0.0
-                          for _, t in rows], pa.float32()),
-        "box": pa.array([[int(v) for v in t["box"][0]] for _, t in rows],
+        "n_frames": pa.array([t["n"] for _, t, _ in rows], pa.int32()),
+        "conf": pa.array([t["conf"] for _, t, _ in rows], pa.float32()),
+        "box": pa.array([t["box"] for _, t, _ in rows],
                         pa.list_(pa.int32(), 4)),
     })
     pres = pres.take(pc.sort_indices(pres.column("ts")))
