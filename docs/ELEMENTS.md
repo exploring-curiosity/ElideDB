@@ -156,6 +156,33 @@ trivial pairs is its ceiling, not the threshold's. Improving identity means a
 stronger ReID encoder (vision-only, per [[no-text-identity]] — no CLIP,
 SigLIP or DINOv2), not further tuning of the cut.
 
+## The consolidated model roster (2026-08-01)
+
+One model per task; a backbone earns its place by serving more than one.
+Redundancy measured above, not assumed.
+
+| task | model | note |
+|---|---|---|
+| frame embedding, every frame | **FDNN-V** (ours, 1.95M) | substrate for scene + all distillation |
+| scene element (scene→scene series) | FDNN-V vectors | no new model — a time series over what exists |
+| region proposal (write) | **YOLO11n-seg** single_cls | unchanged |
+| association → presence | **BoT-SORT** geometry | no weights at all |
+| identity descriptor | **DINOv3-S** teacher → distilled student | replaces yolo26n-reid (AUC 0.90 ceiling); student trained on the corpus's own free geometric pairs |
+| trajectory channel (replaces mot) | tracker boxes + **Depth Pro** z | geometry, not an encoder; Depth Pro benchmark is user-gated |
+| physics/dynamics per participant | **V-JEPA2 ViT-L** | tubelets seeded from elements, never whole-frame |
+| act | same V-JEPA2 backbone + SSv2 probe | kept ONLY until trajectory lands; re-measure, delete if covered |
+| story on top of answer | **SigLIP2** + **InternVideo2** | the two non-redundant survivors |
+| text→video (later) | SigLIP2 / IV2 text towers | the reason they stay: DINOv3 has no text tower |
+
+**Dropped:** PE-Core (0.89 rank-dup of sig2, 36 vs 23 min build), X-CLIP
+(0.70 dup, its one distinct ability — cross-frame attention — was discarded
+at write anyway), delta-appearance mot (wrong by design), yolo26n-reid
+(replaced), FastSAM stays teacher-only.
+
+Backbone count: 10 → 6. "Find this object elsewhere" is served by the
+identity index (`object_vectors` + joins), not by episode-level fusion —
+which is why `spaces()` excludes it.
+
 ## Two write-path bugs worth remembering
 
 **Fixed-size batches defeat the store's own random-access design.** Every media
