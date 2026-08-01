@@ -1,24 +1,24 @@
 {
- "store": "lake/onepass",
- "hours_of_video": 0.231,
+ "store": "/private/tmp/claude-501/-Users-sudharshanramesh-Studies-MyProjects-StreetDex/98dca676-44e6-4cc3-8fda-c9744a9c5fb3/scratchpad/smoke2",
+ "hours_of_video": 0.013,
  "rows": {
-  "frames": 4161,
-  "frame_vectors": 4161,
-  "events": 870,
-  "presence": 4643,
-  "objects": 1138,
-  "labels": 607,
-  "episodes": 120
+  "frames": 237,
+  "frame_vectors": 237,
+  "events": 40,
+  "presence": 330,
+  "objects": 161,
+  "labels": 24,
+  "episodes": 8
  },
  "seconds": {
-  "setup": 0.2,
-  "one_pass": 151.32,
+  "setup": 0.21,
+  "one_pass": 28.04,
   "one_pass_detail": {
-   "propose": 88.09,
-   "track": 5.65,
-   "embed": 1.31,
-   "geometry": 8.5,
-   "frames": 4161
+   "propose": 15.11,
+   "track": 0.29,
+   "embed": 0.08,
+   "geometry": 2.72,
+   "frames": 237
   },
   "segment": 0.0,
   "embed": 0.0,
@@ -27,24 +27,24 @@
   "index": 0.01,
   "channels": {},
   "channels_total": 0.0,
-  "total": 188.91
+  "total": 31.56
  },
  "min_per_hour_video": {
-  "setup": 0.015,
-  "one_pass": 10.91,
+  "setup": 0.263,
+  "one_pass": 35.499,
   "segment": 0.0,
   "embed": 0.0,
   "geometry": 0.0,
   "identity": 0.0,
-  "index": 0.001,
+  "index": 0.006,
   "channels_total": 0.0,
-  "total": 13.62
+  "total": 39.955
  },
  "channels_min_per_hour": {},
- "s_per_episode": 1.574,
+ "s_per_episode": 3.946,
  "bytes": {
   "raw_source": 819494109,
-  "store": 35759294,
-  "store_over_raw": 0.04
+  "store": 2286261,
+  "store_over_raw": 0.0
  }
 }

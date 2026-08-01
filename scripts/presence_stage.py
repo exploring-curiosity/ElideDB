@@ -37,7 +37,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from bench_product import QUERIES                            # noqa: E402
+from _common import queries                                  # noqa: E402
+
+QUERIES = queries()
 from elidedb import Store                                    # noqa: E402
 
 JUDGE = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"

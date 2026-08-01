@@ -36,7 +36,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from bench_product import QUERIES                            # noqa: E402
+from _common import queries                                  # noqa: E402
+
+QUERIES = queries()
 from elidedb import Store                                    # noqa: E402
 
 # closed-class, uniform English: query verb words -> topology verbs.

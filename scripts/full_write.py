@@ -53,29 +53,16 @@ from elidedb.fdnnvideo import fdnnv_dir, load_encoder          # noqa: E402
 from elidedb.fftools import find                               # noqa: E402
 from elidedb.transitions import discover, profile                # noqa: E402
 from elidedb.video import FrameSet, scan_video_packets         # noqa: E402
-from write_once import (CAM, DATA, EPOCH_NS, FILE_STRIDE_NS,   # noqa: E402
-                        FPS, NGEOM, episode_events,
+from elidedb.ingest import (CAM, EPOCH_NS, FILE_STRIDE_NS,     # noqa: E402
+                            FPS, GAP_S, CRF, NGEOM, gapped,
+                            frame_owner, probe_size)
+# episode_events / episode_spans / stream_once are still corpus-specific
+# extraction living in the sibling script; they move to the package once
+# a second corpus needs them and their shape is known to generalise.
+from write_once import (DATA, episode_events,                 # noqa: E402
                         episode_spans, stream_once)
 
 SRC = DATA / f"videos/{CAM}/chunk-000"
-GAP_S = 60.0
-CRF = 26
-
-
-def gapped(spans):
-    """Uniform gap between consecutive demos of a stream.
-
-    Without it two adjacent demos are contiguous in time and a window
-    query cannot express "this demo and not the next one".
-    """
-    gap = int(GAP_S * 1e9)
-    prev, shift = {}, {}
-    for s in sorted(spans, key=lambda r: (r["stream"], r["t0"])):
-        st = s["stream"]
-        new = s["t0"] if st not in prev else prev[st] + gap
-        shift[(st, s["t0"])] = new - s["t0"]
-        prev[st] = new + (s["t1"] - s["t0"])
-    return shift
 
 
 def stage_segment(db, spans, shift, log_every=100):

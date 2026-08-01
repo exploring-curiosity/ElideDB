@@ -72,13 +72,14 @@ from elidedb import Store                                    # noqa: E402
 from elidedb.fdnnvideo import fdnnv_dir, load_encoder        # noqa: E402
 from elidedb.fftools import find                             # noqa: E402
 
-CAM = "observation.images.image_0"
+# Corpus geometry lives in the PACKAGE, not in this script. A script
+# with a main() is a program; anything another file imports is a module.
+# full_write used to import nine names from here, which made a runnable
+# entry point into a library and coupled the two CLIs together.
+from elidedb.ingest import (CAM, EPOCH_NS, FILE_STRIDE_NS,  # noqa: E402
+                            FPS, GEOM_H, GEOM_W, NGEOM)
+
 DATA = Path("data/bridge")
-EPOCH_NS = 1_704_067_200_000_000_000
-FILE_STRIDE_NS = 20_000_000_000_000
-FPS = 5.0
-NGEOM = 12                       # frames per episode handed to geometry
-GEOM_W, GEOM_H = 256, 192        # geometry runs on its own small raster
 
 
 def episode_spans(files):

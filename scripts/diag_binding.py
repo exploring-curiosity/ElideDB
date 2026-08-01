@@ -18,7 +18,9 @@ import pyarrow.parquet as pq
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from bench_product import QUERIES                            # noqa: E402
+from _common import queries                                  # noqa: E402
+
+QUERIES = queries()
 from elidedb import Store                                    # noqa: E402
 from fit_set_weights import capture                           # noqa: E402
 

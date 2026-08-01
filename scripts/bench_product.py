@@ -23,24 +23,13 @@ from elidedb import Store                                    # noqa: E402
 from elidedb.scenario import search_set                      # noqa: E402
 from elidedb.video import FrameSet                           # noqa: E402
 
-# the user's seven
-QUERIES = [
-    "pick up a green object from table and put it into the drawer",
-    "pick up a yellow object from table and put it into the drawer",
-    "pick up a red object from the drawer and put it on the table",
-    "pick up a vessel and put it on the stove",
-    "robot arm holds the handle and closes the drawer",
-    "robot arm opens the drawer",
-    "fold a piece of towel",
-    # seven more, same compositional shape
-    "put the lid on the pot",
-    "place the spoon on top of the cloth",
-    "put the eggplant into the drawer",
-    "put the banana on top of the drawer",
-    "the robot arm pushes the drawer shut",
-    "take a toy out of the drawer and place it on the table",
-    "move the silver pot onto the burner",
-]
+# Queries are DATA and live in eval/queries.json, beside the truthset.
+# They used to be a literal here, which made this benchmark a library
+# that twenty other scripts imported - and executing its module body as
+# a side effect of wanting one constant.
+from _common import queries
+
+QUERIES = queries()
 
 N_FRAMES = 4
 FRAME_W = 210
