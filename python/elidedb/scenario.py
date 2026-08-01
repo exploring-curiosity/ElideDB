@@ -874,7 +874,22 @@ def search_set(store, text, purity="fast", k_max=400, audit_n=12,
     # actions max 0.008-0.021 (fold/tear/throw) vs present 0.12-0.93;
     # threshold 0.05 sits in the gap. (A PE-cosine z-gate could not
     # separate — fold z 2.2 ranked ABOVE lid z 1.9.)
-    gate = _auto_action_support(store, text)
+    # The gate reads `action_probs` directly, outside the per-channel
+    # try/except above, so on a store without that channel it raised and
+    # killed the whole query - `search_set` on lake/bridge4h died in
+    # _auto_action_support rather than answering with the channels it
+    # did have. The gate is an OPTIONAL refinement: its absence should
+    # cost the no-match check, not the search.
+    #
+    # Recorded, not swallowed, per this function's own rule. `act_gate`
+    # carries no fitted weight, so it lands in `degraded` and
+    # bench_truth still refuses to write a ledger row for the run - a
+    # degraded answer stays usable and stays visibly degraded.
+    try:
+        gate = _auto_action_support(store, text)
+    except Exception as e:
+        _fail("act_gate", e)
+        gate = None
     if gate is not None and gate["max_p"] < 0.05:
         ms = (time.perf_counter() - t0) * 1e3
         return {"clips": [], "borderline": [], "audit": None,
