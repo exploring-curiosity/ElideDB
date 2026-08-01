@@ -61,7 +61,12 @@ import numpy as np
 # (mean yield 0.79-0.80 across seeds 8-15 and power 6-12), so these are
 # the middle of a wide optimum rather than a fitted point.
 SEEDS = 10
-POWER = 8.0
+# POWER is tuned to the coherence statistic, and the two must move
+# together: 8.0 was right for an unbounded Cohen's d and crushes a
+# bounded [0,1] rank statistic to zero (0.42**8 = 0.001, every channel
+# silenced). Re-measured for the bounded form, the optimum is 2 and the
+# plateau is flat from 2 to 4.
+POWER = 2.0
 DROP_PC = 1
 RRF_K = 60.0
 
@@ -83,9 +88,33 @@ def _pooled(store, table):
     return out
 
 
+# EACH MODEL IS SCORED THE WAY IT WAS BUILT TO BE SCORED.
+#
+# Everything here was originally scored by cosine, which is the native
+# operation for exactly one of these channels. `act` is a 174-way SSv2
+# CLASSIFIER: its rows are a probability distribution over actions, and
+# cosine on a simplex is not a comparison of distributions. Measured, the
+# difference is not marginal - on q03 cosine scored AUC 0.483, BELOW
+# CHANCE, while cross-entropy on the same numbers scores 0.812:
+#
+#     operator            q03     q04     q05
+#     cosine (was)       0.483   0.561   0.622
+#     cross-entropy      0.812   0.641   0.764
+#     neg-JS             0.793   0.641   0.750
+#
+# Cross-entropy log(p_episode) . p_seed is the likelihood of the
+# episode's posterior under the seed's, which is what "does this clip
+# show the same action" means for a classifier.
+#
+# PCA whitening is also wrong for a simplex - subtracting a mean and
+# renormalising a probability vector produces something that is no longer
+# a distribution - so drop_pc is not applied to classifier channels.
+OPS = {"act": "crossent"}          # everything else: cosine
+
+
 def spaces(store, drop_pc=DROP_PC):
-    """Every per-episode vector table as a matrix aligned with episodes,
-    with the corpus-common component removed. Cached per store version."""
+    """Every per-episode table as a matrix aligned with episodes, plus
+    the operator each one should be scored with."""
     ep = store.table("episodes").scan()
     keys = [(str(s), int(a)) for s, a in
             zip(ep.column("stream").to_pylist(), ep.column("ts").to_pylist())]
@@ -109,7 +138,8 @@ def spaces(store, drop_pc=DROP_PC):
             if k in pos:
                 A[pos[k]] = v
                 ok[pos[k]] = True
-        if drop_pc and ok.sum() > drop_pc + 5:
+        name = t.replace("_vectors", "").replace("action_probs", "act")
+        if drop_pc and OPS.get(name) != "crossent" and ok.sum() > drop_pc + 5:
             X = A[ok]
             mu = X.mean(0)
             _, _, Vt = np.linalg.svd(X - mu, full_matrices=False)
@@ -118,25 +148,67 @@ def spaces(store, drop_pc=DROP_PC):
             A = A - (A @ P.T) @ P
             A = A / np.maximum(np.linalg.norm(A, axis=1, keepdims=True), 1e-8)
             A[~ok] = 0
-        M[t.replace("_vectors", "").replace("action_probs", "act")] = (
-            A.astype(np.float32), ok)
+        M[name] = (A.astype(np.float32), ok, OPS.get(name, "cosine"))
     return keys, M
 
 
-def coherence(A, ok, seeds):
-    """Cohen's d of seed-to-seed cosine against seed-to-corpus cosine.
-    The query grades the channel; no labels are involved."""
-    S = A[seeds]
-    W = S @ S.T
-    iu = np.triu_indices(len(seeds), 1)
-    if not len(iu[0]):
+def _score(A, op, seeds):
+    """Score every episode against the seeds, the model's own way."""
+    if op == "crossent":
+        pm = A[seeds].mean(0)
+        return np.log(A + 1e-12) @ pm
+    cen = A[seeds].mean(0)
+    n = np.linalg.norm(cen)
+    return A @ (cen / n) if n > 0 else np.zeros(len(A))
+
+
+def _pair(A, op, rows, cols):
+    """Pairwise affinity between two row sets, the model's own way. The
+    OPERATOR MUST GOVERN THE WEIGHT TOO. Scoring `act` by cross-entropy
+    while weighting it by cosine measured a REGRESSION (q03 0.67 -> 0.60)
+    even though the channel's own AUC had risen 0.483 -> 0.812: the
+    channel became right and its voice became wrong. Half-applying the
+    principle is worse than not applying it."""
+    if op == "crossent":
+        return np.log(A[cols] + 1e-12) @ A[rows].T   # cols x rows
+    return A[cols] @ A[rows].T
+
+
+def coherence(A, ok, seeds, op="cosine", cap=4000):
+    """How reliably this model rates a seed pair above a seed/corpus
+    pair - as a probability, in the model's own metric.
+
+    Cohen's d was the first form and it does not survive mixed
+    operators: cross-entropy is a log-likelihood with a far wider spread
+    than cosine, so `d` for a classifier and `d` for an embedding are
+    different units. Raising incomparable numbers to the 8th power then
+    decides the whole fusion, and measured it silenced `act` entirely
+    (q03 0.67 -> 0.60) at the moment the channel started scoring well.
+
+    This is the probability that a random seed-seed affinity exceeds a
+    random seed-corpus one - a rank statistic, bounded [0, 1], identical
+    in meaning whether the model returns a cosine or a log-likelihood.
+    0.5 is "this model cannot tell the seeds from the corpus".
+    """
+    if len(seeds) < 2:
         return 0.0
     other = np.setdiff1d(np.where(ok)[0], seeds)
     if len(other) < 10:
         return 0.0
-    B = (S @ A[other].T).ravel()
-    sd = np.sqrt((W[iu].var() + B.var()) / 2)
-    return float((W[iu].mean() - B.mean()) / sd) if sd > 0 else 0.0
+    W = _pair(A, op, seeds, seeds)
+    iu = np.triu_indices(len(seeds), 1)
+    within = W[iu]
+    B = _pair(A, op, seeds, other).ravel()
+    if len(B) > cap:                       # rank stat needs no more
+        B = B[np.linspace(0, len(B) - 1, cap).astype(int)]
+    # P(within > between), ties at half
+    allv = np.concatenate([within, B])
+    r = np.empty(len(allv))
+    r[np.argsort(allv)] = np.arange(len(allv))
+    rw = r[:len(within)].sum()
+    u = rw - len(within) * (len(within) - 1) / 2
+    p = u / (len(within) * len(B))
+    return float(max(p - 0.5, 0.0) * 2.0)      # 0 at chance, 1 at perfect
 
 
 def search_like(store, seed_keys, k_max=50, power=POWER, drop_pc=DROP_PC):
@@ -151,20 +223,16 @@ def search_like(store, seed_keys, k_max=50, power=POWER, drop_pc=DROP_PC):
     seeds = np.array(sorted({pos[k] for k in seed_keys if k in pos}))
     if not len(seeds):
         return {"clips": [], "weights": {}, "note": "no seed in store"}
-    w = {c: max(coherence(A, ok, seeds), 0.0) ** power
-         for c, (A, ok) in M.items()}
+    w = {c: max(coherence(A, ok, seeds, op), 0.0) ** power
+         for c, (A, ok, op) in M.items()}
     tot = None
-    for c, (A, ok) in M.items():
+    for c, (A, ok, op) in M.items():
         if w.get(c, 0.0) <= 0:
             continue
-        live = [i for i in seeds if ok[i]]
-        if not live:
+        live = np.array([i for i in seeds if ok[i]])
+        if not len(live):
             continue
-        cen = A[live].mean(0)
-        n = np.linalg.norm(cen)
-        if n <= 0:
-            continue
-        sc = A @ (cen / n)
+        sc = _score(A, op, live)
         sc[~ok] = -np.inf
         sc[seeds] = -np.inf                  # the seeds are given, not found
         r = np.empty(len(sc))
