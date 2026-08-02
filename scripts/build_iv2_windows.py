@@ -46,14 +46,15 @@ from elidedb import Store                                      # noqa: E402
 from elidedb.video import FrameSet                             # noqa: E402
 from elidedb.iv2 import clip_vec, load_model, MDIR             # noqa: E402
 
-NWIN = 3
+NWIN = int(__import__("os").environ.get("ELIDEDB_IV2_NWIN", "3"))
 # FOUR, not eight: this checkpoint's positional embedding is built for
 # a 4-frame clip (1025 tokens = 4 x 256 + CLS) and 8 frames raises
 # "size of tensor a (2049) must match tensor b (1025)". The starvation
 # is real but it is the model's shape, not a setting - so the extra
 # evidence has to come from more WINDOWS, not longer ones.
-NFRAME = 4
+NFRAME = int(__import__("os").environ.get("ELIDEDB_IV2_NFRAME", "4"))
 CKPT_EVERY = 300
+TABLE = __import__("os").environ.get("ELIDEDB_IV2_TABLE", "iv2_win_vectors")
 
 
 def main():
@@ -72,6 +73,10 @@ def main():
     print("loading InternVideo2 (~4 GB, first use only)...", flush=True)
     t = time.time()
     load_model()
+    if NFRAME != 4:
+        from elidedb.iv2 import set_num_frames
+        set_num_frames(NFRAME)
+        print(f"  temporal pos-embed re-fitted to {NFRAME} frames")
     print(f"  model ready in {time.time() - t:.0f}s", flush=True)
 
     # TIMING GATE: measure before committing to 6,291 forward passes
@@ -92,7 +97,7 @@ def main():
     print(f"  {per*1000:.0f} ms/window -> ~{total:.0f} min encode "
           f"+ ~6 min decode", flush=True)
 
-    ck = db.dir / "_cache" / "iv2_win.npz"
+    ck = db.dir / "_cache" / f"{TABLE}.npz"
     ck.parent.mkdir(exist_ok=True)
     rows, done = [], 0
     if ck.exists():
@@ -146,14 +151,14 @@ def main():
                                                     V.shape[1])),
     })
     tbl = tbl.take(pc.sort_indices(tbl.column("ts")))
-    db.table("iv2_win_vectors").set_layout(
+    db.table(TABLE).set_layout(
         "stream", sort_by=["stream", "ts", "window"], min_group_rows=1024)
-    db.table("iv2_win_vectors").replace(
+    db.table(TABLE).replace(
         tbl, kind="embeddings",
         meta={"model": MDIR, "dim": int(V.shape[1]),
               "windows_per_episode": NWIN, "frames_per_window": NFRAME,
               "pool": "set-matched at query, never mean-pooled"})
-    got = len(db.table("iv2_win_vectors").scan())
+    got = len(db.table(TABLE).scan())
     assert got == len(tbl)
     ck.unlink(missing_ok=True)
     print(json.dumps({"rows": got, "dim": int(V.shape[1]),

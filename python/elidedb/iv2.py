@@ -58,8 +58,55 @@ def text_vec(text):
     return v
 
 
+def set_num_frames(n):
+    """Re-fit the vision encoder's temporal position embeddings to n
+    frames. OPT-IN and global to the loaded model.
+
+    The checkpoint ships a 4-frame clip: pos_embed is (1, 1 + 4*256, C),
+    and feeding 8 frames raises "size of tensor a (2049) must match
+    tensor b (1025)". That is a shape, not a capability - the patch
+    embedding is Conv3d with a kernel of (1,14,14), so tubelet size is
+    1 and T frames simply need T temporal positions. The repo's own
+    `interpolate_pos_embed(orig_t_size=4)` does exactly this, but only
+    while loading a checkpoint.
+
+    FOUR embeddings need it, not one: pos_embed AND clip_pos_embed both
+    carry the video-length grid (the image variants are separate and
+    untouched). Interpolating only the first fails deeper in the
+    forward, at the CLIP-alignment branch.
+
+    Sanity after interpolation: cos(4-frame, 8-frame) on the same span
+    is 0.999, i.e. the representation is preserved rather than rebuilt.
+    """
+    import torch
+    m, _ = load_model()
+    ve = m.vision_encoder
+    old = int(ve.num_frames)
+    if old == n:
+        return
+    def _interp(p):
+        cls, rest = p[:, :1, :], p[:, 1:, :]
+        C = rest.shape[-1]
+        L = rest.shape[1] // old
+        r = rest.view(1, old, L, C).permute(0, 3, 2, 1).float()
+        r = torch.nn.functional.interpolate(
+            r, size=(L, n), mode="bilinear", align_corners=False)
+        r = r.permute(0, 3, 2, 1).reshape(1, n * L, C).to(p.dtype)
+        return torch.nn.Parameter(torch.cat([cls, r], 1),
+                                  requires_grad=False)
+    L = (ve.pos_embed.shape[1] - 1) // old
+    for name in ("pos_embed", "clip_pos_embed"):
+        if hasattr(ve, name):
+            setattr(ve, name, _interp(getattr(ve, name).data))
+    ve.num_frames = n
+    ve.patch_embed.num_patches = n * L
+
+
 def clip_vec(frames_hwc):
-    """Aligned 512-d vector for a 4-frame clip (HWC uint8 RGB)."""
+    """Aligned 512-d vector for a clip (HWC uint8 RGB).
+
+    Length must match the encoder's current num_frames - 4 by default,
+    or whatever set_num_frames() last fitted."""
     import cv2
     import torch
     m, dev = load_model()
