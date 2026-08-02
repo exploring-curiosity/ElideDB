@@ -44,7 +44,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from elidedb import Store                                     # noqa: E402
 from elidedb.setpath import confidence_cut                    # noqa: E402
-from bench_qbe import CHAN, pooled                            # noqa: E402
+from elidedb.qbe import spaces                                # noqa: E402
 
 
 def coherence(A, ok, seeds):
@@ -108,19 +108,15 @@ def main():
     for q, ei, v in zip(t["query_id"], t["episode_index"], t["true"]):
         G[(int(q), int(ei))] = int(v)
 
+    # channels discovered by the live path - see bench_qbe for why the
+    # bench must never keep its own channel list
+    skeys, SM = spaces(db, drop_pc=0)
+    spos = {k: i for i, k in enumerate(skeys)}
+    take = np.array([spos[k] for k in keys])
     M = {}
-    for c, tab in CHAN.items():
-        if tab not in db.tables():
-            continue
-        p = pooled(db, tab)
-        dim = len(next(iter(p.values())))
-        A = np.zeros((len(keys), dim), np.float32)
-        ok = np.zeros(len(keys), bool)
-        for k, v in p.items():
-            if k in pos:
-                A[pos[k]] = v
-                ok[pos[k]] = True
-        M[c] = (A, ok)
+    for c, (A, _, _) in SM.items():
+        A = np.asarray(A, np.float32)[take]
+        M[c] = (A, np.abs(A).sum(1) > 0)
 
     VARIANTS = ("uniform", "coh^1", "coh^2", "coh^4", "best-single")
     from tqdm import tqdm

@@ -734,6 +734,37 @@ def fit_cut(V, groups, neg, pos=None, grid=None):
                 (ids[Pp[:, 0]] == ids[Pp[:, 1]]).mean()), 1)
         report.append(row)
     best = max(report, key=lambda r: r["recur"])
+    # The grid is percentiles of the proven-DIFFERENT similarities, and
+    # that anchor breaks when the descriptor is much better than the
+    # negatives are hard: recurrence keeps rising past the negatives'
+    # entire tail, the argmax lands on the grid's top edge, and the
+    # "interior maximum" was never actually bracketed. Measured on the
+    # DINOv3 rebuild: recur still climbing 7,590 -> 10,541 at the last
+    # point. So while the best cut IS the top edge, keep extending
+    # upward (midpoint steps toward 0.99) until the maximum is interior
+    # or the ceiling is reached - the fit must end bracketed, not
+    # truncated by an artifact of where the negatives happened to end.
+    while best["cut"] == report[-1]["cut"] and best["cut"] < 0.985:
+        cut = round(best["cut"] + (0.99 - best["cut"]) / 2, 3)
+        ids = Gallery(match=float(cut)).assign(V)
+        n = int(ids.max()) + 1
+        u = np.unique(ids.astype(np.int64) * span + g)
+        per = np.bincount((u // span).astype(np.int64), minlength=n)
+        row = {"cut": float(cut), "objects": n,
+               "recur": int((per > 1).sum()),
+               "singleton_pct": round(100.0 * float(
+                   (np.bincount(ids) == 1).mean()), 1)}
+        if len(N):
+            row["false_merge_pct"] = round(100.0 * float(
+                (ids[N[:, 0]] == ids[N[:, 1]]).mean()), 3)
+        if len(Pp):
+            row["recovered_pct"] = round(100.0 * float(
+                (ids[Pp[:, 0]] == ids[Pp[:, 1]]).mean()), 1)
+        report.append(row)
+        if row["recur"] > best["recur"]:
+            best = row
+        else:
+            break
     return best["cut"], report
 
 

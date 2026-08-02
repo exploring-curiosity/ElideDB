@@ -72,14 +72,41 @@ RRF_K = 60.0
 
 
 def _pooled(store, table):
-    """{(stream, ts) -> unit vector}, mean-pooled per episode."""
+    """{(stream, episode_ts) -> unit vector}, mean-pooled per episode.
+
+    Two row conventions exist and both must pool correctly. pe/sig2
+    write 8 rows per episode all carrying the EPISODE's ts, so grouping
+    by (stream, ts) is already per-episode. A per-frame table
+    (scene_vectors) carries each FRAME's ts - grouping by it yields one
+    "episode" per frame, and when spaces() then joins on episode starts,
+    the channel silently becomes first-frame-only: 2,097 of 70,436 rows
+    used, 97% of the signal dropped with no error. So keys that don't
+    match an episode start are binned into the episode whose span
+    contains them, using the episodes table - the same containment the
+    labels join uses.
+    """
     from .embeddings import _vec_table
     tb, V = _vec_table(store, table)
     V = np.asarray(V, np.float32)
+    ep = store.table("episodes").scan()
+    spans = {}
+    for s, a, b in zip(ep.column("stream").to_pylist(),
+                       ep.column("ts").to_pylist(),
+                       ep.column("t1").to_pylist()):
+        spans.setdefault(str(s), []).append((int(a), int(b)))
+    for v in spans.values():
+        v.sort()
+    starts = {s: [a for a, _ in v] for s, v in spans.items()}
     acc = {}
     for s, a, v in zip(tb.column("stream").to_pylist(),
                        tb.column("ts").to_pylist(), V):
-        acc.setdefault((str(s), int(a)), []).append(v)
+        s, a = str(s), int(a)
+        sp = spans.get(s)
+        if sp:
+            j = int(np.searchsorted(starts[s], a, "right")) - 1
+            if j >= 0 and a <= sp[j][1]:
+                a = sp[j][0]
+        acc.setdefault((s, a), []).append(v)
     out = {}
     for k, vs in acc.items():
         m = np.mean(vs, 0)

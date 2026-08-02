@@ -43,29 +43,14 @@ from elidedb import Store                                     # noqa: E402
 from elidedb.embeddings import _vec_table                     # noqa: E402
 from elidedb.setpath import confidence_cut                    # noqa: E402
 
-# per-episode vector tables; pe/sig2 carry 8 rows per episode and are
-# pooled, the rest are already one row per episode
-CHAN = {"iv2": "iv2_vectors", "xclip": "xclip_vectors",
-        "vjepa": "vjepa_vectors", "pe": "pe_vectors",
-        "sig2": "sig2_vectors", "act": "action_probs",
-        "mot": "motion_vectors"}
-
-
-def pooled(db, table):
-    """{(stream, ts) -> unit vector}, mean-pooled over rows per episode."""
-    tb, V = _vec_table(db, table)
-    V = np.asarray(V, np.float32)
-    ss = tb.column("stream").to_pylist()
-    ts = [int(v) for v in tb.column("ts").to_pylist()]
-    acc = {}
-    for s, a, v in zip(ss, ts, V):
-        acc.setdefault((str(s), int(a)), []).append(v)
-    out = {}
-    for k, vs in acc.items():
-        m = np.mean(vs, 0)
-        n = np.linalg.norm(m)
-        out[k] = (m / n) if n > 0 else m
-    return out
+# Channel discovery and pooling are qbe.spaces() - ONE code path for
+# the bench and the live search. This file used to carry its own CHAN
+# dict and pooled(), and the day scene_vectors landed the bench kept
+# scoring seven channels while the live path fused eight: the exact
+# two-writers divergence that hardcoded events.role empty. The bench
+# exists to measure the live path, so it consumes the live path.
+from elidedb.qbe import _pooled as pooled                     # noqa: E402
+from elidedb.qbe import spaces                                # noqa: E402
 
 
 def rrf(rank_lists, k=60.0):
@@ -100,19 +85,15 @@ def main():
         if ei in have:
             sup[int(q)] = sup.get(int(q), 0) + int(v)
 
-    # one score matrix per channel, aligned with `keys`
+    # one score matrix per channel, aligned with `keys`, discovered
+    # exactly as the live path discovers them
+    skeys, SM = spaces(db, drop_pc=0)
+    spos = {k: i for i, k in enumerate(skeys)}
+    take = np.array([spos[k] for k in keys])
     M = {}
-    for c, tab in CHAN.items():
-        if tab not in db.tables():
-            continue
-        p = pooled(db, tab)
-        dim = len(next(iter(p.values())))
-        A = np.zeros((len(keys), dim), np.float32)
-        ok = np.zeros(len(keys), bool)
-        for k, v in p.items():
-            if k in pos:
-                A[pos[k]] = v
-                ok[pos[k]] = True
+    for c, (A, _, _) in SM.items():
+        A = np.asarray(A, np.float32)[take]
+        ok = np.abs(A).sum(1) > 0
         M[c] = (A, ok)
 
     from tqdm import tqdm

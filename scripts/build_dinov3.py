@@ -209,6 +209,19 @@ def main():
                                        "model": mid,
                                        "match_cut": round(float(cut), 3),
                                        "fit": "cross-episode recurrence"})
+    # object_vectors was born 512-d (the nano ReID); DINOv3 is 768-d,
+    # and the store's schema law rightly refuses an implicit type
+    # change. The table is DERIVED and rebuilt right here, so a hard
+    # reset is the honest operation - same precedent as
+    # fix_participants' "delete the table to rebuild".
+    ovt = db.table("object_vectors")
+    if "object_vectors" in db.tables():
+        old = ovt.scan().schema.field("vector").type
+        if old.list_size != V.shape[1]:
+            import shutil
+            shutil.rmtree(ovt.dir)
+            print(f"object_vectors reset: {old.list_size}-d "
+                  f"-> {V.shape[1]}-d")
     ov = pa.table({
         "ts": pres.column("ts"), "t1": pres.column("t1"),
         "stream": pres.column("stream"),
