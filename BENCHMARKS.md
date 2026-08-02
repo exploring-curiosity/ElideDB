@@ -735,3 +735,31 @@ construction (they optimise "rank sibling seeds high" — the selection
 statistic itself) and collapsed fusion 0.85 -> 0.32 while enrolled.
 Gated off. A channel must be built from evidence independent of the
 selection statistic.
+
+## 2026-08-02 — sim_chains store: second corpus, untouched mechanism
+
+`lake/sim_chains` built from data/sim_chains mp4s, PIXELS ONLY (one
+file = one demo; eval sidecars never opened). Same store-side builders
+as the kitchen corpus, zero code changes: 150 episodes, 38,077 frames
+(frame_vectors 1:1), 1,309 events (95% object-bound, 100% agent-bound,
+14 transition types DISCOVERED from sim descriptors), 21,492 objects,
+1.09M trajectory samples, identity cut FITTED from sim recurrence
+(0.946 vs kitchen 0.894). Channels: scene/motion/iv2/sig2. 472MB,
+~35 min wall.
+
+QbE smoke — template identity (pure chain-shape, 5 seeds, k=1.5·sup,
+chance prec ≈ 0.14):
+
+| query               | yield | prec | top channel |
+|---------------------|-------|------|-------------|
+| swap                | 0.20  | 0.13 | motion 0.21 |
+| precarious          | 0.55  | 0.37 | iv2 0.20    |
+| push_then_build     | 0.10  | 0.07 | scene 0.25  |
+| build_unstack_move  | 0.15  | 0.10 | iv2 0.23    |
+
+Reading: only precarious (4 blocks, towers — a VISIBLE class) clears
+chance; the rest sit at it. This is by construction: episodes share
+one scene and differ only in event ORDER, and colors/zones are
+deliberately decorrelated from templates. Appearance-era channels
+cannot see chain structure — the measured gap the contextual-retrieval
+work (events/trajectories joins over the same store) now has to close.
