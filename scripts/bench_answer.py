@@ -23,7 +23,6 @@ sys.path.insert(0, str(ROOT / "python"))
 
 from elidedb import Store                                      # noqa: E402
 from elidedb.answer import answer_like                         # noqa: E402
-from elidedb.setpath import confidence_cut                     # noqa: E402
 
 
 def main():
@@ -73,10 +72,12 @@ def main():
             part = np.where(shared, 1.0, 0.0)
             part[sd] = -np.inf
             order = np.lexsort((-score, -part))
-            # the cut sees the conjunction scores only - adding the
-            # partition offset put a 1.0 cliff at the block boundary
-            # and the knee fired on it (ret collapsed to 1)
-            cut = confidence_cut(score[order], 0.0, k_max)
+            # PLAIN TOP-K, deliberately: confidence_cut's knee assumes
+            # magnitude structure and percentile ranks are uniform BY
+            # CONSTRUCTION, so the knee fires on the top point (ret=1).
+            # A rank-shaped abstention rule is an open item; until it
+            # exists the bench compares engines at the same k.
+            cut = k_max
             chosen = order[:cut]
             y = [G.get((qi, eidx[i]), None) for i in chosen]
             tr = int(sum(1 for v in y if v == 1))

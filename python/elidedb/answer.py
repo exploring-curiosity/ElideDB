@@ -163,6 +163,18 @@ def _elements(store):
                     e_obj[i] = E["obj"].get(k, -1)
                     e_phys[i] = E["phys"].get(k, -1)
                     break
+        # THE AGENT HAS NO LOOKS-TERM. Its identity is the ROLE - the
+        # self-moving thing - not an appearance. Measured: agent-track
+        # descriptors cosine 0.477 median against each other, barely
+        # above random non-agent pairs at 0.437, because an articulated
+        # arm deforms; only 0.2% of same-arm pairs clear the identity
+        # cut, which is where 1,517 ids for ~4 arms came from. No
+        # threshold merges what does not separate, so an agent event
+        # matches by moves and physics alone, and its appearance rank -
+        # noise by measurement - never enters the conjunction.
+        if (ev["role"][i] == "agent"
+                or (oid >= 0 and oid == int(ev["agent_object_id"][i]))):
+            e_obj[i] = -1
     E["e_m"], E["e_obj"], E["e_phys"], E["MV"] = e_m, e_obj, e_phys, MV
 
     ep = store.table("episodes").scan().to_pydict()
@@ -231,36 +243,48 @@ def answer_like(store, stream, t0, t1):
     # because the supports span four cameras) AND looks (DINOv3 of the
     # object each event BINDS to) AND acts (its physics tubelet). One
     # candidate event must satisfy all of it - that is the join.
+    # conjunction granularity is the KIND, not the event instance: a
+    # window holding five t3 relocations and one t7 asks for "t3-like
+    # AND t7-like", not six independent demands. OR (max) within a
+    # kind's query events, AND (min) across kinds - the story's clauses
+    # are its distinct transitions.
     q_bound = [i for i in q_ev if E["e_m"][i] >= 0]
-    per_q = []
+    by_kind = {}
     for qi in q_bound:
-        terms = []
-        terms.append(_ranks(E["MV"] @ E["MV"][E["e_m"][qi]]))
-        if E["e_obj"][qi] >= 0:
-            qv = E["objV"][E["e_obj"][qi]]
-            sims = np.full(n_ev, np.nan)
-            has = E["e_obj"] >= 0
-            sims[has] = E["objV"][E["e_obj"][has]] @ qv
-            terms.append(_ranks(sims))
-        if E["e_phys"][qi] >= 0:
-            qv = E["physV"][E["e_phys"][qi]]
-            sims = np.full(n_ev, np.nan)
-            has = E["e_phys"] >= 0
-            sims[has] = E["physV"][E["e_phys"][has]] @ qv
-            terms.append(_ranks(sims))
+        by_kind.setdefault(ev["kind"][qi] or "", []).append(qi)
+    per_kind = []
+    for kind, members in by_kind.items():
+        rows = []
+        for qi in members:
+            terms = []
+            terms.append(_ranks(E["MV"] @ E["MV"][E["e_m"][qi]]))
+            if E["e_obj"][qi] >= 0:
+                qv = E["objV"][E["e_obj"][qi]]
+                sims = np.full(n_ev, np.nan)
+                has = E["e_obj"] >= 0
+                sims[has] = E["objV"][E["e_obj"][has]] @ qv
+                terms.append(_ranks(sims))
+            if E["e_phys"][qi] >= 0:
+                qv = E["physV"][E["e_phys"][qi]]
+                sims = np.full(n_ev, np.nan)
+                has = E["e_phys"] >= 0
+                sims[has] = E["physV"][E["e_phys"][has]] @ qv
+                terms.append(_ranks(sims))
+            with np.errstate(invalid="ignore"):
+                bound = np.nanmin(np.stack(terms), 0)
+            row = np.full(n, np.nan)
+            for i in range(n_ev):
+                e = ev_ep[i]
+                if e >= 0 and np.isfinite(bound[i]):
+                    row[e] = bound[i] if np.isnan(row[e]) \
+                        else max(row[e], bound[i])
+            rows.append(row)
         with np.errstate(invalid="ignore"):
-            bound = np.nanmin(np.stack(terms), 0)
-        row = np.full(n, np.nan)
-        for i in range(n_ev):
-            e = ev_ep[i]
-            if e >= 0 and np.isfinite(bound[i]):
-                row[e] = bound[i] if np.isnan(row[e]) \
-                    else max(row[e], bound[i])
-        per_q.append(row)
+            per_kind.append(np.nanmax(np.stack(rows), 0))
 
-    if per_q:
+    if per_kind:
         with np.errstate(invalid="ignore"):
-            score = np.nanmin(np.stack(per_q), 0)  # AND over query events
+            score = np.nanmin(np.stack(per_kind), 0)  # AND across kinds
         score = np.where(np.isnan(score), 0.0, score)
     else:
         # ---- track-path fallback: a window with no bound events ----
