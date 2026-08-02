@@ -267,8 +267,9 @@ def loo_quality(ctx, seeds, c, kind="mrr"):
                 sc = sc.copy()
                 sc[np.asarray([x for x in seeds if x != i])] = -np.inf
                 r = int((sc > sc[i]).sum())
+                from elidedb.qbe import loo_depths
                 out.append(float(np.mean([r < d for d in
-                                          (25, 50, 100, 200, 400, 800)])))
+                                          loo_depths(ctx.n)])))
         return float(np.mean(out))
     out = []
     for i in seeds:
@@ -282,12 +283,11 @@ def loo_quality(ctx, seeds, c, kind="mrr"):
             out.append(-np.log1p(r))
         elif kind == "auc":
             # DEPTH-FREE: mean recall over a geometric ladder of depths
-            # is the area under the LOO recall curve. Picking one depth
-            # scored 0.598 at 50 and 0.811 at 200 - a 0.2 swing on a
-            # constant I would otherwise be choosing by looking at the
-            # answer, which is the definition of fitting the truthset.
-            out.append(float(np.mean([r < d for d in
-                                      (25, 50, 100, 200, 400, 800)])))
+            # is the area under the LOO recall curve; the ladder itself
+            # is the SHARED corpus-relative one from qbe (audit: the
+            # absolute 25..800 form was 2,097-episode shape knowledge)
+            from elidedb.qbe import loo_depths
+            out.append(float(np.mean([r < d for d in loo_depths(ctx.n)])))
         else:                                   # recall at a FIXED depth
             # deliberately not k: k is 1.5 x support and support comes
             # from the grades, so selecting on it would leak the answer

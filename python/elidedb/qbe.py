@@ -79,7 +79,6 @@ ZPOWER = 8.0
 # subtraction then costs signal instead of noise: q04 0.93 -> 0.87.
 # A correction for a defect that no longer exists is just a distortion.
 DROP_PC = int(os.environ.get("ELIDEDB_DROP_PC", "0"))
-RRF_K = 60.0
 
 
 def _pooled(store, table):
@@ -147,7 +146,13 @@ def _pooled(store, table):
 # PCA whitening is also wrong for a simplex - subtracting a mean and
 # renormalising a probability vector produces something that is no longer
 # a distribution - so drop_pc is not applied to classifier channels.
-OPS = {"act": "crossent"}          # everything else: cosine
+# The OPERATOR COMES FROM THE TABLE, not from a name-keyed dict in
+# code. A dict here ("act" -> crossent) was a channel name hardwired in
+# the engine - the same private-knowledge pattern as a channel list. A
+# classifier channel (rows on a probability simplex) declares
+# meta={"op": "crossent"} when it is built; everything else is cosine
+# by default. The retired action_probs is the only crossent channel to
+# date, and any rebuild of it must carry the declaration.
 
 
 def spaces(store, drop_pc=DROP_PC):
@@ -171,7 +176,8 @@ def spaces(store, drop_pc=DROP_PC):
         # not "does this episode match the query". Every encoder output
         # already declares its `model`; an index declares a cut instead,
         # so the distinction is recorded rather than guessed from a name.
-        if not (store.table(t).state().meta or {}).get("model"):
+        meta = store.table(t).state().meta or {}
+        if not meta.get("model"):
             continue
         try:
             p = _pooled(store, t)
@@ -187,7 +193,8 @@ def spaces(store, drop_pc=DROP_PC):
                 A[pos[k]] = v
                 ok[pos[k]] = True
         name = t.replace("_vectors", "").replace("action_probs", "act")
-        if drop_pc and OPS.get(name) != "crossent" and ok.sum() > drop_pc + 5:
+        op = (meta or {}).get("op", "cosine")
+        if drop_pc and op != "crossent" and ok.sum() > drop_pc + 5:
             X = A[ok]
             mu = X.mean(0)
             _, _, Vt = np.linalg.svd(X - mu, full_matrices=False)
@@ -196,7 +203,7 @@ def spaces(store, drop_pc=DROP_PC):
             A = A - (A @ P.T) @ P
             A = A / np.maximum(np.linalg.norm(A, axis=1, keepdims=True), 1e-8)
             A[~ok] = 0
-        M[name] = (A.astype(np.float32), ok, OPS.get(name, "cosine"))
+        M[name] = (A.astype(np.float32), ok, op)
     return keys, M
 
 
@@ -300,7 +307,17 @@ def otsu_cut(sorted_scores, k_max):
     return int(min(max(keep, 1), n)) if keep else int(n)
 
 
-LOO_DEPTHS = (25, 50, 100, 200, 400, 800)
+# The LOO recall ladder, as FRACTIONS of the corpus. The first form of
+# this was absolute depths (25..800), which are the right ladder for a
+# 2,097-episode corpus and silently the wrong one for any other size -
+# corpus-SHAPE knowledge baked into the engine, caught in audit. The
+# geometric ladder itself is the depth-free construction; only its
+# anchor had to become relative.
+LOO_FRACS = (1 / 80, 1 / 40, 1 / 20, 1 / 10, 1 / 5, 2 / 5)
+
+
+def loo_depths(n):
+    return [max(2, int(round(f * n))) for f in LOO_FRACS]
 
 
 def loo_quality(A, ok, seeds, op):
@@ -334,6 +351,7 @@ def loo_quality(A, ok, seeds, op):
     # Every ordered pair gives 20 samples from the same query, and the
     # question each asks is the same one: retrieve with this, does the
     # query's own other member come back?
+    depths = loo_depths(len(ok))
     out = []
     for i in seeds:
         others = np.asarray([x for x in seeds if x != i])
@@ -342,7 +360,7 @@ def loo_quality(A, ok, seeds, op):
             sc[~ok] = -np.inf
             sc[others] = -np.inf             # other seeds not candidates
             r = int((sc > sc[i]).sum())
-            out.append(float(np.mean([r < d for d in LOO_DEPTHS])))
+            out.append(float(np.mean([r < d for d in depths])))
     return float(np.mean(out))
 
 
