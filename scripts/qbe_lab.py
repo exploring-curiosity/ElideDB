@@ -39,6 +39,7 @@ NGROUP = 5
 # and only reachable at KMULT = 1, where returning exactly `support`
 # items makes yield and precision the same number.
 KMULT = float(__import__("os").environ.get("ELIDEDB_KMULT", "1.5"))
+AGG = __import__("os").environ.get("ELIDEDB_AGG", "centroid")
 
 
 class Ctx:
@@ -52,6 +53,7 @@ class Ctx:
                          ep.column("ts").to_pylist())]
         self.eidx = [int(i) for i in
                      ep.column("episode_index").to_pylist()]
+        self.t1 = [int(v) for v in ep.column("t1").to_pylist()]
         skeys, SM = spaces(self.db, drop_pc=0)
         spos = {k: i for i, k in enumerate(skeys)}
         take = np.array([spos[k] for k in self.keys])
@@ -60,13 +62,146 @@ class Ctx:
             A = np.asarray(A, np.float32)[take]
             self.M[c] = (A, np.abs(A).sum(1) > 0, op)
         self.n = len(self.keys)
+        self.extra = {}
+        self._fine()
 
-    def score(self, c, seeds):
-        """A channel's similarity of every episode to a seed set."""
+    # ---------------------------------------------------------------
+    def _fine(self):
+        """FINE-GRAINED channels from tables the store already has.
+
+        An episode-pooled vector is a room average: DINOv3 is the best
+        appearance model here and `scene` scores 0.37 alone, because
+        mean-pooling ~34 frames dissolves the object that the query is
+        about. The frames and the per-track descriptors are both stored
+        per element, so the finer granularity costs a matmul, not a
+        model - this is the element investment expressed as retrieval.
+        """
+        import numpy as _np
+        pos = {k: i for i, k in enumerate(self.keys)}
+        ep = self.db.table("episodes").scan().to_pydict()
+        spans = {}
+        for s_, a, b in zip(ep["stream"], ep["ts"], ep["t1"]):
+            spans.setdefault(str(s_), []).append((int(a), int(b)))
+        for v in spans.values():
+            v.sort()
+
+        def _owner(stream, ts):
+            lst = spans.get(str(stream))
+            if not lst:
+                return -1
+            st = [a for a, _ in lst]
+            j = int(_np.searchsorted(st, int(ts), "right")) - 1
+            if j < 0 or int(ts) > lst[j][1]:
+                return -1
+            return pos.get((str(stream), lst[j][0]), -1)
+
+        # sig2_vectors already holds 8 rows per episode - spaces()
+        # mean-pools them, which is the same averaging the fine
+        # channels exist to avoid, so it also gets a set-matched twin.
+        for name, table in (("frame", "scene_vectors"),
+                            ("objset", "object_vectors"),
+                            ("sig2f", "sig2_vectors"),
+                            ("iv2w", "iv2_win_vectors")):
+            if table not in self.db.tables():
+                continue
+            d = self.db.table(table).scan().to_pydict()
+            V = _np.asarray(d["vector"], _np.float32).reshape(
+                len(d["ts"]), -1)
+            V /= _np.maximum(_np.linalg.norm(V, axis=1, keepdims=True), 1e-8)
+            own = _np.array([_owner(s_, t) for s_, t in
+                             zip(d["stream"], d["ts"])])
+            keep = own >= 0
+            V, own = V[keep], own[keep]
+            ok = _np.zeros(self.n, bool)
+            ok[_np.unique(own)] = True
+            self.extra[name] = (V, own)
+            self.M[name] = (None, ok, "fine")
+
+        # participants that an EVENT bound - the significant objects,
+        # not every blob the detector ever saw. In a one-kitchen corpus
+        # "contains similar objects" is true of every pair, which is why
+        # the unrestricted object set measured 0.35.
+        if "objset" in self.extra and "events" in self.db.tables():
+            ev = self.db.table("events").scan().to_pydict()
+            sig = {(str(s_), int(o)) for s_, o in
+                   zip(ev["stream"], ev["object_id"]) if int(o) >= 0}
+            d = self.db.table("object_vectors").scan().to_pydict()
+            V, own = self.extra["objset"]
+            keep = _np.array([(str(s_), int(o)) in sig for s_, o in
+                              zip(d["stream"], d["object_id"])])
+            own_all = _np.array([_owner(s_, t) for s_, t in
+                                 zip(d["stream"], d["ts"])])
+            m = keep & (own_all >= 0)
+            if m.sum() > 100:
+                Vs = _np.asarray(d["vector"], _np.float32).reshape(
+                    len(d["ts"]), -1)[m]
+                Vs /= _np.maximum(_np.linalg.norm(Vs, axis=1, keepdims=True),
+                                  1e-8)
+                ok2 = _np.zeros(self.n, bool)
+                ok2[_np.unique(own_all[m])] = True
+                self.extra["objsig"] = (Vs, own_all[m])
+                self.M["objsig"] = (None, ok2, "fine")
+
+    def _fine_score(self, c, seeds, topk=5, mode="max"):
+        """SET-TO-SET: each candidate part scores against its NEAREST
+        seed part, then the episode takes the top-k mean.
+
+        The centroid version of this measured 0.34/0.30/0.57 - no
+        better than the pooled channel it was meant to replace, because
+        averaging every seed frame into one query vector reproduces the
+        room average on the QUERY side. A query is a set of parts, not
+        their mean; matching set to set is what keeps one object from
+        being averaged away by thirty frames of background.
+        """
+        V, own = self.extra[c]
+        sel = np.isin(own, np.asarray(seeds))
+        if sel.sum() < 1:
+            return np.full(self.n, -np.inf)
+        Q = V[sel]
+        if mode == "max":
+            sim = (V @ Q.T).max(1)
+        else:
+            q = Q.mean(0)
+            nq = np.linalg.norm(q)
+            if nq <= 0:
+                return np.full(self.n, -np.inf)
+            sim = V @ (q / nq)
+        out = np.full(self.n, -np.inf)
+        order = np.argsort(own, kind="stable")
+        o_sorted, s_sorted = own[order], sim[order]
+        bounds = np.searchsorted(o_sorted, np.arange(self.n + 1))
+        for e in range(self.n):
+            a, b = bounds[e], bounds[e + 1]
+            if b > a:
+                v = s_sorted[a:b]
+                m = min(topk, len(v))
+                out[e] = float(np.sort(v)[-m:].mean())
+        return out
+
+    def score(self, c, seeds, agg=None):
+        """A channel's similarity of every episode to a seed set.
+
+        agg="centroid" averages the seeds into one query vector;
+        agg="max" scores against the NEAREST seed. A query of five
+        clips is a set, and the centroid of a set whose members differ
+        (five ways of closing a drawer) is a vector describing none of
+        them - the same averaging that made the fine-grained channels
+        useless until they matched set to set.
+        """
         A, ok, op = self.M[c]
+        agg = agg or AGG
+        if op == "fine":
+            s = self._fine_score(c, seeds)
+            s[~ok] = -np.inf
+            return s
         if op == "crossent":
-            pm = A[seeds].mean(0)
-            s = np.log(np.maximum(A, 1e-12)) @ pm
+            L = np.log(np.maximum(A, 1e-12))
+            s = (L @ A[seeds].T).max(1) if agg == "max" \
+                else L @ A[seeds].mean(0)
+        elif agg == "max":
+            S = A[seeds]
+            S = S / np.maximum(np.linalg.norm(S, axis=1, keepdims=True), 1e-8)
+            s = (A @ S.T).max(1)
         else:
             cen = A[seeds].mean(0)
             nrm = np.linalg.norm(cen)
@@ -78,7 +213,12 @@ class Ctx:
     def coherence(self, c, seeds):
         """Cohen's d of seed-seed vs seed-corpus similarity. Query-only."""
         A, ok, _ = self.M[c]
-        if not ok[seeds].all():
+        # coherence needs an episode-vector space; the fine-grained
+        # channels have no episode vector by design (that pooling is
+        # what they exist to avoid), so they are simply not selectable
+        # by the older statistic. LOO scores them fine - it only needs
+        # score().
+        if A is None or not ok[seeds].all():
             return 0.0
         S = A[seeds]
         W = S @ S.T
@@ -110,7 +250,7 @@ def loo_quality(ctx, seeds, c, kind="mrr"):
     read - the seeds ARE the query, and their mutual membership is
     given by the user, not by the truthset.
     """
-    A, ok, op = ctx.M[c]
+    _, ok, op = ctx.M[c]
     if not ok[seeds].all() or len(seeds) < 3:
         return 0.0
     out = []
@@ -348,7 +488,7 @@ def _loo_prf(m, power=8, rounds=1):
             q = {c: max(loo_quality(ctx, seeds, c), 0.0) for c in ctx.M}
             mx = max(q.values()) or 1.0
             w = {c: (v / mx) ** power for c, v in q.items()}
-            fused = weighted_fuse(ctx, cur, w)
+            fused = zfuse(ctx, cur, w)
             fused[seeds] = -np.inf
             cur = np.unique(np.concatenate([np.asarray(seeds),
                                             np.argsort(-fused)[:m]]))
@@ -356,8 +496,84 @@ def _loo_prf(m, power=8, rounds=1):
     return f
 
 
+_ANS = {}
+
+
+def answer_scores(ctx, seed):
+    """The structural join's score for one seed episode, cached."""
+    if seed not in _ANS:
+        from elidedb.answer import answer_like
+        st, a = ctx.keys[int(seed)]
+        b = ctx.t1[int(seed)]
+        _, sc, shared = answer_like(ctx.db, st, a, b)
+        _ANS[seed] = (np.asarray(sc, np.float64), np.asarray(shared))
+    return _ANS[seed]
+
+
+def _join_rerank(pool_mult, power=16, use_partition=True):
+    """High-recall pool from the channels, RERANKED by the element join.
+
+    The two engines fail in opposite directions, and that is the whole
+    argument for composing them: the channels reach recall 0.89-0.96 at
+    3x support but mis-order inside it, while the join reaches only
+    0.37 recall yet is right about what it does return (prec_g
+    0.90-0.94). Precision applied where recall already exists.
+    """
+    def f(ctx, seeds, k):
+        q = {c: max(loo_quality(ctx, seeds, c, "auc"), 0.0) for c in ctx.M}
+        mx = max(q.values()) or 1.0
+        w = {c: (v / mx) ** power for c, v in q.items()}
+        base = zfuse(ctx, seeds, w)
+        base[seeds] = -np.inf
+        pool = np.argsort(-base)[:int(k * pool_mult)]
+        acc = np.zeros(ctx.n)
+        part = np.zeros(ctx.n)
+        for sd in seeds:
+            sc, shared = answer_scores(ctx, sd)
+            acc += sc
+            part += shared.astype(float)
+        acc /= max(len(seeds), 1)
+        part /= max(len(seeds), 1)
+        # rank inside the pool: the join's conjunction, with its event
+        # -kind partition as the primary key when it is available
+        if use_partition:
+            order = pool[np.lexsort((-acc[pool], -part[pool]))]
+        else:
+            order = pool[np.argsort(-acc[pool])]
+        return order[:k]
+    return f
+
+
+def _join_blend(pool_mult, power=16):
+    """Pool from channels; order by channel-z + join-z (both scaled)."""
+    def f(ctx, seeds, k):
+        q = {c: max(loo_quality(ctx, seeds, c, "auc"), 0.0) for c in ctx.M}
+        mx = max(q.values()) or 1.0
+        w = {c: (v / mx) ** power for c, v in q.items()}
+        base = zfuse(ctx, seeds, w)
+        base[seeds] = -np.inf
+        pool = np.argsort(-base)[:int(k * pool_mult)]
+        acc = np.zeros(ctx.n)
+        for sd in seeds:
+            acc += answer_scores(ctx, sd)[0]
+        acc /= max(len(seeds), 1)
+        def z(v, idx):
+            x = v[idx]
+            return (x - x.mean()) / (x.std() or 1e-9)
+        blend = z(base, pool) + z(acc, pool)
+        return pool[np.argsort(-blend)][:k]
+    return f
+
+
 STRATEGIES = {
     "uniform": S_uniform,
+    "join_rr2": _join_rerank(2), "join_rr3": _join_rerank(3),
+    "join_rr5": _join_rerank(5),
+    "join_rr3_np": _join_rerank(3, use_partition=False),
+    "join_bl2": _join_blend(2), "join_bl3": _join_blend(3),
+    "join_bl5": _join_blend(5),
+    "auc_z12": _loo_z(12), "auc_z20": _loo_z(20), "auc_z24": _loo_z(24),
+    "z16_prf25": _loo_prf(25, 16), "z16_prf50": _loo_prf(50, 16),
     "loo_best": _loo_best(), "loo_best_log": _loo_best("log"),
     "loo_best_r50": _loo_best("50"), "loo_best_r100": _loo_best("100"),
     "loo_best_r200": _loo_best("200"), "loo_best_r400": _loo_best("400"),
