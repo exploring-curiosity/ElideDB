@@ -578,9 +578,10 @@ and `prec_g` is the honest precision figure.
 | | q03 stove | q04 close | q05 open |
 |---|---|---|---|
 | support | 247 | 165 | 196 |
-| **yield** (was 0.64 / 0.76 / 0.83) | **0.68** | **0.93** | **0.88** |
-| **prec_g** | 0.80 | 0.92 | 0.99 |
-| yield == prec at k=support | 0.53 | 0.81 | 0.84 |
+| **yield** (was 0.64 / 0.76 / 0.83) | **0.75** | **0.94** | **0.90** |
+| **prec_g** | 0.82 | 0.92 | 0.99 |
+| yield == prec at k=support | 0.60 | 0.83 | 0.85 |
+| yield, mean of 4 independent seed draws | 0.735 | 0.913 | 0.883 |
 
 ### What moved it, in order of size
 
@@ -590,6 +591,7 @@ and `prec_g` is the honest precision figure.
 | z-score fusion replaces RRF | RRF discards the margin, the evidence of confidence |
 | `otsu_cut` replaces `confidence_cut` | the knee fired at 16 returned of a 165 support |
 | `drop_pc` 1 -> 0 | corrected for RRF's rank-blindness; distorts under z-fusion |
+| pairwise instead of hold-one-out quality | 5 seeds give 5 samples to judge a channel on and it mis-selects ~1 group in 5; every ordered pair gives 20 |
 
 ### Measured dead ends (each cost a run, each stays recorded)
 
@@ -605,8 +607,21 @@ and `prec_g` is the honest precision figure.
   0.845. Seeds of one query type denoise by averaging; frames of one
   episode do not.
 
+- **IV2 at sub-episode granularity** (3 overlapping windows, 6,291
+  clips, 31 min): 0.72 against the whole-episode channel's 0.77. IV2 is
+  genuinely starved at 4 frames, but for a query about a whole demo's
+  story, four frames SPANNING it beat four frames inside a third of it.
+  Context beat density; retired.
+
 ### The remaining gap is one channel on one query
 
 `iv2` is the only channel that carries q03 (0.77 alone against 0.34-0.41
-for every other), and q03's own oracle single-channel ceiling is 0.77 -
-so no selection or fusion over today's channels reaches 0.90 mean.
+for every other). q04 and q05 are at target; q03 sits at 0.75 and its
+own single-channel ceiling is 0.77, so lifting it further needs a
+stronger video-semantic encoder, not another combiner.
+
+### Seed sensitivity, reported rather than exploited
+
+q03 rises to 0.79 with 15 seeds while q04 and q05 peak at 5 and fall -
+appearance denoises by averaging, direction blurs. Choosing per query
+would be fitting the answer, so the bench uses 5 everywhere.

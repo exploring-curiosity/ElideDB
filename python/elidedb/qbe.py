@@ -69,8 +69,8 @@ SEEDS = 10
 # silenced). Re-measured for the bounded form, the optimum is 2 and the
 # plateau is flat from 2 to 4.
 POWER = 2.0
-# fusion sharpness on the LOO quality; swept 2..64, flat 12-16
-ZPOWER = 12.0
+# fusion sharpness on the pairwise quality; swept 2..64, flat 8-12
+ZPOWER = 8.0
 # ZERO, re-measured under LOO weighting + z-fusion. Removing the first
 # principal component was worth q04 0.83 -> 0.88 under coherence+RRF,
 # because RRF sees only ranks and the shared component (the kitchen,
@@ -328,14 +328,21 @@ def loo_quality(A, ok, seeds, op):
     """
     if len(seeds) < 3 or not ok[seeds].all():
         return 0.0
+    # PAIRWISE, not hold-one-out: with 5 seeds a hold-one-out estimate
+    # has 5 samples to judge a channel on, and it mis-selected about one
+    # seed group in five - the residual loss on the appearance query.
+    # Every ordered pair gives 20 samples from the same query, and the
+    # question each asks is the same one: retrieve with this, does the
+    # query's own other member come back?
     out = []
     for i in seeds:
-        rest = np.asarray([j for j in seeds if j != i])
-        sc = _score(A, op, rest)
-        sc[~ok] = -np.inf
-        sc[rest] = -np.inf                   # other seeds not candidates
-        r = int((sc > sc[i]).sum())
-        out.append(float(np.mean([r < d for d in LOO_DEPTHS])))
+        others = np.asarray([x for x in seeds if x != i])
+        for j in others:
+            sc = _score(A, op, np.asarray([j]))
+            sc[~ok] = -np.inf
+            sc[others] = -np.inf             # other seeds not candidates
+            r = int((sc > sc[i]).sum())
+            out.append(float(np.mean([r < d for d in LOO_DEPTHS])))
     return float(np.mean(out))
 
 

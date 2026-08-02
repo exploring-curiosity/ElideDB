@@ -253,6 +253,23 @@ def loo_quality(ctx, seeds, c, kind="mrr"):
     _, ok, op = ctx.M[c]
     if not ok[seeds].all() or len(seeds) < 3:
         return 0.0
+    if kind == "pair":
+        # PAIRWISE: every ordered seed pair, not every hold-one-out.
+        # With 5 seeds LOO has 5 samples to judge a channel on and
+        # mis-selects roughly one group in five; pairs give 20 from the
+        # same query at the same cost per sample.
+        out = []
+        for i in seeds:
+            for j in seeds:
+                if i == j:
+                    continue
+                sc = ctx.score(c, np.asarray([j]))
+                sc = sc.copy()
+                sc[np.asarray([x for x in seeds if x != i])] = -np.inf
+                r = int((sc > sc[i]).sum())
+                out.append(float(np.mean([r < d for d in
+                                          (25, 50, 100, 200, 400, 800)])))
+        return float(np.mean(out))
     out = []
     for i in seeds:
         rest = np.asarray([j for j in seeds if j != i])
@@ -578,6 +595,9 @@ STRATEGIES = {
     "loo_best_r50": _loo_best("50"), "loo_best_r100": _loo_best("100"),
     "loo_best_r200": _loo_best("200"), "loo_best_r400": _loo_best("400"),
     "loo_best_auc": _loo_best("auc"),
+    "pair_best": _loo_best("pair"),
+    "pair_z8": _loo_z(8, "pair"), "pair_z12": _loo_z(12, "pair"),
+    "pair_z16": _loo_z(16, "pair"), "pair_z24": _loo_z(24, "pair"),
     "auc_w4": _loo_w(4, "auc"), "auc_w8": _loo_w(8, "auc"),
     "auc_w16": _loo_w(16, "auc"),
     "auc_z2": _loo_z(2), "auc_z4": _loo_z(4), "auc_z8": _loo_z(8),
