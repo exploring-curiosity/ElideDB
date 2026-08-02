@@ -103,9 +103,14 @@ def main():
         k_max = int(np.ceil(s * float(
             __import__("os").environ.get("ELIDEDB_KMULT", "1.5"))))
         truths = [i for i, e in enumerate(eidx) if G.get((qi, e)) == 1]
-        rs = np.random.RandomState(0)
-        groups = [rs.choice(truths, n_seed, replace=False)
-                  for _ in range(5)]
+        rs = np.random.RandomState(int(
+            __import__("os").environ.get("ELIDEDB_SEEDRS", "0")))
+        # a query with fewer positives than seeds cannot be sampled
+        # without replacement; use what it has rather than skipping it
+        ns = min(n_seed, len(truths))
+        if ns < 2:
+            continue
+        groups = [rs.choice(truths, ns, replace=False) for _ in range(5)]
         runs = []
         for grp in groups:
             sd = sorted(set(int(x) for x in grp))

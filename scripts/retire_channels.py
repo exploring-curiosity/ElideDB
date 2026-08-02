@@ -48,6 +48,11 @@ RETIRE = {
                      "discarded at write; dropped with pe, same measure",
     "action_probs": "user roster call 2026-08-01 (no earned purpose); "
                     "exit measured at -0.01 fusion yield (noise)",
+    "iv2_win_vectors": "sub-episode windows measured WORSE than the "
+                       "whole-episode clip (q03 0.72 vs 0.77): a window "
+                       "over a third of the demo has LESS context than 4 "
+                       "frames spanning all of it. The starvation was "
+                       "real, the diagnosis wrong (2026-08-02)",
     "vjepa_vectors": "spec says never whole-frame; vjepa_part (tubelets "
                      "seeded from trajectories) replaces it at zero "
                      "measured cost (coh^4 0.72 -> 0.73, 2026-08-02)",
