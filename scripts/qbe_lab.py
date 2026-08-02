@@ -220,7 +220,7 @@ class Ctx:
                 out[e] = float(s_sorted[a:b].max())
         return out
 
-    def objcons2_score(self, seeds):
+    def objcons2_score(self, seeds, space="objsig"):
         """Rank-based consensus over EVENT-BOUND objects.
 
         The thresholded version failed for a measured reason: the
@@ -235,7 +235,7 @@ class Ctx:
         episode score is the best weighted rank. Statistics of the
         query and corpus only.
         """
-        Vs, owns = self.extra.get("objsig", (None, None))
+        Vs, owns = self.extra.get(space, (None, None))
         if Vs is None:
             return np.full(self.n, -np.inf)
         S = list(int(x) for x in seeds)
@@ -330,6 +330,10 @@ class Ctx:
             return s
         if op == "cons2":
             s = self.objcons2_score(seeds)
+            s[~ok] = -np.inf
+            return s
+        if op == "kindcons":
+            s = self.objcons2_score(seeds, space="kind")
             s[~ok] = -np.inf
             return s
         if op == "fine":
@@ -782,8 +786,19 @@ def _join_blend(pool_mult, power=16):
     return f
 
 
+def S_kindcons(ctx, seeds, k):
+    """Rank-based consensus over the KIND descriptors, standalone -
+    never enrolled in selection (the Goodhart rule)."""
+    if "kind" not in ctx.extra:
+        return np.array([], dtype=int)
+    s = ctx.objcons2_score(seeds, space="kind")
+    s[np.asarray(seeds)] = -np.inf
+    return np.argsort(-s)[:k]
+
+
 STRATEGIES = {
     "uniform": S_uniform,
+    "kindcons": S_kindcons,
     "join_rr2": _join_rerank(2), "join_rr3": _join_rerank(3),
     "join_rr5": _join_rerank(5),
     "join_rr3_np": _join_rerank(3, use_partition=False),
