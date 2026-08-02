@@ -608,10 +608,16 @@ and `prec_g` is the honest precision figure.
   episode do not.
 
 - **IV2 at sub-episode granularity** (3 overlapping windows, 6,291
-  clips, 31 min): 0.72 against the whole-episode channel's 0.77. IV2 is
-  genuinely starved at 4 frames, but for a query about a whole demo's
-  story, four frames SPANNING it beat four frames inside a third of it.
-  Context beat density; retired.
+  clips, 31 min): 0.72 against the whole-episode channel's 0.77. For a
+  query about a whole demo's story, four frames SPANNING it beat four
+  frames inside a third of it. Context beat density; retired.
+- **IV2 at 8 frames over the same full span** (19 min; required
+  interpolating two temporal position embeddings, since the checkpoint
+  ships a 4-frame grid): **0.76 against 0.77**. Doubling the input
+  changed nothing. Together with the windows result this settles it:
+  IV2 is NOT frame-starved on this corpus, and q03's ceiling is the
+  model's semantics, not how it is fed. `iv2.set_num_frames()` is kept
+  as a capability; the channel is retired.
 
 ### The remaining gap is one channel on one query
 

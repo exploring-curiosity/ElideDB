@@ -53,6 +53,11 @@ RETIRE = {
                        "over a third of the demo has LESS context than 4 "
                        "frames spanning all of it. The starvation was "
                        "real, the diagnosis wrong (2026-08-02)",
+    "iv2_8f_vectors": "8 frames over the SAME full span measured 0.76 "
+                      "against the 4-frame channel's 0.77 on q03 - "
+                      "doubling the input changed nothing, so IV2 is "
+                      "not frame-starved on this corpus and its q03 "
+                      "ceiling is the model's semantics (2026-08-02)",
     "vjepa_vectors": "spec says never whole-frame; vjepa_part (tubelets "
                      "seeded from trajectories) replaces it at zero "
                      "measured cost (coh^4 0.72 -> 0.73, 2026-08-02)",
