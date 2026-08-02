@@ -71,10 +71,7 @@ SCENE = """
       <geom type="box" size="0.45 0.6 0.1" rgba="0.55 0.42 0.30 1"
             friction="1.2 0.01 0.001"/>
     </body>
-    <camera name="cam0" pos="1.45 0.0 0.75" xyaxes="0 1 0 -0.5 0 1"/>
-    <camera name="cam1" pos="0.5 1.25 0.85" xyaxes="-1 0 0 0 -0.55 1"/>
-    <camera name="cam2" pos="0.5 -1.25 0.85" xyaxes="1 0 0 0 0.55 1"/>
-    <camera name="cam3" pos="1.15 0.95 1.15" xyaxes="-0.68 0.73 0 -0.4 -0.38 0.9"/>
+    {CAMS}
     {BLOCKS}
   </worldbody>
 </mujoco>
@@ -84,24 +81,51 @@ BLOCK = """
     <body name="blk{i}" pos="{x} {y} {z}">
       <freejoint/>
       <geom name="gblk{i}" type="{shape}" size="{size}" rgba="{r} {g} {b} 1"
-            friction="1.2 0.01 0.001" condim="4" mass="0.06"/>
+            friction="2.0 0.01 0.005" condim="6" mass="0.045"/>
     </body>
 """
 
+# MuJoCo combines contact friction as the element-wise MAX of the two
+# geoms, so raising BLOCK friction raises the pad-block friction even
+# though panda.xml is untouched. Grippier + lighter (0.045 vs 0.06) is
+# the transit-drop fix: the slip plane was pad-on-block under carry
+# acceleration (14% of blocks left the gripper mid-flight in the v1
+# batch). condim=6 because rolling friction is IGNORED below it - a
+# knocked cylinder rolled forever, ended somewhere awkward, and the
+# next pick burned 20s failing on it (measured cascade in the pilot).
 
-def build_scene(rng, n_blocks):
+CAM_BASE = (
+    ("cam0", (1.45, 0.0, 0.75), "0 1 0 -0.5 0 1"),
+    ("cam1", (0.5, 1.25, 0.85), "-1 0 0 0 -0.55 1"),
+    ("cam2", (0.5, -1.25, 0.85), "1 0 0 0 0.55 1"),
+    ("cam3", (1.15, 0.95, 1.15), "-0.68 0.73 0 -0.4 -0.38 0.9"),
+)
+
+
+def build_scene(rng, n_blocks, spec=None):
+    """spec: optional [(shape, color), ...] so the caller can control
+    episode identity (chains dedupes on it); sizes/poses stay random.
+    Colors are drawn WITHOUT replacement either way - two red boxes in
+    one episode are indistinguishable on film and in any query."""
+    cnames = list(rng.choice(list(PALETTE), size=n_blocks, replace=False))
     blocks, meta = [], []
     spots = []
     for i in range(n_blocks):
         # spawn apart from each other and the tower site
+        # spawn range pulled inside the dexterous workspace: beyond
+        # x~0.56 the wrist-down pose is near reach limit and IK error
+        # grows to several cm
         for _ in range(200):
-            x = rng.uniform(0.32, 0.62)
-            y = rng.uniform(-0.32, 0.32)
+            x = rng.uniform(0.30, 0.56)
+            y = rng.uniform(-0.26, 0.26)
             if all(np.hypot(x - a, y - b) > 0.13 for a, b in spots):
                 break
         spots.append((x, y))
-        shape = SHAPES[rng.integers(len(SHAPES))]
-        cname = list(PALETTE)[rng.integers(len(PALETTE))]
+        if spec is not None:
+            shape, cname = spec[i]
+        else:
+            shape = SHAPES[rng.integers(len(SHAPES))]
+            cname = cnames[i]
         r, g, b = PALETTE[cname]
         # SQUAT blocks: towers were built and then COLLAPSED (seen in
         # the frames - a 3-story tower stood at t=53 and was rubble by
@@ -118,11 +142,18 @@ def build_scene(rng, n_blocks):
                      "spawn": [x, y]})
     # tower site clear of every spawn
     for _ in range(200):
-        tx = rng.uniform(0.36, 0.58)
-        ty = rng.uniform(-0.26, 0.26)
+        tx = rng.uniform(0.34, 0.52)
+        ty = rng.uniform(-0.20, 0.20)
         if all(np.hypot(tx - a, ty - b) > 0.15 for a, b in spots):
             break
-    xml = SCENE.replace("{BLOCKS}", "".join(blocks))
+    # per-episode camera jitter: same four viewpoints, never the same
+    # framing twice - part of the "no identical-looking setup" rule
+    cams = "".join(
+        f'    <camera name="{n}" pos="'
+        + " ".join(f"{p + rng.uniform(-0.05, 0.05):.3f}" for p in pos)
+        + f'" xyaxes="{xy}"/>\n'
+        for n, pos, xy in CAM_BASE)
+    xml = SCENE.replace("{BLOCKS}", "".join(blocks)).replace("{CAMS}", cams)
     path = PANDA_DIR / "_stack_scene.xml"
     path.write_text(xml)
     return path, meta, (tx, ty)
@@ -156,6 +187,7 @@ class Arm:
         for a, q, v in zip(self.act, self.qadr, self.home):
             self.d.qpos[q] = v
             self.d.ctrl[a] = v
+        self.q_cmd = self.home.copy()         # integrator state (see step_ik)
         self.d.ctrl[self.grip] = 255          # open
         mujoco.mj_forward(self.m, self.d)
         # the DOWNWARD gripper orientation is whatever home gives us -
@@ -180,17 +212,43 @@ class Arm:
         rel = np.zeros(4)
         mujoco.mju_mulQuat(rel, self.down_quat, neg)
         mujoco.mju_quat2Vel(rq, rel, 1.0)
-        err = np.concatenate([err_p, 0.5 * rq])
+        # orientation is a PREFERENCE, position is the job: at 0.5 the
+        # DLS compromise left 1-7cm of steady-state position error
+        # (measured across the table - releases were happening 5cm off
+        # target), because holding the wrist perfectly down fights the
+        # reach. At 0.15 the wrist tilts a few degrees at the extremes
+        # and the hand actually arrives.
+        err = np.concatenate([err_p, 0.15 * rq])
         jacp = np.zeros((3, m.nv))
         jacr = np.zeros((3, m.nv))
         mujoco.mj_jacBody(m, d, jacp, jacr, self.hand)
         J = np.vstack([jacp, jacr])[:, self.dof]
         JT = J.T
         dq = JT @ np.linalg.solve(J @ JT + 1e-4 * np.eye(6), err)
-        q = np.array([d.qpos[a] for a in self.qadr]) + gain * dq * m.opt.timestep * 20
+        # integrate on the COMMAND, not the measured q: the position
+        # servos sag ~0.005-0.01 rad under gravity torque, and stepping
+        # from measured q re-baselines onto that sag every step - a
+        # steady-state Cartesian error of 1-7cm across the table
+        # (measured; releases landed 5cm off target). Command-side
+        # integration is integral action: the command leads the sag
+        # until the error is gone. Clamp keeps it from winding up when
+        # the arm is blocked by contact.
+        qm = np.array([d.qpos[a] for a in self.qadr])
+        # the windup clamp is also the speed limiter, and a collision
+        # can turn it into bang-bang drive: command rides the clamp in
+        # alternating directions and the arm THRASHES (one pilot
+        # episode spent 60s flailing and flung a block off the table).
+        # When joints exceed real Panda velocity limits (~2.6 rad/s),
+        # re-baseline the integrator on the measured state - that
+        # breaks the limit cycle instead of feeding it.
+        if float(np.max(np.abs(d.qvel[self.dof]))) > 3.0:
+            self.q_cmd = qm.copy()
+        q = self.q_cmd + gain * dq * m.opt.timestep * 20
+        q = np.clip(q, qm - 0.05, qm + 0.05)
         lo = m.jnt_range[self.jnt, 0]
         hi = m.jnt_range[self.jnt, 1]
         q = np.clip(q, lo + 0.02, hi - 0.02)
+        self.q_cmd = q
         for a, v in zip(self.act, q):
             d.ctrl[a] = v
         return float(np.linalg.norm(err_p))
