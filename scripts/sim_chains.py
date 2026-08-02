@@ -8,10 +8,20 @@ sampled PROGRAM over primitives, executed by the same arm machinery as
 sim_stack and verified event by event from sim state:
 
     pick(block)              carried check (z gain, not absolute z)
-    place(block, zone)       block inside the named table zone
-    stack(block, on_block)   resting on the live top, height-verified
+    place(block, zone)       settled ON the table inside the named zone
+    stack(block, on_block)   settled CONTACT: rests on the target at
+                             stacked height (not just near coordinates)
     unstack(top, zone)       removed from its tower to a zone
-    push(block, direction)   slid along the table, displacement-verified
+    push(block, direction)   displacement along the intended direction
+
+Verdicts are read from SETTLED contacts, and after every event the
+whole expected world-state is re-checked: a chain like "stack red on
+blue, then green on red" can have its first relation break silently
+while the second event succeeds - that break is recorded as a
+violation on the event that caused it (state_ok=False), and the
+episode ends with a PLAN vs ACHIEVED reconciliation per block
+(end_state), so "the arm went through the motions" and "the tower
+exists" are separate, queryable truths.
 
 Zones are a 3x2 grid over the table (left/mid/right x near/far) -
 generator-side names, eval-only like every other label. TEMPLATES give
@@ -290,6 +300,10 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
             mujoco.mj_step(m, d)
             if st % spf == 0:
                 frames()
+        # dwell fully open BEFORE retreating: lifting while the pads
+        # still brushed the block dragged it off its own tower (seen on
+        # film - stacked ok, then stuck to a finger on the way up)
+        sim(0.15)
         cur = d.xpos[arm.hand].copy()
         move_to([cur[0], cur[1], cur[2] + 0.10], timeout=1.0)
 
@@ -297,10 +311,12 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
         """Drop point inside the zone that clears every other block:
         zones get occupied at spawn and mid-chain, and setting a block
         down ON an occupier was a measured place-failure (the cylinder
-        landed on a box and rolled off). Max nudge 5.5cm keeps the
-        point nearest to this zone's centre (zones are 18-20cm apart)."""
+        landed on a box and rolled off). Max nudge 8.5cm - two large
+        blocks need 7.6cm of clearance and the 5.5cm ring left drops
+        landing ON the occupier - still (just) nearest to this zone's
+        centre, zones being 18-20cm apart."""
         cands = [(zx, zy)]
-        for rad in (0.035, 0.055):
+        for rad in (0.045, 0.07, 0.085):
             for a in range(8):
                 th = a * np.pi / 4
                 cands.append((zx + rad * np.cos(th), zy + rad * np.sin(th)))
@@ -315,9 +331,114 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
         return [[round(float(x), 4) for x in d.xpos[bid[j]]]
                 for j in range(len(meta))]
 
+    gidx = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, f"gblk{k}")
+            for k in range(len(meta))]
+
+    def blk_speed(k):
+        a = m.jnt_dofadr[m.body_jntadr[bid[k]]]
+        return float(np.linalg.norm(d.qvel[a:a + 3]))
+
+    def settle(max_s=1.0):
+        """Run physics until every free block is still (or max_s): a
+        verdict read mid-fall is not a verdict."""
+        streak, calm = 0, int(0.1 / dt)
+        for s in range(int(max_s / dt)):
+            mujoco.mj_step(m, d)
+            if s % spf == 0:
+                frames()
+            if any(blk_speed(k) > 0.04 for k in range(len(meta))
+                   if k != held):
+                streak = 0
+            else:
+                streak += 1
+                if streak >= calm:
+                    break
+
+    def supporter_of(k):
+        """What block k actually RESTS ON (highest contact below its
+        centre) - 'did the stack form' asked of the physics, not of
+        coordinates that could belong to a block caught mid-topple."""
+        best, bz = None, -1e9
+        for c in range(d.ncon):
+            g1, g2 = d.contact[c].geom1, d.contact[c].geom2
+            other = g2 if g1 == gidx[k] else (g1 if g2 == gidx[k] else None)
+            if other is None or other in arm.finger_geoms:
+                continue
+            # support = near-vertical contact normal; a LATERAL contact
+            # between adjacent blocks also sits below the taller one's
+            # centre and read as mutual "support" without this filter
+            if abs(float(d.contact[c].frame[2])) < 0.6:
+                continue
+            pz = float(d.contact[c].pos[2])
+            if pz < float(d.xpos[bid[k]][2]) and pz > bz:
+                bz, best = pz, other
+        if best is None:
+            return None
+        return mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY,
+                                 m.geom_bodyid[best]) or "world"
+
+    def claim_holds(k, claim):
+        kind, arg = claim
+        if kind in ("held", "free"):
+            return True
+        sup = supporter_of(k)
+        if kind == "on":
+            exp_z = (float(d.xpos[bid[arg]][2]) + meta[arg]["half_h"]
+                     + meta[k]["half_h"])
+            return (sup == meta[arg]["name"]
+                    and abs(float(d.xpos[bid[k]][2]) - exp_z) < 0.02)
+        p = d.xpos[bid[k]]
+        return (sup == "table"
+                and p[2] < Z_TOP + meta[k]["half_h"] + 0.02
+                and (arg is None or zone_of(p[0], p[1]) == arg))
+
+    def actual_claim(k):
+        sup = supporter_of(k)
+        for j2 in range(len(meta)):
+            if sup == meta[j2]["name"]:
+                return ("on", j2)
+        return ("table", None) if sup == "table" else ("free", None)
+
+    def fmt_claim(claim):
+        kind, arg = claim
+        if kind == "on":
+            return f"on:{meta[arg]['name']}"
+        if kind == "table" and arg is not None:
+            return f"zone:{arg}"
+        return kind
+
+    def fmt_actual(k):
+        act = actual_claim(k)
+        if act == ("table", None):
+            p = d.xpos[bid[k]]
+            return f"table:{zone_of(p[0], p[1])}"
+        return fmt_claim(act)
+
+    def verify_state():
+        """EXPECTED vs ACTUAL world state after every event: an earlier
+        relation can break silently while the current event succeeds
+        (green lands on red while red has slid off blue). Each broken
+        claim is reported once, at the event that broke it, then
+        re-based to reality so later verdicts stay meaningful."""
+        bad = []
+        for k in range(len(meta)):
+            if k == held or expected[k][0] in ("held", "free"):
+                continue
+            if not claim_holds(k, expected[k]):
+                bad.append({"block": meta[k]["name"],
+                            "expected": fmt_claim(expected[k]),
+                            "actual": fmt_actual(k)})
+                expected[k] = actual_claim(k)
+        return bad
+
     sim(0.3)
     events = []
     held = None
+    # expected = live world-state claims (re-based on violation);
+    # plan = the chain's INTENT, never re-based - the end-of-episode
+    # comparison of plan vs actual is the expected-vs-achieved record
+    expected = {k: ("table", None) for k in range(len(meta))}
+    plan = {k: ("table", None) for k in range(len(meta))}
     for step in T["steps"]:
         prim, i = step[0], step[1]
         t0 = frame_n / RFPS
@@ -326,6 +447,11 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
         if prim == "pick":
             ok = grasp(i)
             held = i if ok else None
+            if ok:
+                plan[i] = expected[i] = ("held", None)
+            else:
+                expected[i] = actual_claim(i)
+            settle(0.5)
         elif prim in ("place", "unstack"):
             zname = zone_bind[step[2]]
             zx, zy = ZONES[zname]
@@ -335,17 +461,22 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
                                    "block": meta[i]["name"],
                                    "shape": meta[i]["shape"],
                                    "color": meta[i]["color"], "ok": False,
+                                   "state_ok": False,
+                                   "achieved": fmt_actual(i),
+                                   "violations": [],
                                    "t0": round(t0, 1),
                                    "t1": round(frame_n / RFPS, 1),
                                    "zone": zname})
+                    plan[i] = ("table", zname)
                     continue
             if held == i or prim == "unstack":
                 lower_release(i, free_spot(i, zx, zy),
                               Z_TOP + meta[i]["half_h"])
-                p = d.xpos[bid[i]]
-                ok = (zone_of(p[0], p[1]) == zname
-                      and p[2] < Z_TOP + meta[i]["half_h"] + 0.02)
                 held = None
+                settle()
+                ok = claim_holds(i, ("table", zname))
+                plan[i] = ("table", zname)
+                expected[i] = ("table", zname) if ok else actual_claim(i)
             extra = {"zone": zname}
         elif prim == "stack":
             j = step[2]
@@ -355,15 +486,15 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
                 before = standing_set()
                 lower_release(i, (float(top[0]), float(top[1])), slot,
                               track=bid[j])
-                p = d.xpos[bid[i]]
-                # verify against the LIVE top, not the pre-placement
-                # slot: the target block drifts a few mm under contact
-                exp_z = (float(d.xpos[bid[j]][2]) + meta[j]["half_h"]
-                         + meta[i]["half_h"])
-                ok = (np.hypot(p[0] - d.xpos[bid[j]][0],
-                               p[1] - d.xpos[bid[j]][1]) < 0.04
-                      and abs(p[2] - exp_z) < 0.02)
                 held = None
+                settle()
+                # the stack verdict is asked of the settled CONTACTS:
+                # does i actually rest ON j at stacked height - not
+                # "is i near the right coordinates", which a block
+                # caught mid-topple can also satisfy
+                ok = claim_holds(i, ("on", j))
+                plan[i] = ("on", j)
+                expected[i] = ("on", j) if ok else actual_claim(i)
                 after = standing_set()
                 # COLLAPSE ATTRIBUTION: which blocks moved >3cm during
                 # this placement - the causal label for topple queries
@@ -399,36 +530,64 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
                     frames()
             cur = d.xpos[arm.hand].copy()
             move_to([cur[0], cur[1], cur[2] + 0.15], timeout=1.0)
+            settle()
             p = d.xpos[bid[i]]
-            ok = float(np.hypot(p[0] - bp[0], p[1] - bp[1])) > 0.05
-            extra = {"zone": zname,
-                     "moved_mm": round(float(np.hypot(
-                         p[0] - bp[0], p[1] - bp[1])) * 1000)}
+            # displacement ALONG the intended direction: a block
+            # knocked sideways is not a push toward the zone
+            fwd = float(np.dot(np.array([p[0] - bp[0], p[1] - bp[1]]), u))
+            ok = fwd > 0.05
+            extra = {"zone": zname, "moved_mm": round(fwd * 1000)}
+        viol = verify_state()
         events.append({"i": len(events), "prim": prim,
                        "block": meta[i]["name"],
                        "shape": meta[i]["shape"], "color": meta[i]["color"],
-                       "ok": bool(ok), "t0": round(t0, 1),
+                       "ok": bool(ok),
+                       "state_ok": bool(ok) and not viol,
+                       "achieved": ("held" if prim == "pick" and ok
+                                    else fmt_actual(i)),
+                       "violations": viol,
+                       "t0": round(t0, 1),
                        "t1": round(frame_n / RFPS, 1), **extra})
     move_to([0.35, 0.0, 0.55], timeout=1.5)
-    sim(0.3)
+    settle(0.8)
+    end_viol = verify_state()
+    # PLAN vs ACHIEVED end state: the chain's claims checked against
+    # where every block actually ended - the difference between "the
+    # arm went through the motions" and "the tower exists"
+    end_state = [{"block": meta[k]["name"],
+                  "planned": fmt_claim(plan[k]),
+                  "actual": fmt_actual(k),
+                  "ok": bool(claim_holds(k, plan[k]))}
+                 for k in range(len(meta))]
 
     for p in enc:
         p.stdin.close()
     for p in enc:
         p.wait()
     ok_flags = [e["ok"] for e in events]
-    chain_ok = 0
+    st_flags = [e["state_ok"] for e in events]
+    chain_ok = chain_st = 0
     for f in ok_flags:
-        if f:
-            chain_ok += 1
-        else:
+        if not f:
             break
+        chain_ok += 1
+    for f in st_flags:
+        if not f:
+            break
+        chain_st += 1
+    end_ok = all(s["ok"] for s in end_state)
     rec_out = {"episode": ep_id, "template": tname,
                "blocks": meta, "events": events,
                "zone_bind": zone_bind, "cams": rec,
                "events_ok": sum(ok_flags), "events_total": len(events),
+               "events_state_ok": sum(st_flags),
                "chain_prefix_ok": chain_ok,
+               "chain_state_prefix": chain_st,
+               "end_state": end_state,
+               "end_state_ok": end_ok,
+               "end_violations": end_viol,
                "success": all(ok_flags),
+               "state_success": all(st_flags) and end_ok,
                "frames_per_cam": frame_n,
                "seconds": round(frame_n / RFPS, 1),
                "wall_s": round(time.time() - wall0, 1)}
@@ -457,12 +616,20 @@ def main():
         sig_f.write_text(json.dumps(sorted(registry)))
         tqdm.write(f"  ep{ep:04d} {rec['template']:<18} "
                    f"events {rec['events_ok']}/{rec['events_total']} "
-                   f"chain_prefix {rec['chain_prefix_ok']} "
+                   f"state {rec['events_state_ok']}/{rec['events_total']} "
+                   f"end {'ok' if rec['end_state_ok'] else 'BROKEN'} "
                    f"({rec['seconds']}s film, {rec['wall_s']}s wall)")
     full = sum(1 for r in log if r["success"])
+    state_full = sum(1 for r in log if r["state_success"])
     print(json.dumps({"episodes": len(log), "full_chain": full,
+                      "state_full_chain": state_full,
+                      "end_state_ok": sum(1 for r in log
+                                          if r["end_state_ok"]),
                       "mean_events_ok": round(float(np.mean(
                           [r["events_ok"] / r["events_total"]
+                           for r in log])), 2),
+                      "mean_state_ok": round(float(np.mean(
+                          [r["events_state_ok"] / r["events_total"]
                            for r in log])), 2),
                       "film_min": round(sum(r["seconds"] for r in log) / 60,
                                         1),
