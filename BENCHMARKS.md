@@ -655,3 +655,51 @@ no-match gate, not retrieval).
 q03 rises to 0.79 with 15 seeds while q04 and q05 peak at 5 and fall -
 appearance denoises by averaging, direction blurs. Choosing per query
 would be fitting the answer, so the bench uses 5 everywhere.
+
+
+## Text vs QbE, all queries (2026-08-02, lake/fresh_bench)
+
+Yield / prec_g per query. QbE = shipped `search_like` (5 seeds).
+Text = `search_set` — DEGRADED RUN: its `obj` channel died on schema
+drift (`Field "motion" does not exist`; the instances table predates
+the DINOv3 rebuild), fix queued. Text elides 99.3% of corpus bytes at
+~1s/query.
+
+| q | support | text yield/prec_g | QbE yield/prec_g |
+|---|---|---|---|
+| q00 green | 8 | 0.12 / 0.25 | 0.00 / 0.00 |
+| q01 yellow | 17 | 0.12 / 0.12 | 0.29 / 0.42 |
+| q02 red | 14 | 0.00 / 0.00 | 0.23 / 0.97 |
+| q03 vessel→stove | 247 | 0.38 / 0.79 | **0.74 / 0.82** |
+| q04 close drawer | 165 | 0.39 / 0.89 | **0.94 / 0.92** |
+| q05 open drawer | 196 | 0.29 / 0.86 | **0.91 / 0.99** |
+| q06 no-match gate | 0 | PASS | — |
+| q07 lid | 12 | 0.00 / — | 0.25 / 0.36 |
+| q08 spoon | 18 | 0.11 / 0.25 | 0.19 / 0.48 |
+| q09 eggplant | 2 | 0.00 | 0.00 |
+| q10 banana | 2 | 0.00 | 0.00 |
+
+## The low-support 0.60 target: status and the measured wall
+
+Three query-time mechanisms built and measured today for the object
+queries (all corpus/seed-derived, no content knowledge):
+
+1. consensus x rarity over the object index, threshold = the store's
+   fitted identity cut: DEAD (0.00-0.08). The cut is an INSTANCE bar;
+   object KINDS in one kitchen live at 0.7-0.85 cosine, below it.
+2. both sides restricted to EVENT-BOUND (manipulated) objects:
+   separation gap improves to +0.07..+0.14 median - real but thin.
+3. rank-based consensus (pairwise-LOO at the object level, no
+   threshold): DEAD alone (0.01-0.08); and its degenerate scores
+   POISONED pairwise channel selection in the lab (0.186 -> 0.051)
+   while LOO-auc selection held (0.193) - recorded as a selection-
+   robustness finding.
+
+Root cause, measured: the DINOv3 track descriptors are instance-ReID
+features on small crops; best cross-seed object match (med 0.75-0.85)
+barely exceeds background episodes (med 0.70-0.72). No query-time
+mechanism can retrieve at top-1% precision through a 0.1 gap. The
+0.60 target on supports of 8-18 requires WRITE-PATH work: object
+descriptors that separate kinds (native-resolution crops at track
+close; a kind-contrastive head over them). Same wall the answer join
+hit, now measured from a third direction.

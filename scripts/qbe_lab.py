@@ -118,6 +118,12 @@ class Ctx:
             self.extra[name] = (V, own)
             self.M[name] = (None, ok, "fine")
 
+        if "objset" in self.extra:
+            m = (self.db.table("object_vectors").state().meta or {})
+            self._objcut = float(m.get("match_cut", 0.85))
+            ok = self.M["objset"][1]
+            self.M["objcons"] = (None, ok, "cons")
+
         # participants that an EVENT bound - the significant objects,
         # not every blob the detector ever saw. In a one-kitchen corpus
         # "contains similar objects" is true of every pair, which is why
@@ -142,6 +148,122 @@ class Ctx:
                 ok2[_np.unique(own_all[m])] = True
                 self.extra["objsig"] = (Vs, own_all[m])
                 self.M["objsig"] = (None, ok2, "fine")
+                self.M["objcons2"] = (None, ok2, "cons2")
+
+    def objcons_score(self, seeds):
+        """CONSENSUS OBJECTS: what the seeds share and the corpus does not.
+
+        The low-support queries are object queries, and QbE "learns a
+        kind" from seeds - but an episode-level embedding of a cluttered
+        scene barely moves when one small object changes, which is why
+        every appearance channel sits at 0.34-0.41. The OBJECT INDEX
+        changes the question: with N seed episodes, the query's object
+        is whichever object family appears in MOST of the seeds while
+        being RARE across the corpus. Consensus x rarity - the lift of
+        the object given the seeds - which is corpus statistics end to
+        end: the match threshold is the store's own recurrence-fitted
+        identity cut, read from table meta, and no color, name, or
+        class appears anywhere.
+
+        Episode score = best (lift-weighted) match to any consensus
+        object. One matching spoon outranks thirty frames of the same
+        kitchen, because nothing here ever averages over the scene.
+        """
+        V, own = self.extra["objset"]
+        theta = self._objcut
+        S = list(int(x) for x in seeds)
+        seed_mask = np.isin(own, np.asarray(S))
+        Q = V[seed_mask]
+        q_ep = own[seed_mask]
+        if not len(Q):
+            return np.full(self.n, -np.inf)
+        sims = V @ Q.T                          # all objects x seed objects
+        hit = sims >= theta
+        n_ep = max(len(set(own.tolist())), 1)
+        # per seed-object: how many OTHER seed episodes hold a match,
+        # and how much of the corpus does
+        ep_of_col = q_ep
+        seed_hits = np.zeros(Q.shape[0])
+        corpus_eps = np.zeros(Q.shape[0])
+        for j in range(Q.shape[0]):
+            eps_j = set(own[hit[:, j]].tolist())
+            corpus_eps[j] = len(eps_j)
+            seed_hits[j] = len(eps_j & set(S) - {int(ep_of_col[j])})
+        need = max(1, (len(S) - 1) // 2 + 1)    # majority of other seeds
+        lift = ((seed_hits + 1) / len(S)) / (corpus_eps / n_ep + 1.0 / n_ep)
+        keep = seed_hits >= need
+        if not keep.any():
+            keep = seed_hits >= 1               # fail soft, not silent
+        if not keep.any():
+            return np.full(self.n, -np.inf)
+        w = lift[keep] / max(lift[keep].max(), 1e-9)
+        sub = sims[:, keep] * w[None, :]        # lift-weighted similarity
+        best = sub.max(1)
+        out = np.full(self.n, -np.inf)
+        order = np.argsort(own, kind="stable")
+        o_sorted, s_sorted = own[order], best[order]
+        bounds = np.searchsorted(o_sorted, np.arange(self.n + 1))
+        for e in range(self.n):
+            a, b = bounds[e], bounds[e + 1]
+            if b > a:
+                out[e] = float(s_sorted[a:b].max())
+        return out
+
+    def objcons2_score(self, seeds):
+        """Rank-based consensus over EVENT-BOUND objects.
+
+        The thresholded version failed for a measured reason: the
+        identity cut (0.894) is an INSTANCE bar and object KINDS in one
+        kitchen live at 0.7-0.85, below it, so the consensus set was
+        empty and fail-soft admitted noise. Diagnosed gaps after
+        restricting BOTH sides to event-bound (manipulated) objects:
+        cross-seed 0.77-0.85 vs background 0.71-0.72. Thin, but real -
+        so no threshold at all: each seed object ranks every episode by
+        its best event-bound match, its WEIGHT is how highly it ranks
+        the other seed episodes (pairwise-LOO at object level), and the
+        episode score is the best weighted rank. Statistics of the
+        query and corpus only.
+        """
+        Vs, owns = self.extra.get("objsig", (None, None))
+        if Vs is None:
+            return np.full(self.n, -np.inf)
+        S = list(int(x) for x in seeds)
+        sm = np.isin(owns, np.asarray(S))
+        Q = Vs[sm]
+        q_ep = owns[sm]
+        if not len(Q):
+            return np.full(self.n, -np.inf)
+        sims = Vs @ Q.T
+        order = np.argsort(owns, kind="stable")
+        o_sorted = owns[order]
+        bounds = np.searchsorted(o_sorted, np.arange(self.n + 1))
+        ep_max = np.full((self.n, Q.shape[0]), -np.inf)
+        s_sorted = sims[order]
+        for e in range(self.n):
+            a, b = bounds[e], bounds[e + 1]
+            if b > a:
+                ep_max[e] = s_sorted[a:b].max(0)
+        # percentile rank of each episode under each seed object
+        R = np.full_like(ep_max, np.nan)
+        for j in range(Q.shape[0]):
+            col = ep_max[:, j]
+            f = np.isfinite(col)
+            if f.sum() > 2:
+                r = col[f].argsort().argsort() / (f.sum() - 1)
+                R[f, j] = r
+        # weight: how highly does this object rank its SIBLING seeds
+        w = np.zeros(Q.shape[0])
+        for j in range(Q.shape[0]):
+            sib = [e for e in S if e != int(q_ep[j])]
+            vals = [R[e, j] for e in sib if np.isfinite(R[e, j])]
+            w[j] = np.mean(vals) if vals else 0.0
+        if w.max() <= 0:
+            return np.full(self.n, -np.inf)
+        w = w / w.max()
+        with np.errstate(invalid="ignore"):
+            sc = np.nanmax(R * w[None, :], 1)
+        sc = np.where(np.isnan(sc), -np.inf, sc)
+        return sc
 
     def _fine_score(self, c, seeds, topk=5, mode="max"):
         """SET-TO-SET: each candidate part scores against its NEAREST
@@ -191,6 +313,14 @@ class Ctx:
         """
         A, ok, op = self.M[c]
         agg = agg or AGG
+        if op == "cons":
+            s = self.objcons_score(seeds)
+            s[~ok] = -np.inf
+            return s
+        if op == "cons2":
+            s = self.objcons2_score(seeds)
+            s[~ok] = -np.inf
+            return s
         if op == "fine":
             s = self._fine_score(c, seeds)
             s[~ok] = -np.inf
