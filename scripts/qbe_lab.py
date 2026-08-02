@@ -31,7 +31,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from elidedb import Store                                     # noqa: E402
 from elidedb.qbe import spaces                                # noqa: E402
 
-QUERIES = (3, 4, 5)
+QUERIES = tuple(int(x) for x in __import__("os").environ.get(
+    "ELIDEDB_QUERIES", "3,4,5").split(","))
 NSEED = 5
 NGROUP = 5
 # k = KMULT x support. At 1.5 the metric is capped: prec <= yield/1.5,
@@ -642,8 +643,9 @@ def truth(ctx):
 def seed_groups(ctx, G, qi):
     truths = [i for i, e in enumerate(ctx.eidx) if G.get((qi, e)) == 1]
     rs = np.random.RandomState(0)
+    ns = min(NSEED, len(truths))
     return [np.asarray(sorted(set(int(x) for x in
-                                  rs.choice(truths, NSEED, replace=False))))
+                                  rs.choice(truths, ns, replace=False))))
             for _ in range(NGROUP)], len(truths)
 
 

@@ -626,6 +626,30 @@ for every other). q04 and q05 are at target; q03 sits at 0.75 and its
 own single-channel ceiling is 0.77, so lifting it further needs a
 stronger video-semantic encoder, not another combiner.
 
+### The holdout that exists: mechanism generalisation (2026-08-02)
+
+The overnight mechanism choices were made by test-and-keep on q03/04/05
+only — ordinary model selection, with its ordinary risk of tuning to
+those three queries' quirks. The low-support queries were never
+consulted in any decision, so they are a (noisy) blind set. Old
+mechanism vs new, same harness, same seeds:
+
+| mean over q00/01/02/07/08 | yield | prec_g |
+|---|---|---|
+| uniform RRF | 0.139 | 0.29 |
+| coherence + weighted RRF (old) | 0.160 | 0.40 |
+| pairwise-LOO + z-fusion (new) | **0.186-0.194** | **0.39-0.43** |
+
+Better or equal on 4 of 5 held-out queries (q07 0.17→0.28, q08
+0.11→0.17). The selection generalised; it did not merely memorise the
+three queries it was tuned on. Caveat: supports of 8-18 make every one
+of these numbers wide.
+
+Full shipped-path table, all 11 queries: q00 0.00, q01 0.29, q02 0.23,
+q03 0.74, q04 0.94, q05 0.91, q07 0.25, q08 0.19, q09/q10 0.00 (support
+2 — no kind to learn from two examples; correct behaviour is the
+no-match gate, not retrieval).
+
 ### Seed sensitivity, reported rather than exploited
 
 q03 rises to 0.79 with 15 seeds while q04 and q05 peak at 5 and fall -
