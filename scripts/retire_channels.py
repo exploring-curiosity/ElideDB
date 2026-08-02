@@ -34,6 +34,13 @@ sys.path.insert(0, str(ROOT / "python"))
 
 from elidedb import Store                                      # noqa: E402
 
+# what the first run blanked, from the tables' own earlier commits
+RESTORE = {
+    "pe_vectors": "PE-Core-L-14-336",
+    "xclip_vectors": "microsoft/xclip-large-patch14",
+    "action_probs": "vjepa2-vitl + ssv2 attentive probe",
+}
+
 RETIRE = {
     "pe_vectors": "0.89 rank-dup of sig2; fusion 0.69 -> 0.74 without "
                   "pe+xclip (measured 2026-08-01)",
@@ -41,6 +48,9 @@ RETIRE = {
                      "discarded at write; dropped with pe, same measure",
     "action_probs": "user roster call 2026-08-01 (no earned purpose); "
                     "exit measured at -0.01 fusion yield (noise)",
+    "vjepa_vectors": "spec says never whole-frame; vjepa_part (tubelets "
+                     "seeded from trajectories) replaces it at zero "
+                     "measured cost (coh^4 0.72 -> 0.73, 2026-08-02)",
 }
 
 
@@ -55,8 +65,18 @@ def main():
             continue
         t = db.table(name)
         meta = dict(t.state().meta or {})
-        if "model" not in meta:
-            print(f"{name}: already retired")
+        # model="" is the tombstone, and the key stays in the fold -
+        # test truthiness, or a re-run "re-retires" a retired table and
+        # blanks its retired_model record (which is exactly what the
+        # first run of this script did; restored below)
+        if not meta.get("model"):
+            if not meta.get("retired_model") and name in RESTORE:
+                meta["retired_model"] = RESTORE[name]
+                t.replace(t.scan(), kind=t.state().kind or "vectors",
+                          meta=meta)
+                print(f"{name}: retired_model restored")
+            else:
+                print(f"{name}: already retired")
             continue
         # the log FOLDS meta with dict.update, so a key can never be
         # removed by omission - only overwritten. Empty string is the

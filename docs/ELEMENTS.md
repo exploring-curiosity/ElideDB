@@ -21,7 +21,7 @@ Measurements in this document are from `lake/fresh_bench` (2,097 episodes,
 | channel | is for | granularity today | measured |
 |---|---|---|---|
 | **mot** | **the trajectory of motion** — 3D where affordable, else 2.5D. **Per participant AND agent.** NOT a direction of state change | per **event** | only element-level channel; 0.959 AUC on open/close but wrong by construction |
-| **vjepa** | **physics and dynamics** of the agent *and* every participant. Per participant, **never whole-frame**. Seeded from the ELEMENTS, not re-detected. Only participants that **moved significantly**, plus the agent | episode | flat 0.56–0.59; predictor not stored, so its actual task has never been evaluated |
+| **vjepa** | **physics and dynamics** of the agent *and* every participant. Per participant, **never whole-frame**. Seeded from the ELEMENTS, not re-detected. Only participants that **moved significantly**, plus the agent | **BUILT per participant 2026-08-02**: `vjepa_part_vectors`, 10,248 tubelets / 5,551 objects, boxes from `trajectories`, membership from the event join. Whole-frame table retired at zero measured cost (coh^4 0.72→0.73) | episode channel was flat 0.56–0.59 |
 | **pe, sig2, iv2, xclip** | sit **on top of `answer`** — consume the structured element output **and** join their clip embeddings, augmenting each other | episode (pe/sig2: 8 frames) | see redundancy below |
 | **act** | purpose not established. No naming of actions, no summarising trajectories | episode | candidate for removal |
 | **frame_vectors** | per-frame appearance; the substrate `mot` is a delta of | frame | healthy, cheap |
