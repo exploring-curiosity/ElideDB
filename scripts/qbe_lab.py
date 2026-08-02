@@ -118,7 +118,16 @@ class Ctx:
             self.extra[name] = (V, own)
             self.M[name] = (None, ok, "fine")
 
-        if "objset" in self.extra:
+        # The cons channels are DISABLED as channels (env to re-enable
+        # for study): both are measured dead for retrieval (0.01-0.08)
+        # yet they GAME pairwise selection by construction - they
+        # optimise "rank sibling seeds high", which is exactly what the
+        # pairwise statistic measures, so the selector picks them and
+        # the fusion collapses (0.71/0.92/0.91 -> 0.33/0.27/0.35 on the
+        # high-support queries with them enrolled). A channel must be
+        # built from evidence INDEPENDENT of the selection statistic.
+        if "objset" in self.extra and __import__("os").environ.get(
+                "ELIDEDB_CONS_CHANNELS"):
             m = (self.db.table("object_vectors").state().meta or {})
             self._objcut = float(m.get("match_cut", 0.85))
             ok = self.M["objset"][1]
@@ -148,7 +157,8 @@ class Ctx:
                 ok2[_np.unique(own_all[m])] = True
                 self.extra["objsig"] = (Vs, own_all[m])
                 self.M["objsig"] = (None, ok2, "fine")
-                self.M["objcons2"] = (None, ok2, "cons2")
+                if __import__("os").environ.get("ELIDEDB_CONS_CHANNELS"):
+                    self.M["objcons2"] = (None, ok2, "cons2")
 
     def objcons_score(self, seeds):
         """CONSENSUS OBJECTS: what the seeds share and the corpus does not.
@@ -595,14 +605,72 @@ def zfuse(ctx, seeds, w):
     return tot if tot is not None else np.zeros(ctx.n)
 
 
-def _loo_z(power, kind="auc"):
+def _fused_scores(ctx, seeds, power, kind):
+    q = {c: max(loo_quality(ctx, seeds, c, kind), 0.0) for c in ctx.M}
+    mx = max(q.values()) or 1.0
+    w = {c: (v / mx) ** power for c, v in q.items()}
+    return zfuse(ctx, seeds, w)
+
+
+def gmm2_cut(sorted_scores, k):
+    """2-component 1-D EM on the head; cut at equal posterior."""
+    x = np.asarray(sorted_scores[:max(4 * k, 200)], float)
+    x = x[np.isfinite(x)]
+    if len(x) < 8:
+        return min(len(x), k)
+    mu = np.percentile(x, [90, 30]).astype(float)
+    sd = np.array([x.std() or 1.0] * 2)
+    pi = np.array([0.3, 0.7])
+    r = np.zeros(len(x))
+    for _ in range(60):
+        d = np.stack([pi[c] * np.exp(-0.5 * ((x - mu[c]) / sd[c]) ** 2)
+                      / (sd[c] + 1e-12) for c in (0, 1)])
+        r = d[0] / np.maximum(d.sum(0), 1e-300)
+        n1 = r.sum()
+        if n1 < 2 or len(x) - n1 < 2:
+            break
+        mu = np.array([(r * x).sum() / n1,
+                       ((1 - r) * x).sum() / (len(x) - n1)])
+        sd = np.sqrt(np.array([(r * (x - mu[0]) ** 2).sum() / n1,
+                               ((1 - r) * (x - mu[1]) ** 2).sum()
+                               / (len(x) - n1)])) + 1e-6
+        pi = np.array([n1 / len(x), 1 - n1 / len(x)])
+    keep = int((r >= 0.5).sum())
+    return max(1, min(keep, k))
+
+
+def _loo_z(power, kind="auc", cut=None):
     def f(ctx, seeds, k):
-        q = {c: max(loo_quality(ctx, seeds, c, kind), 0.0) for c in ctx.M}
-        mx = max(q.values()) or 1.0
-        w = {c: (v / mx) ** power for c, v in q.items()}
-        fused = zfuse(ctx, seeds, w)
-        fused[seeds] = -np.inf
-        return np.argsort(-fused)[:k]
+        fused = _fused_scores(ctx, seeds, power, kind)
+        fused[np.asarray(seeds)] = -np.inf
+        order = np.argsort(-fused)
+        if cut == "gmm":
+            return order[:gmm2_cut(fused[order], k)]
+        if cut in ("loomin", "lootank"):
+            # LOO-CALIBRATED RETURN SIZE: hold each seed out, fuse with
+            # the rest, and record where the held-out TRUE item RANKED.
+            # The deepest of those ranks is how far down truth is known
+            # to live on this query - return that many. Ranks, not
+            # scores, because an n-1-seed fusion and an n-seed fusion
+            # have different z-scales.
+            S = list(int(x) for x in seeds)
+            ranks = []
+            for i in S:
+                rest = np.asarray([j for j in S if j != i])
+                if len(rest) < 2:
+                    continue
+                fi = _fused_scores(ctx, rest, power, kind)
+                fi[rest] = -np.inf
+                ranks.append(int((fi > fi[i]).sum()))
+            keep = max(ranks) if ranks else k
+            if cut == "lootank" and ranks:
+                # the deepest of m held-out true ranks UNDERESTIMATES
+                # the deepest true rank; the maximum-of-uniforms
+                # estimator corrects it by (m+1)/m. Order statistics,
+                # no data knowledge, no knob.
+                keep = int(round(max(ranks) * (len(ranks) + 1) / len(ranks)))
+            return order[:max(1, min(keep, k))]
+        return order[:k]
     return f
 
 
@@ -721,6 +789,10 @@ STRATEGIES = {
     "join_bl2": _join_blend(2), "join_bl3": _join_blend(3),
     "join_bl5": _join_blend(5),
     "auc_z12": _loo_z(12), "auc_z20": _loo_z(20), "auc_z24": _loo_z(24),
+    "pz8_kmax": _loo_z(8, "pair"),
+    "pz8_gmm": _loo_z(8, "pair", cut="gmm"),
+    "pz8_loomin": _loo_z(8, "pair", cut="loomin"),
+    "pz8_lootank": _loo_z(8, "pair", cut="lootank"),
     "z16_prf25": _loo_prf(25, 16), "z16_prf50": _loo_prf(50, 16),
     "loo_best": _loo_best(), "loo_best_log": _loo_best("log"),
     "loo_best_r50": _loo_best("50"), "loo_best_r100": _loo_best("100"),
@@ -784,9 +856,10 @@ def evaluate(ctx, G, name, fn):
     for qi in QUERIES:
         groups, sup = seed_groups(ctx, G, qi)
         k = int(np.ceil(sup * KMULT))
-        ys, ps, pgs = [], [], []
+        ys, ps, pgs, rets = [], [], [], []
         for seeds in groups:
             chosen = fn(ctx, seeds, k)
+            rets.append(len(chosen))
             lab = [G.get((qi, ctx.eidx[int(i)])) for i in chosen]
             tr = sum(1 for x in lab if x == 1)
             ng = sum(1 for x in lab if x is not None)
@@ -795,6 +868,7 @@ def evaluate(ctx, G, name, fn):
             if ng:
                 pgs.append(tr / ng)
         rows.append({"q": qi, "support": sup, "k": k,
+                     "ret": float(np.mean(rets)),
                      "yield": float(np.mean(ys)),
                      "prec": float(np.mean(ps)),
                      "prec_g": float(np.mean(pgs)) if pgs else None})
@@ -863,8 +937,9 @@ def main():
     for name in want:
         r = evaluate(ctx, G, name, STRATEGIES[name])
         out.append(r)
-        cells = "".join(f"{x['yield']:>7.2f}/{(x['prec_g'] or 0):<5.2f}"
-                        for x in r["per_q"])
+        cells = "".join(
+            f"  y{x['yield']:.2f} p{x['prec']:.2f} g{(x['prec_g'] or 0):.2f}"
+            f" r{x['ret']:>3.0f}/s{x['support']}" for x in r["per_q"])
         print(f"{name:<16}{cells}{r['mean_yield']:>9.3f}"
               f"{r['mean_prec_g']:>9.2f}", flush=True)
     (ROOT / "bench/qbe_lab.json").write_text(json.dumps(out, indent=1))

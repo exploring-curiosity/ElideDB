@@ -703,3 +703,35 @@ mechanism can retrieve at top-1% precision through a 0.1 gap. The
 descriptors that separate kinds (native-resolution crops at track
 close; a kind-contrastive head over them). Same wall the answer join
 hit, now measured from a third direction.
+
+
+## The return boundary: LOO-calibrated cut ships (2026-08-02)
+
+User correction that drove it: k is a CEILING, not a target — the test
+at k=1.5x support is whether the system returns close to SUPPORT. The
+Otsu cut was failing open (q03 returned all 371). Shipped replacement:
+hold each seed out, fuse with the rest, record where the held-out TRUE
+item ranks; return down to the deepest such rank, corrected by the
+maximum-of-uniforms factor (m+1)/m. Order statistics of the query's own
+members — no truthset, no knob. Otsu remains the <3-seed fallback.
+
+Shipped path, mean of 4 independent seed draws (ret vs support in
+parens):
+
+| | q03 (sup 247) | q04 (sup 165) | q05 (sup 196) |
+|---|---|---|---|
+| yield | 0.69 | 0.86 | 0.83 |
+| prec | **0.52** (was 0.50) | **0.70** (was 0.67) | **0.74** (was 0.71) |
+| prec_g | 0.83 | 0.93 | 0.99 |
+| ret | 306-371 | **190-225** (was 232-248) | **220-251** (was 243-294) |
+
+Precision and ret-to-support improved on every high-support query;
+yield gave back 0.03-0.05 at the boundary (the ranking is unchanged —
+the cut moves along its curve; both can only rise together with a
+better ranking, whose ceilings are measured above).
+
+Also recorded: the lab's consensus channels GAME pairwise selection by
+construction (they optimise "rank sibling seeds high" — the selection
+statistic itself) and collapsed fusion 0.85 -> 0.32 while enrolled.
+Gated off. A channel must be built from evidence independent of the
+selection statistic.
