@@ -223,7 +223,118 @@ Two rules that are load-bearing here:
 
 ---
 
-# PART II — THE MODELS
+# PART II — THE CURRENT PLAN (fixed with the user, 2026-08-01)
+
+This part supersedes Part III's model roster and Part IV's numbers describe the previous generation. Part I (the database) is
+unchanged and current. [ELEMENTS.md](ELEMENTS.md) holds the measurements
+that forced each decision here.
+
+## The five elements, as now specified
+
+| element | is | linked to |
+|---|---|---|
+| **scene** | the setting, as a scene→scene TIME SERIES (a driving corpus changes scenes; one static vector cannot) | frame embeddings over time |
+| **agent** | the self-moving thing | `object_id`, its trajectory |
+| **participants** | ALL objects in the scene, not just what the agent touched | `object_id` each, a trajectory each |
+| **events** | typed, timestamped transitions | agent + participants, joined with trajectory PER PARTICIPANT |
+| **answer** | the JOIN of the four — a collective story, not a table | everything above |
+
+Identity is the keystone: every join runs through `object_id`, so
+unreliable ids poison every element downstream. Built first, measured
+hardest.
+
+## The model roster — five backbones, one student
+
+**The teacher/student law:** the teacher must be proven BEFORE anything is
+distilled from it. FDNN (our compression concept) appears nowhere in the
+teacher — the previous FDNN-V was never properly distilled, and using it
+as the teacher's substrate poisons the thing the teacher exists to prove.
+FDNN returns only at the end, distilled fresh from a teacher that already
+works.
+
+| task | model | why |
+|---|---|---|
+| frame embedding, every frame | **DINOv3 ViT-S/16** (21.6M, 384-d) | SSL, zero text tower → no category collapse by construction; +10.9 GAP instance retrieval over DINOv2 |
+| scene series | DINOv3 frame vectors over time | no extra model |
+| identity descriptor | **DINOv3-S** on track exemplar crops | same backbone, crop granularity; replaces yolo26n-reid (nano ceiling: AUC 0.90, 5% of trivially-same pairs below 0.465) |
+| region proposal (write) | **YOLO11n-seg** `single_cls` | class-agnostic, real-time, measured |
+| association → presence | **BoT-SORT**, geometry only | tracks ARE identity while continuity holds; the store is asked once per track, not per frame |
+| trajectory (replaces `mot`) | tracker boxes → contact point (centroid fallback) + **Depth Pro** z | geometry, not an encoder; Depth Pro ms/frame must be benchmarked before any 2.5D fallback (user gate) |
+| physics per participant | **V-JEPA2 ViT-L** | tubelets seeded from the ELEMENTS, never whole-frame; only significantly-moving participants, plus the agent |
+| text bridge, read-time only | **SigLIP2 so400m** | the ONE text tower; maps a query's nouns into vision space at query time |
+| shipped write path, later | **FDNN student** | distilled fresh against the DINOv3 teacher + the corpus's free geometric pairs |
+
+### Dropped, and the number that killed each
+
+- **FDNN-V as teacher substrate** — never properly distilled (user call)
+- **act** (SSv2 probe) — no earned purpose; riding V-JEPA2's forward pass
+  for free is not a purpose (user call)
+- **PE-Core** — 0.89 rank-dup of sig2, at 36 min/build vs sig2's 23
+- **X-CLIP** — 0.70 dup; its one distinct ability (cross-frame attention)
+  was discarded at write anyway
+- **delta-appearance `mot`** — a delta of appearance is not a trajectory
+- **yolo26n-reid** — AUC 0.90 ceiling, 5% failures on same-frame pairs
+- **IV2** — *named* redundancy candidate, not yet deleted: with verbs
+  carried by trajectory+events and temporal attention carried by the
+  elements, it does sig2's noun job at 1B params. One A/B on the new
+  stack decides — it was the old fusion's strongest independent channel,
+  and deletions get measurements here.
+- **FastSAM** — teacher-only forever (7.5 min/h)
+- MobileCLIP2 / Unicom — the ungated fallback bracket for identity; moot
+  once DINOv3 access was granted
+
+### CLIP-family policy (user, 2026-08-01)
+
+Text-aligned encoders are allowed for SIMILARITY; **naming at write is
+banned forever** — an embedding never becomes a word on the write path.
+DINOv3 takes all appearance duty; exactly one text tower (sig2) survives,
+for read-time query nouns only.
+
+## Identity, settled 2026-08-01
+
+- Free supervision is two-sided: disjoint co-existing boxes = proven
+  DIFFERENT; same-region co-existing boxes (double detections) = proven
+  SAME. Geometry only (`free_negatives`, `free_positives`,
+  `interval_pairs`).
+- The cut is fitted by sweeping **cross-episode recurrence** (`fit_cut`) —
+  the quantity a persistent id exists for; it has an interior maximum.
+  The singleton rate is the WRONG target: 80%→17% singletons costs 2/3 of
+  the recurrence and 8x proven-wrong merges.
+- Assignment order matters more than the cut (greedy gallery): the
+  writer's track-close order, never global-ts order (interleaves cameras;
+  worst measured).
+- Store today: cut 0.692, 25,629 objects, 71.8% singletons, 6,901
+  recurring. The ceiling is the nano descriptor → DINOv3 replacement.
+
+## The joins to build (the point of all of it)
+
+```
+agent        -> object_id            events currently name no object
+events       -> object_id            per participant
+events       -> scene position       box computed but not stored
+participants -> scene relation       the "in/on what" of the answer
+trajectory   -> per participant      one per participant AND agent, 3D as
+                                     affordable (contact point + depth z)
+vjepa        -> per participant      tubelets seeded from elements
+```
+
+`answer` = the join of all of it. A relational query ("object like THIS
+undergoing motion like THAT near THIS scene region") executes as joins
+over these tables — not as one fused cosine.
+
+## Budgets and time discipline
+
+- Shipped write path: **1 min per hour of video**, all stages included.
+  Teacher runs may exceed it (they are what gets distilled away), but
+  every teacher run gets a measured cost projection BEFORE it starts, a
+  per-item tqdm bar, and a subset gate: nothing runs full-corpus until a
+  subset proves the win.
+- Corpus reference (fresh_bench): 2,097 episodes / 3.91 h / 70,436 frames
+  / 73,521 tracks. Decode+track ≈ 35 min full-corpus.
+
+---
+
+# PART III — THE PREVIOUS MODELS (superseded 2026-08-01, kept as record)
 
 Both models produce the **same five elements** and answer with the same
 four-stage pipeline. They differ in what they spend to do it.
@@ -370,7 +481,7 @@ columns that were computed once at write time and pruned by zone maps.
 
 ---
 
-# PART III — MEASURED STATE
+# PART IV — MEASURED STATE (previous generation)
 
 Metric: `k = ceil(1.5 × support)` per query; `yield = true/support`;
 `prec = true/returned`; strict grading (ungraded counts as false).
