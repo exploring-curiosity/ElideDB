@@ -102,7 +102,8 @@ class Ctx:
         for name, table in (("frame", "scene_vectors"),
                             ("objset", "object_vectors"),
                             ("sig2f", "sig2_vectors"),
-                            ("iv2w", "iv2_win_vectors")):
+                            ("iv2w", "iv2_win_vectors"),
+                            ("kind", "objkind_vectors")):
             if table not in self.db.tables():
                 continue
             d = self.db.table(table).scan().to_pydict()
