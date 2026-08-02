@@ -85,47 +85,33 @@ def main():
         if ei in have:
             sup[int(q)] = sup.get(int(q), 0) + int(v)
 
-    # one score matrix per channel, aligned with `keys`, discovered
-    # exactly as the live path discovers them
-    skeys, SM = spaces(db, drop_pc=0)
-    spos = {k: i for i, k in enumerate(skeys)}
-    take = np.array([spos[k] for k in keys])
-    M = {}
-    for c, (A, _, _) in SM.items():
-        A = np.asarray(A, np.float32)[take]
-        ok = np.abs(A).sum(1) > 0
-        M[c] = (A, ok)
-
+    # THE BENCH CALLS THE SHIPPED FUNCTION. Everything below used to be
+    # a second implementation of fusion living in the bench, and every
+    # time the product moved the bench measured the old thing - that is
+    # how a private CHAN dict kept scoring 7 channels while search_like
+    # fused 8. search_like now owns selection, fusion and the cut.
+    from elidedb.qbe import search_like
     from tqdm import tqdm
     out = []
     for qi in tqdm(want, desc="qbe", unit="q", dynamic_ncols=True):
         s = sup.get(qi, 0)
         if not s:
             continue
-        k_max = int(np.ceil(s * 1.5))
+        # KMULT: at 1.5 precision is capped at yield/1.5 by arithmetic,
+        # so "yield AND precision both 0.90" can only be read at 1.0,
+        # where returning exactly `support` makes them the same number.
+        k_max = int(np.ceil(s * float(
+            __import__("os").environ.get("ELIDEDB_KMULT", "1.5"))))
         truths = [i for i, e in enumerate(eidx) if G.get((qi, e)) == 1]
-        seeds = [truths[i] for i in
-                 np.linspace(0, len(truths) - 1, min(n_seed, len(truths)))
-                 .round().astype(int)]
+        rs = np.random.RandomState(0)
+        groups = [rs.choice(truths, n_seed, replace=False)
+                  for _ in range(5)]
         runs = []
-        for sd in seeds:
-            ranks = []
-            for c, (A, ok) in M.items():
-                if not ok[sd]:
-                    continue
-                sc = A @ A[sd]
-                sc[~ok] = -np.inf
-                sc[sd] = -np.inf                     # never retrieve the seed
-                r = np.empty(len(sc))
-                r[np.argsort(-sc)] = np.arange(len(sc))
-                ranks.append(r)
-            if not ranks:
-                continue
-            fused = rrf(ranks)
-            order = np.argsort(-fused)
-            cut = confidence_cut(fused[order], 0.0, k_max)
-            chosen = order[:cut]
-            y = np.array([G.get((qi, eidx[i]), None) for i in chosen])
+        for grp in groups:
+            sd = sorted(set(int(x) for x in grp))
+            res = search_like(db, [keys[i] for i in sd], k_max=k_max)
+            chosen = [pos[c] for c in res["clips"] if c in pos]
+            y = [G.get((qi, eidx[i]), None) for i in chosen]
             tr = int(sum(1 for v in y if v == 1))
             ng = int(sum(1 for v in y if v is not None))
             runs.append({"ret": len(chosen), "true": tr, "judged": ng,

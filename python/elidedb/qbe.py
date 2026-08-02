@@ -55,6 +55,8 @@ The other five are collapsed enough to be near-noise on this corpus.
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 
 # tuned on the truthset as a MEASUREMENT, not fitted: the plateau is flat
@@ -67,7 +69,16 @@ SEEDS = 10
 # silenced). Re-measured for the bounded form, the optimum is 2 and the
 # plateau is flat from 2 to 4.
 POWER = 2.0
-DROP_PC = 1
+# fusion sharpness on the LOO quality; swept 2..64, flat 12-16
+ZPOWER = 12.0
+# ZERO, re-measured under LOO weighting + z-fusion. Removing the first
+# principal component was worth q04 0.83 -> 0.88 under coherence+RRF,
+# because RRF sees only ranks and the shared component (the kitchen,
+# the arm) dominated every cosine equally. z-fusion standardises each
+# channel before combining, which handles that shift directly - and the
+# subtraction then costs signal instead of noise: q04 0.93 -> 0.87.
+# A correction for a defect that no longer exists is just a distortion.
+DROP_PC = int(os.environ.get("ELIDEDB_DROP_PC", "0"))
 RRF_K = 60.0
 
 
@@ -248,20 +259,110 @@ def coherence(A, ok, seeds, op="cosine", cap=4000):
     return float(max(p - 0.5, 0.0) * 2.0)      # 0 at chance, 1 at perfect
 
 
-def search_like(store, seed_keys, k_max=50, power=POWER, drop_pc=DROP_PC):
+def otsu_cut(sorted_scores, k_max):
+    """Where the returned set ENDS: the valley between the two modes.
+
+    setpath's confidence_cut fits a knee against RRF's scale and, on
+    z-fused scores, fires almost immediately: measured 16 returned of a
+    165-clip support (yield 0.08 at precision 0.94). It is not wrong,
+    it is calibrated for a different score shape.
+
+    A good query's score curve is bimodal - the clips of its kind, and
+    the corpus - so the cut is the threshold that best SEPARATES those
+    two populations. Otsu's method finds it by maximising between-class
+    variance, which is parameter-free and reads only this query's own
+    scores: no truthset, no fitted alpha, nothing per-corpus.
+
+    Degenerate cases fail open (return k_max) rather than returning a
+    handful, because a flat curve means "cannot tell", and answering
+    almost nothing is a worse response to that than answering fully.
+    """
+    s = np.asarray(sorted_scores, float)
+    s = s[np.isfinite(s)]
+    n = min(len(s), int(k_max))
+    if n < 4:
+        return int(n)
+    head = s[:max(n * 4, 200)][:len(s)]
+    lo, hi = float(head.min()), float(head.max())
+    if not np.isfinite(lo) or hi - lo < 1e-9:
+        return int(n)
+    hist, edges = np.histogram(head, bins=64, range=(lo, hi))
+    p = hist.astype(float) / max(hist.sum(), 1)
+    w0 = np.cumsum(p)
+    mids = (edges[:-1] + edges[1:]) / 2
+    mu = np.cumsum(p * mids)
+    mu_t = mu[-1]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        between = (mu_t * w0 - mu) ** 2 / (w0 * (1 - w0))
+    between[~np.isfinite(between)] = -1.0
+    thr = float(mids[int(between.argmax())])
+    keep = int((s[:n] >= thr).sum())
+    return int(min(max(keep, 1), n)) if keep else int(n)
+
+
+LOO_DEPTHS = (25, 50, 100, 200, 400, 800)
+
+
+def loo_quality(A, ok, seeds, op):
+    """LEAVE-ONE-SEED-OUT retrieval quality of a channel. Query-only.
+
+    Hold out one seed, query with the rest, record where the held-out
+    seed lands; the statistic is its mean recall over a ladder of
+    depths, which is the area under the LOO recall curve and so needs
+    no chosen depth.
+
+    This replaces coherence as the WEIGHT because coherence measures
+    the wrong thing. Cohen's d asks "are the seeds tight?"; measured
+    over 15 seed groups it named the wrong channel 4 times, because
+    `motion` held yield 0.88-0.95 while its d fell from 2.5 to 0.76.
+    Tightness is not retrieval. Selecting on LOO instead moved the
+    high-support queries from 0.742 to 0.845 mean yield.
+
+    Legal by the same argument coherence was: the seeds ARE the query.
+    Their mutual membership is what the user asserted by supplying
+    them, not something read from the truthset.
+
+    A single depth would have been a tuned constant - it swung the
+    result from 0.598 at 50 to 0.811 at 200 - so the ladder is not a
+    refinement, it is what keeps this honest.
+    """
+    if len(seeds) < 3 or not ok[seeds].all():
+        return 0.0
+    out = []
+    for i in seeds:
+        rest = np.asarray([j for j in seeds if j != i])
+        sc = _score(A, op, rest)
+        sc[~ok] = -np.inf
+        sc[rest] = -np.inf                   # other seeds not candidates
+        r = int((sc > sc[i]).sum())
+        out.append(float(np.mean([r < d for d in LOO_DEPTHS])))
+    return float(np.mean(out))
+
+
+def search_like(store, seed_keys, k_max=50, power=ZPOWER, drop_pc=DROP_PC):
     """Episodes of the same kind as `seed_keys` [(stream, ts), ...].
 
     Returns {"clips": [(stream, ts), ...], "weights": {channel: w}}.
     The weights are the diagnosis: they say which model recognised the
     seeds, and are worth surfacing rather than hiding.
+
+    Fusion is at SCORE level, not rank level. RRF knows only that a
+    channel put something first, never by how much, and the margin is
+    exactly what separates a channel that recognises the query from one
+    that is guessing: z-fusion measured 0.845 against RRF's 0.742 on
+    the same weights and seeds.
     """
     keys, M = spaces(store, drop_pc)
     pos = {k: i for i, k in enumerate(keys)}
     seeds = np.array(sorted({pos[k] for k in seed_keys if k in pos}))
     if not len(seeds):
         return {"clips": [], "weights": {}, "note": "no seed in store"}
-    w = {c: max(coherence(A, ok, seeds, op), 0.0) ** power
+    q = {c: max(loo_quality(A, ok, seeds, op), 0.0)
          for c, (A, ok, op) in M.items()}
+    mx = max(q.values()) if q else 0.0
+    if mx <= 0:
+        return {"clips": [], "weights": q, "note": "no channel responded"}
+    w = {c: (v / mx) ** power for c, v in q.items()}
     tot = None
     for c, (A, ok, op) in M.items():
         if w.get(c, 0.0) <= 0:
@@ -270,17 +371,20 @@ def search_like(store, seed_keys, k_max=50, power=POWER, drop_pc=DROP_PC):
         if not len(live):
             continue
         sc = _score(A, op, live)
-        sc[~ok] = -np.inf
-        sc[seeds] = -np.inf                  # the seeds are given, not found
-        r = np.empty(len(sc))
-        r[np.argsort(-sc)] = np.arange(len(sc))
-        v = w[c] / (RRF_K + r)
+        fin = np.isfinite(sc) & ok
+        if fin.sum() < 3:
+            continue
+        z = np.zeros(len(sc))
+        mu, sd = sc[fin].mean(), sc[fin].std() or 1e-9
+        z[fin] = (sc[fin] - mu) / sd
+        z[~fin] = -np.inf
+        v = w[c] * z
         tot = v if tot is None else tot + v
     if tot is None:
         return {"clips": [], "weights": w, "note": "no channel responded"}
-    from .setpath import confidence_cut
+    tot[seeds] = -np.inf                     # the seeds are given, not found
     order = np.argsort(-tot)
-    cut = confidence_cut(tot[order], 0.0, k_max)
+    cut = otsu_cut(tot[order], k_max)
     return {"clips": [keys[i] for i in order[:cut]],
             "weights": {c: round(x, 3) for c, x in
-                        sorted(w.items(), key=lambda kv: -kv[1])}}
+                        sorted(q.items(), key=lambda kv: -kv[1])}}
