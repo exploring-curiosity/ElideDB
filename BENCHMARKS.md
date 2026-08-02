@@ -566,3 +566,47 @@ so any such number would measure the backend, not the model.
 | 2026-07-30 17:26 | 054346c | k=1.5xsup [itm,anchor] | 257/565 returned true | mean yield 0.28 | mean prec 0.25 | q00:0/12 q01:4/26 q02:2/21 q03:123/211 q04:99/200 q05:17/44 q07:4/18 q08:7/27 q09:0/3 q10:1/3 |
 | 2026-07-30 17:28 | 054346c | k=1.5xsup [itm,anchor] | 193/467 returned true | mean yield 0.22 | mean prec 0.21 | q00:0/12 q01:3/26 q02:1/21 q03:103/180 q04:74/163 q05:3/14 q07:3/18 q08:5/27 q09:0/3 q10:1/3 |
 | 2026-07-30 17:31 | 054346c | k=1.5xsup [itm,anchor] | 483/896 returned true | mean yield 0.45 | mean prec 0.32 | q00:3/12 q01:7/26 q02:7/21 q03:152/244 q04:151/248 q05:149/294 q07:7/18 q08:7/27 q09:0/3 q10:0/3 |
+
+
+## QbE sprint, 2026-08-02 (autonomous overnight run)
+
+Metric: 5 evenly-drawn support seeds per query, `k = ceil(1.5 x support)`,
+`yield = true/support`, `prec = true/returned` (ungraded counts FALSE),
+`prec_g = true/judged`. Truthset is pool-limited, so `prec` understates
+and `prec_g` is the honest precision figure.
+
+| | q03 stove | q04 close | q05 open |
+|---|---|---|---|
+| support | 247 | 165 | 196 |
+| **yield** (was 0.64 / 0.76 / 0.83) | **0.68** | **0.93** | **0.88** |
+| **prec_g** | 0.80 | 0.92 | 0.99 |
+| yield == prec at k=support | 0.53 | 0.81 | 0.84 |
+
+### What moved it, in order of size
+
+| change | effect |
+|---|---|
+| LOO retrieval quality replaces Cohen's d as the channel weight | coherence names the wrong channel 4 times in 15 seed groups |
+| z-score fusion replaces RRF | RRF discards the margin, the evidence of confidence |
+| `otsu_cut` replaces `confidence_cut` | the knee fired at 16 returned of a 165 support |
+| `drop_pc` 1 -> 0 | corrected for RRF's rank-blindness; distorts under z-fusion |
+
+### Measured dead ends (each cost a run, each stays recorded)
+
+- **Fine-grained appearance channels** (per-frame DINOv3, per-track
+  object sets, significant-participants-only, set-matched SigLIP2):
+  0.34-0.41 on q03, no better than the pooled channel each replaces.
+  This corpus is 2,097 episodes of one kitchen, so appearance
+  similarity is near-constant and no appearance channel can separate it.
+- **The answer join as a reranker** inside a high-recall channel pool:
+  0.63 against 0.84. Precise but adds no ordering the channels lack.
+- **PRF / Rocchio**: hurts at every expansion size and both fusions.
+- **Query as a set** (max over seeds instead of centroid): 0.780 vs
+  0.845. Seeds of one query type denoise by averaging; frames of one
+  episode do not.
+
+### The remaining gap is one channel on one query
+
+`iv2` is the only channel that carries q03 (0.77 alone against 0.34-0.41
+for every other), and q03's own oracle single-channel ceiling is 0.77 -
+so no selection or fusion over today's channels reaches 0.90 mean.
