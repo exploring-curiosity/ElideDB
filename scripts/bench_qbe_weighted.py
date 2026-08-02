@@ -117,6 +117,13 @@ def main():
     for c, (A, _, _) in SM.items():
         A = np.asarray(A, np.float32)[take]
         M[c] = (A, np.abs(A).sum(1) > 0)
+    # --drop pe,xclip : score the fusion WITHOUT channels, for the
+    # roster's redundancy claims - a drop is decided by this table,
+    # never by the correlation argument alone
+    if "--drop" in sys.argv:
+        for c in sys.argv[sys.argv.index("--drop") + 1].split(","):
+            M.pop(c.strip(), None)
+    print("channels in fusion:", sorted(M), flush=True)
 
     VARIANTS = ("uniform", "coh^1", "coh^2", "coh^4", "best-single")
     from tqdm import tqdm
