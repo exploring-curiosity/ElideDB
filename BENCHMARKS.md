@@ -763,3 +763,18 @@ one scene and differ only in event ORDER, and colors/zones are
 deliberately decorrelated from templates. Appearance-era channels
 cannot see chain structure — the measured gap the contextual-retrieval
 work (events/trajectories joins over the same store) now has to close.
+
+### Write-vs-truth audit (scripts/verify_sim_store.py, 2026-08-02)
+
+| layer | verdict |
+|---|---|
+| A episodes | 150/150 frame-exact |
+| B event timing | 0.95 of store events land on a truth primitive; 0.71 of primitives covered |
+| C event types | purity 0.40 vs 0.42 majority baseline - types encode motion profiles, not primitives |
+| D identity/binding | BROKEN here: 2.67 identities per true block; 8% of same-block event pairs share an id (fitted cut 0.946 oversegments) |
+| E objkind | vectors DO see kind: 0.79 AUC vs pixel-colour labels; the 0.51 via truth labels was D's corruption |
+| F channels | weak-real: iv2 same-n-blocks 0.615, same-template 0.559; motion/scene ~chance |
+
+The chain reads bottom-up: everything above identity is healthy,
+everything downstream of identity inherits its fragmentation. The
+identity fit is the one write stage that did not transfer.
