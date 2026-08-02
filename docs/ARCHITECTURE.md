@@ -259,7 +259,7 @@ works.
 | identity descriptor | **DINOv3-S** on track exemplar crops | same backbone, crop granularity; replaces yolo26n-reid (nano ceiling: AUC 0.90, 5% of trivially-same pairs below 0.465) |
 | region proposal (write) | **YOLO11n-seg** `single_cls` | class-agnostic, real-time, measured |
 | association → presence | **BoT-SORT**, geometry only | tracks ARE identity while continuity holds; the store is asked once per track, not per frame |
-| trajectory (replaces `mot`) | tracker boxes → contact point (centroid fallback) + **Depth Pro** z | geometry, not an encoder; Depth Pro ms/frame must be benchmarked before any 2.5D fallback (user gate) |
+| trajectory (replaces `mot`) | tracker boxes → contact point (centroid fallback) + **2.5D box-scale z** | geometry, not an encoder. Depth Pro was measured first (1.61 s/frame MPS = 1 h compute per hour of video at even 4 frames/episode) and the user chose 2.5D outright |
 | physics per participant | **V-JEPA2 ViT-L** | tubelets seeded from the ELEMENTS, never whole-frame; only significantly-moving participants, plus the agent |
 | text bridge, read-time only | **SigLIP2 so400m** | the ONE text tower; maps a query's nouns into vision space at query time |
 | shipped write path, later | **FDNN student** | distilled fresh against the DINOv3 teacher + the corpus's free geometric pairs |

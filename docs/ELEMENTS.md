@@ -197,8 +197,8 @@ independent channel of the old fusion, so its deletion gets a measurement,
 not an assumption. MobileCLIP2/Unicom were DINOv3 fallbacks; moot once
 access lands.
 
-Backbone count: 10 → **5** (DINOv3, YOLO11n-seg, V-JEPA2, SigLIP2, Depth
-Pro) + the end-stage FDNN student. "Find this object elsewhere" is served
+Backbone count: 10 → **5** (DINOv3, YOLO11n-seg, V-JEPA2, SigLIP2) + the
+end-stage FDNN student — Depth Pro measured and declined, z is geometry. "Find this object elsewhere" is served
 by the identity index (`object_vectors` + joins), not by episode-level
 fusion — which is why `spaces()` excludes it.
 

@@ -373,10 +373,14 @@ class Stream:
                     continue
                 seen.add(tid)
                 t = self.open.setdefault(tid, {
-                    "ts": int(ts), "t1": int(ts), "n": 0,
+                    "ts": int(ts), "t1": int(ts), "n": 0, "t": [],
                     "box": [], "conf": [], "area": [], "crops": []})
                 t["t1"] = int(ts)
                 t["n"] += 1
+                # the box list without its timestamps is a SHAPE, not a
+                # trajectory; every consumer that wanted motion had to
+                # guess the time axis back from (ts, t1, n)
+                t["t"].append(int(ts))
                 t["box"].append(b[di])
                 t["conf"].append(float(c[di]))
                 t["area"].append(float(a[di]))
