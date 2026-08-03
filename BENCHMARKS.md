@@ -971,3 +971,17 @@ PERFECT slot and push labels. All slot/colour polish sat above this
 bottleneck. Segmentation quality is the singular next lever, graded
 by re-running this cap. Gray edges closed: pairing window corpus-
 fitted (P95 unit duration), no truth constants anywhere in output.
+
+### Gap-pairing decidability panel (2026-08-03) - closed negative
+
+Class-labelled audit of every available signal for "is this blind gap
+one carry or two manipulations" (770 candidates, base rate 0.30):
+ellipse excess via arm centroid (merged 484 but cap DROPPED 0.40 ->
+0.29), via box-nearest-point (zero signal - the arm box covers both
+foci), closure/rest-birth (precision 0.32 = base rate), rest-presence
+at either anchor (~0.49), duration/distance/speed (0.35-0.65). The
+pairing decision is NOT DECIDABLE from trajectory elements - a
+systematic negative that redirects the 0.90 program to either a
+boundary-free representation (slot-activity timelines, agent-colour-
+suppressed crops) or a write-path tracker that holds the carried
+block through the gripper.
