@@ -879,3 +879,15 @@ event TYPING (types at majority-baseline purity vs primitives) is the
 biggest lever; slots wait on binding coherence (45%); motion carries
 nothing for chain shape. The write-path targets now have an
 end-to-end consumer metric.
+
+### Event-typing attempt 1: agent-kinematic types (2026-08-03) - negative
+
+Descriptor: hold-state onset/offset + descent/rise shape + stop-height
+percentile from the agent trajectory (geometry only, no text, types
+discovered). Chain-benchmark verdict: 0.24-0.28 mean yield vs 0.34 for
+the original screen-space types; store restored to the originals via
+the events log (v12). Findings: 12-d kinematic manifold clusters as
+100% noise (HDBSCAN); compact subsets type only ~30% dense cores;
+boundary-kind alternation in the original tokens carries structure the
+whole-event profile collapses. Next: token-ise hold-state ALTERNATION
+(acquire/carry/release segments) instead of clustering event profiles.
