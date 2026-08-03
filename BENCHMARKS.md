@@ -934,3 +934,25 @@ second stream, associate rest-crops across views (appearance, no
 text), estimate per-episode table homography from static structure,
 triangulate heights -> real ON-relations + end heights + repaired
 slots -> re-run this ladder. Oracle says the mechanism is waiting.
+
+## 2026-08-03 — Two-view program: 0.90 reduced to one discriminator
+
+Two-view store rebuilt (76,154 frames, both cameras as streams on the
+shared clock; nothing about poses/intrinsics anywhere). Findings:
+
+| result | number |
+|---|---|
+| manipulation coverage (cross-view union) | 0.31 -> 0.49 |
+| push-vs-carry flag (track-survival signature) | 0.95 |
+| degraded oracle: slots + push flag ONLY | **0.992** |
+| colour-slot per-position acc (under pairing) | 0.78 |
+| best whole-pipeline yield so far | 0.34 |
+
+The decisive discovery: ON-relations (place/stack/unstack geometry) -
+which consumed most of the iteration budget - are UNNECESSARY. The
+0.99-capable token is slots + push flag. Every component of it now
+works except one discriminator: carry-fragment vs same-block
+re-manipulation (colour pairing over-merges, anonymous gap-rest
+under-merges; the fix is SAME-COLOUR gap-rest - one crop comparison
+per candidate merge). That single mechanism stands between 0.34 and
+the oracle-backed 0.99.
