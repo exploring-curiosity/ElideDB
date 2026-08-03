@@ -354,6 +354,31 @@ def units(db):
                 merged.append(u)
         us2 = []
         for a, b, dep, land in merged:
+            # EXACT anchors: the unit's own first/last in-motion mover
+            # positions, and in-motion sample points for robust colour
+            fp, lp_, mids = {}, {}, []
+            for sv in ("simA", "simB"):
+                mem = sorted(x for x in allseg
+                             if x[2] == sv and x[0] >= a and x[1] <= b)
+                if not mem:
+                    continue
+                p0 = pos_at(sv, mem[0][3], mem[0][0])
+                p1 = pos_at(sv, mem[-1][3], mem[-1][1])
+                if p0:
+                    fp[sv] = p0
+                if p1:
+                    lp_[sv] = p1
+                for a2_, b2_, _sv, mv_ in mem:
+                    k2 = (e, sv, mv_)
+                    if k2 not in series:
+                        continue
+                    t2, x2, y2, nd2 = series[k2]
+                    for i2 in range(len(t2)):
+                        if a2_ <= int(t2[i2]) <= b2_ and \
+                                float(nd2[i2]) >= thr:
+                            mids.append((sv, (float(x2[i2]),
+                                              float(y2[i2])),
+                                         int(t2[i2])))
             same_id = 1 if (dep and land and dep[2] == land[2]) else 0
             trav = (float(np.hypot(land[0][0] - dep[0][0],
                                    land[0][1] - dep[0][1]))
@@ -362,66 +387,173 @@ def units(db):
             for sv in ("simA", "simB"):
                 lb = landing(series, e, sv, b, thr, after=True)
                 if lb:
-                    labpos.append((sv, lb[0], lb[1]))
+                    labpos.append(("land", sv, lb[0], lb[1]))
                 dp = landing(series, e, sv, a, thr, after=False)
                 if dp:
-                    labpos.append((sv, dp[0], dp[1]))
-            us2.append((a, b, same_id, 0, trav, labpos))
+                    labpos.append(("dep", sv, dp[0], dp[1]))
+            if len(mids) > 6:
+                mids = mids[:: max(1, len(mids) // 6)][:6]
+            us2.append((a, b, same_id, 0, trav, labpos, fp, lp_, mids))
         us = us2
         us.sort()
         out[e] = us
-    return out, med_diag
+    return out, med_diag, series, thr
 
 
-def colour_slots(db, uu, med_diag):
-    import cv2
-    import pyarrow.compute as pc
-    from elidedb.video import FrameSet
-    ft = db.table("frames").scan()
+class Cropper:
+    """Frame-cached Lab crops: the colour machinery is used twice (unit
+    colours + gap-rest tests) and often on the same frames."""
+
+    def __init__(self, db, med_diag):
+        self.db = db
+        self.ft = db.table("frames").scan()
+        self.med_diag = med_diag
+        self.cache = {}
+
+    def frame(self, sv, ts_):
+        import pyarrow.compute as pc
+        from elidedb.video import FrameSet
+        k = (sv, int(ts_))
+        if k in self.cache:
+            return self.cache[k]
+        sel = self.ft.filter(pc.and_(
+            pc.equal(self.ft.column("ts"), int(ts_)),
+            pc.equal(self.ft.column("stream"), sv)))
+        im = None
+        if len(sel):
+            dec = FrameSet(self.db, "frames", sel).decode()
+            if dec:
+                im = dec[0][1]
+        self.cache[k] = im
+        if len(self.cache) > 3000:
+            self.cache.pop(next(iter(self.cache)))
+        return im
+
+    def lab(self, sv, pos, ts_):
+        import cv2
+        im = self.frame(sv, ts_)
+        if im is None:
+            return None
+        h = int(self.med_diag * 0.3)
+        x0 = max(int(pos[0]) - h, 0)
+        y0 = max(int(pos[1]) - h, 0)
+        c = im[y0:int(pos[1]) + h, x0:int(pos[0]) + h]
+        if c.size < 48:
+            return None
+        hh, ww = c.shape[:2]
+        core = c[hh // 4:3 * hh // 4 + 1, ww // 4:3 * ww // 4 + 1]
+        return np.median(cv2.cvtColor(core, cv2.COLOR_RGB2LAB)
+                         .reshape(-1, 3), 0).astype(np.float32)
+
+
+def unit_colours(db, uu, med_diag):
+    """Per-unit colours kept PER SIDE. Averaging departure and landing
+    crops was self-poisoning: a grasp fragment's found "landing" is a
+    neighbour block, its colour leaked into the unit mean, and every
+    same-colour test then matched the neighbour against itself. The
+    sides are the semantics: departure = the block as it was picked
+    up, landing = the block as it was set down; a unit is CLOSED iff
+    they agree."""
+    cr = Cropper(db, med_diag)
     labs = {}
     from tqdm import tqdm
-    for e, us in tqdm(sorted(uu.items()), desc="slots", unit="ep",
+    for e, us in tqdm(sorted(uu.items()), desc="colours", unit="ep",
                       mininterval=5):
         for ui, (a, b, son, eon, tv, labpos) in enumerate(us):
-            vals = []
-            for sv, pos, ts_ in labpos:
-                sel = ft.filter(pc.and_(
-                    pc.equal(ft.column("ts"), int(ts_)),
-                    pc.equal(ft.column("stream"), sv)))
-                if len(sel) == 0:
-                    continue
-                dec = FrameSet(db, "frames", sel).decode()
-                if not dec:
-                    continue
-                im = dec[0][1]
-                h = int(med_diag * 0.3)
-                x0 = max(int(pos[0]) - h, 0)
-                y0 = max(int(pos[1]) - h, 0)
-                c = im[y0:int(pos[1]) + h, x0:int(pos[0]) + h]
-                if c.size < 48:
-                    continue
-                hh, ww = c.shape[:2]
-                core = c[hh // 4:3 * hh // 4 + 1,
-                         ww // 4:3 * ww // 4 + 1]
-                lab = cv2.cvtColor(core, cv2.COLOR_RGB2LAB) \
-                    .reshape(-1, 3)
-                vals.append(np.median(lab, 0))
-            if vals:
-                labs[(e, ui)] = np.mean(vals, 0).astype(np.float32)
+            side = {"dep": [], "land": []}
+            for sd, sv, pos, ts_ in labpos:
+                v = cr.lab(sv, pos, ts_)
+                if v is not None:
+                    side[sd].append(v)
+            labs[(e, ui)] = {
+                sd: (np.mean(vs, 0).astype(np.float32) if vs else None)
+                for sd, vs in side.items()}
     dists = []
     for e in uu:
         ks = [k for k in labs if k[0] == e]
-        for i in range(len(ks)):
-            for j in range(i + 1, len(ks)):
-                dists.append(float(np.linalg.norm(labs[ks[i]]
-                                                  - labs[ks[j]])))
+        vs = [labs[k]["land"] if labs[k]["land"] is not None
+              else labs[k]["dep"] for k in ks]
+        vs = [v for v in vs if v is not None]
+        for i in range(len(vs)):
+            for j in range(i + 1, len(vs)):
+                dists.append(float(np.linalg.norm(vs[i] - vs[j])))
     cut = otsu(np.array(dists)) if dists else 30.0
-    print(f"2v colour-slot cut: {cut:.1f} Lab (otsu, {len(dists)} pairs)")
+    print(f"2v colour cut: {cut:.1f} Lab (otsu, {len(dists)} pairs)")
+    return labs, cut, cr
+
+
+def pair_fragments(uu, series, med_diag, thr, cr):
+    """THE discriminator, on EXACT anchors: a completed manipulation
+    leaves a resting track BORN at the unit's own last in-motion
+    position; a grasp fragment ends mid-carry where nothing ever
+    rests. Symmetrically a release fragment begins mid-carry - no
+    resting track DIES at its first position. Merge open-tail units
+    into open-head successors inside the corpus-fitted window. The
+    guessed-landing anchors of earlier versions found neighbour blocks
+    and self-poisoned every test built on them (measured: 2/591, then
+    86/272 merges); the unit's own motion endpoints are not guesses."""
+    durs = [(u[1] - u[0]) / 1e9 for v in uu.values() for u in v]
+    win_s = float(np.percentile(durs, 95)) if durs else 4.0
+    print(f"fitted pairing window: {win_s:.1f}s (P95 unit duration)")
+
+    def rest_at(e, anchors, ts_, born):
+        for sv, pos in anchors.items():
+            for (e2, sv2, o2), (t2, x2, y2, nd2) in series.items():
+                if e2 != e or sv2 != sv or len(t2) < 3:
+                    continue
+                if born:
+                    dt = (int(t2[0]) - ts_) / 1e9
+                    px_, py_ = float(x2[0]), float(y2[0])
+                    still = float(np.median(nd2[:3])) < thr
+                else:
+                    dt = (ts_ - int(t2[-1])) / 1e9
+                    px_, py_ = float(x2[-1]), float(y2[-1])
+                    still = float(np.median(nd2[-3:])) < thr
+                if -0.5 <= dt <= 2.0 and still and np.hypot(
+                        px_ - pos[0], py_ - pos[1]) < 1.5 * med_diag:
+                    return True
+        return False
+
+    out, colours = {}, {}
+    n_merge = n_open = 0
+    for e, us in uu.items():
+        merged = []
+        for u in us:
+            a, b = u[0], u[1]
+            head_open = not rest_at(e, u[6], a, born=False)
+            if merged:
+                prev = merged[-1]
+                tail_open = not rest_at(e, prev[7], prev[1], born=True)
+                if tail_open:
+                    n_open += 1
+                if tail_open and head_open and \
+                        (a - prev[1]) / 1e9 < win_s:
+                    n_merge += 1
+                    merged[-1] = (prev[0], b,
+                                  prev[2] and u[2], 0,
+                                  prev[4] + u[4], prev[5] + u[5],
+                                  prev[6], u[7], prev[8] + u[8])
+                    continue
+            merged.append(u)
+        out[e] = merged
+        # ROBUST unit colour: median Lab over the unit's own IN-MOTION
+        # mover crops - the block is at those points by construction,
+        # against one guessed boundary crop that was often a neighbour
+        for ui2, m in enumerate(merged):
+            vals = [v for sv, pos, ts_ in m[8]
+                    if (v := cr.lab(sv, pos, ts_)) is not None]
+            colours[(e, ui2)] = (np.median(np.stack(vals), 0)
+                                 .astype(np.float32) if vals else None)
+    print(f"fragment pairing: {n_merge} merges ({n_open} open tails)")
+    return out, colours
+
+
+def assign_slots(uu, colours, cut):
     slots = {}
     for e, us in uu.items():
         reps = []
         for ui in range(len(us)):
-            v = labs.get((e, ui))
+            v = colours.get((e, ui))
             if v is None:
                 slots[(e, ui)] = -1
                 continue
@@ -442,17 +574,30 @@ def main():
     store = ROOT / (argv[argv.index("--store") + 1]
                     if "--store" in argv else "lake/sim_chains")
     db = Store.open(str(store))
-    uu, med_diag = units(db)
-    print(f"episodes {len(uu)}, mean units "
-          f"{np.mean([len(v) for v in uu.values()]):.1f}")
-    slots = colour_slots(db, uu, med_diag)
+    uu0, med_diag, series, thr = units(db)
+    print(f"episodes {len(uu0)}, raw units "
+          f"{np.mean([len(v) for v in uu0.values()]):.1f}")
+    cr = Cropper(db, med_diag)
+    uu, colours = pair_fragments(uu0, series, med_diag, thr, cr)
+    print(f"paired units {np.mean([len(v) for v in uu.values()]):.1f}")
+    dists = []
+    for e in uu:
+        vs = [colours[(e, ui)] for ui in range(len(uu[e]))
+              if colours.get((e, ui)) is not None]
+        for i in range(len(vs)):
+            for j in range(i + 1, len(vs)):
+                dists.append(float(np.linalg.norm(vs[i] - vs[j])))
+    cut = otsu(np.array(dists)) if dists else 30.0
+    print(f"colour cut: {cut:.1f} Lab (otsu on in-motion colours)")
+    slots = assign_slots(uu, colours, cut)
     trav = np.array([u[4] for v in uu.values() for u in v])
     tq = np.percentile(trav[trav > 0], [33, 66])
     seqs = {}
     for e, us in uu.items():
         toks = []
         prev = None
-        for ui, (a, b, son, eon, tv, _lp) in enumerate(us):
+        for ui, u in enumerate(us):
+            a, b, son = u[0], u[1], u[2]
             if prev is not None:
                 toks.append((("G", int(min((a - prev) / 4e9, 2)), 0),
                              -1, 0.0, None))
