@@ -778,3 +778,29 @@ work (events/trajectories joins over the same store) now has to close.
 The chain reads bottom-up: everything above identity is healthy,
 everything downstream of identity inherits its fragmentation. The
 identity fit is the one write stage that did not transfer.
+
+### Identity fix on sim (2026-08-02, commits 28abb3c, 66958fe)
+
+Fixed: refit tool's 512/768 reshape scrambler (proven-same at 0.045
+cosine was the tell); recurrence objective replaced (gameable by
+fragmentation on lookalikes); identity now two-stage - handoff
+continuity components + negative-calibrated component merge.
+
+| metric | before | after |
+|---|---|---|
+| objects | 21,492 | 3,889 |
+| false-merge (proven-diff pairs) | 0.452% | 0.24% |
+| events object-bound | 95% | 100% |
+| objkind labelled tracks | 2,781 | 17,410 |
+| ids per true block (truth audit) | 2.67 | 2.65 |
+| same-block event id consistency | 8% | 8% |
+
+The consistency line is the honest one: consolidation succeeded but
+binding across a CARRY did not move, and the reason is now measured,
+not suspected - the same block's ids across a carry sit at 0.54 median
+cosine (4.7% mergeable at the calibrated cut; a 0.60 cut merges 38%
+while false-merging the corpus), and geometric agent-bridges fire 4
+times in a 27,680-interval proposal soup. Identity-by-appearance is at
+its ceiling on this corpus; the remaining link is EVENT-MEDIATED (the
+event knows its mover before and after the carry) - the join layer's
+next mechanism, with the sim truthset as its gradeable target.
