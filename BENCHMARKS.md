@@ -833,3 +833,26 @@ interval descriptors invert entirely - same 0.54 vs different-tail
 dominated representation is - and no cut on it can both bridge carries
 and keep instances apart. Continuity and agent-mediated structure, not
 appearance, carry within-episode identity.
+
+### Mover-binding criterion ladder (2026-08-02, f0782ca..ceff4c6)
+
+Each rung added against a filmed failure; graded on the sim colour
+control (bound object's pixel colour vs true mover) + truth audit:
+
+| criterion | mover acc | colourable n | same-block consistency |
+|---|---|---|---|
+| motion concentration | 17% | 53 | 8% |
+| + contact gate | 5% | 20 | - |
+| + agent-appearance veto | 13% | 39 | 45% |
+| + rest-backed objects | 12% | 65 | 50% |
+| + agent-size + held-inside gates | 15% | 101 | 45% |
+
+Read: coherence is transformed (8% -> ~45-50%) and the bound objects
+are increasingly real (colourable coverage x5), but exact mover
+selection plateaus ~15% under criterion tweaks. Filmed junk classes
+eliminated in order: arm shadows, arm fragments, transients,
+table-sized proposals. The residual is WRITE-PATH work: proposer
+quality around the gripper, and event-geometry (vanish/appear site)
+disambiguation. Also on record: the criteria are corpus-agnostic
+principles, but their selection was eval-guided against the sim
+control - same standing as the QbE mechanism program.
