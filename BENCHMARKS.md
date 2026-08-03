@@ -1026,3 +1026,16 @@ project: detection/tracking surgery in the write path (build_dinov3
 proposer layer), then re-run this entire measured ladder, whose
 instruments (oracle, cap analysis, decidability panels, colour
 controls) are all built and waiting.
+
+### Vision-native remediation (2026-08-03) - rule sharpened, floor confirmed
+
+User sharpened the rule: hand-engineered appearance features (even
+numeric - Lab, chroma) are non-compliant; only the learned encoder's
+space is vision-native. Ledger rebuilt accordingly (encoder entry
+signatures, agent+background gallery junk filter, discovered kind
+codebook). Result replicates bedrock exactly: 4 kinds / 0.78
+unclustered, 0.2 transitions/ep, benchmark 0.23/0.25. Compliance
+sweep: no text or hand features remain in any path candidate;
+Lab-based scripts marked as negative-result records; palette/name
+anchors exist only in eval graders. The floor - write-path detection
+quality - is unchanged and now measured rule-clean.
