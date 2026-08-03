@@ -956,3 +956,18 @@ re-manipulation (colour pairing over-merges, anonymous gap-rest
 under-merges; the fix is SAME-COLOUR gap-rest - one crop comparison
 per candidate merge). That single mechanism stands between 0.34 and
 the oracle-backed 0.99.
+
+### Cap analysis (2026-08-03): unit structure is the wall
+
+| configuration | dev | holdout |
+|---|---|---|
+| truth units + truth slots (oracle) | 0.99 | 0.99 |
+| REAL units + truth slots | 0.40 | 0.43 |
+| real units + real slots (best) | 0.29 | 0.35 |
+
+Real-unit structure (6.1 noisy units/ep: carry fragments, collateral
+topple units, boundary noise) caps the pipeline at 0.40 even with
+PERFECT slot and push labels. All slot/colour polish sat above this
+bottleneck. Segmentation quality is the singular next lever, graded
+by re-running this cap. Gray edges closed: pairing window corpus-
+fitted (P95 unit duration), no truth constants anywhere in output.
