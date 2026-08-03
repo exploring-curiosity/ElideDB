@@ -156,6 +156,46 @@ def view_segments(db):
     return segs, series, med_diag, thr
 
 
+def landing(series, e, sv, ts, thr, after, anchor=None, max_d=None):
+    """The rest point a manipulation ENDS at (or starts from) is not
+    the mover's own series - identity dies across a carry (0.54
+    cosine, measured), so the placed block resumes as a NEW id. The
+    placement point is where a resting series is BORN just after the
+    unit ends; the pickup point is where one DIES just before it
+    starts. Returns ((x, y), ts, oid) or None."""
+    best = None
+    for (e2, sv2, o2), (t2, x2, y2, nd2) in series.items():
+        if e2 != e or sv2 != sv or len(t2) < 3:
+            continue
+        if after:
+            dt = (int(t2[0]) - ts) / 1e9
+            if not (-0.5 <= dt <= 2.0):
+                continue
+            if float(np.median(nd2[:3])) >= thr:
+                continue              # born moving: not a landing
+            cand = ((float(x2[0]), float(y2[0])), int(t2[0]), o2,
+                    abs(dt))
+            if anchor is not None and np.hypot(
+                    cand[0][0] - anchor[0],
+                    cand[0][1] - anchor[1]) > max_d:
+                continue
+        else:
+            dt = (ts - int(t2[-1])) / 1e9
+            if not (-0.5 <= dt <= 2.0):
+                continue
+            if float(np.median(nd2[-3:])) >= thr:
+                continue              # died moving: not a departure
+            cand = ((float(x2[-1]), float(y2[-1])), int(t2[-1]), o2,
+                    abs(dt))
+            if anchor is not None and np.hypot(
+                    cand[0][0] - anchor[0],
+                    cand[0][1] - anchor[1]) > max_d:
+                continue
+        if best is None or cand[3] < best[3]:
+            best = cand
+    return best[:3] if best else None
+
+
 def rest_of(series, e, sv, oid, ts, after):
     k = (e, sv, oid)
     if k not in series:
@@ -174,11 +214,45 @@ def rest_of(series, e, sv, oid, ts, after):
     return None
 
 
-def on_at(series, e, sv, mover, pos, ts, med_diag, thr):
-    """Co-location with a pre-existing resting participant, one view."""
+def fit_gravity(series, segs):
+    """Projected DOWN per (episode, view), fitted from the movers' own
+    final descent: a placed block's last approach is along gravity, so
+    the median of final-step unit vectors IS the view's down-projection.
+    Learned from motion, never assumed - works wherever gravity does.
+    Returns {(e, sv) -> unit vec}."""
+    import bisect
+    vecs = defaultdict(list)
+    for (e, sv), ss in segs.items():
+        for a, b, mover in ss:
+            k = (e, sv, mover)
+            if k not in series:
+                continue
+            t, x, y, nd = series[k]
+            i = bisect.bisect_right(t, b) - 1
+            j = bisect.bisect_left(t, b - int(0.5e9))
+            if 0 <= j < i < len(t):
+                v = np.array([x[i] - x[j], y[i] - y[j]], np.float32)
+                n = float(np.linalg.norm(v))
+                if n > 5.0:
+                    vecs[(e, sv)].append(v / n)
+    g = {}
+    for k, vs in vecs.items():
+        m = np.mean(vs, 0)
+        n = float(np.linalg.norm(m))
+        if n > 0.3:                    # coherent descent direction
+            g[k] = m / n
+    return g
+
+
+def on_at(series, e, sv, mover, pos, ts, med_diag, thr, g=None):
+    """ON vs BESIDE, one view: another resting participant co-located
+    ALONG the fitted gravity projection (below the mover, small
+    perpendicular offset). Falls back to isotropic co-location when
+    the view has no fitted gravity."""
     if pos is None:
         return 0
     import bisect
+    gv = (g or {}).get((e, sv))
     for (e2, sv2, o2), (t2, x2, y2, nd2) in series.items():
         if e2 != e or sv2 != sv or o2 == mover:
             continue
@@ -188,8 +262,16 @@ def on_at(series, e, sv, mover, pos, ts, med_diag, thr):
                 continue
             if nd2[c_] >= thr:
                 continue
-            if float(np.hypot(x2[c_] - pos[0],
-                              y2[c_] - pos[1])) < 0.9 * med_diag:
+            dx = float(x2[c_] - pos[0])
+            dy = float(y2[c_] - pos[1])
+            if gv is None:
+                if np.hypot(dx, dy) < 0.9 * med_diag:
+                    return 1
+                continue
+            along = dx * gv[0] + dy * gv[1]
+            perp = abs(-dx * gv[1] + dy * gv[0])
+            if 0.15 * med_diag < along < 1.3 * med_diag \
+                    and perp < 0.55 * med_diag:
                 return 1
     return 0
 
@@ -197,6 +279,8 @@ def on_at(series, e, sv, mover, pos, ts, med_diag, thr):
 def units(db):
     """Cross-view manipulation units per episode + qualifiers."""
     segs, series, med_diag, thr = view_segments(db)
+    grav = fit_gravity(series, segs)
+    print(f"fitted gravity projections: {len(grav)} (episode, view) pairs")
     out = {}
     eps = sorted({e for e, sv in segs})
     for e in eps:
@@ -222,35 +306,68 @@ def units(db):
         groups = defaultdict(list)
         for i in range(len(allseg)):
             groups[find(i)].append(allseg[i])
+        def pos_at(sv, mover, ts_):
+            import bisect as _b
+            k = (e, sv, mover)
+            if k not in series:
+                return None
+            t2, x2, y2, _ = series[k]
+            i2 = min(max(_b.bisect_left(t2, ts_), 0), len(t2) - 1)
+            return (float(x2[i2]), float(y2[i2]))
+
         us = []
         for g in groups.values():
             a = min(x[0] for x in g)
             b = max(x[1] for x in g)
-            movers = {(sv, m) for _, _, sv, m in g}
-            son = eon = trav = 0
-            n_on = 0
+            dep = land = None
+            for sv in ("simA", "simB"):
+                mem = sorted(x for x in g if x[2] == sv)
+                if not mem:
+                    continue
+                # ANCHORED search: the departure must be near where
+                # this unit's motion began, the landing near where it
+                # ended - without the anchor any track birth in the
+                # scene qualified and dep/land never came up empty,
+                # so fragment pairing never fired
+                a0 = pos_at(sv, mem[0][3], mem[0][0])
+                b0 = pos_at(sv, mem[-1][3], mem[-1][1])
+                dep = dep or landing(series, e, sv, a, thr,
+                                     after=False, anchor=a0,
+                                     max_d=2.5 * med_diag)
+                land = land or landing(series, e, sv, b, thr,
+                                       after=True, anchor=b0,
+                                       max_d=2.5 * med_diag)
+            us.append([a, b, dep, land])
+        us.sort()
+        # FRAGMENT PAIRING: a grasp fragment DEPARTS but never LANDS
+        # (the block vanishes into the gripper); a release fragment
+        # LANDS but never DEPARTED. Consecutive open+close fragments
+        # are one carry - the rest-birth/death structure joins what
+        # time, appearance and identity could not (each measured).
+        merged = []
+        for u in us:
+            if merged and merged[-1][3] is None and u[2] is None \
+                    and (u[0] - merged[-1][1]) / 1e9 < 6.0:
+                merged[-1][1] = u[1]
+                merged[-1][3] = u[3]
+            else:
+                merged.append(u)
+        us2 = []
+        for a, b, dep, land in merged:
+            same_id = 1 if (dep and land and dep[2] == land[2]) else 0
+            trav = (float(np.hypot(land[0][0] - dep[0][0],
+                                   land[0][1] - dep[0][1]))
+                    if dep and land else 0.0)
             labpos = []
             for sv in ("simA", "simB"):
-                mv = [m for s2, m in movers if s2 == sv]
-                if not mv:
-                    continue
-                # dominant mover per view
-                mvv = mv[0]
-                ra = rest_of(series, e, sv, mvv, a, after=False)
-                rb = rest_of(series, e, sv, mvv, b, after=True)
-                if ra and rb:
-                    trav = max(trav, float(np.hypot(
-                        rb[0][0] - ra[0][0], rb[0][1] - ra[0][1])))
-                if ra:
-                    son += on_at(series, e, sv, mvv, ra[0], ra[1],
-                                 med_diag, thr)
-                if rb:
-                    eon += on_at(series, e, sv, mvv, rb[0], rb[1],
-                                 med_diag, thr)
-                    labpos.append((sv, rb[0], rb[1]))
-                n_on += 1
-            us.append((a, b, son == max(n_on, 1), eon == max(n_on, 1),
-                       trav, labpos))
+                lb = landing(series, e, sv, b, thr, after=True)
+                if lb:
+                    labpos.append((sv, lb[0], lb[1]))
+                dp = landing(series, e, sv, a, thr, after=False)
+                if dp:
+                    labpos.append((sv, dp[0], dp[1]))
+            us2.append((a, b, same_id, 0, trav, labpos))
+        us = us2
         us.sort()
         out[e] = us
     return out, med_diag
@@ -339,8 +456,7 @@ def main():
             if prev is not None:
                 toks.append((("G", int(min((a - prev) / 4e9, 2)), 0),
                              -1, 0.0, None))
-            toks.append((("M", int(son) * 2 + int(eon),
-                          int(np.searchsorted(tq, tv))),
+            toks.append((("P" if son else "M", 0, 0),
                          slots.get((e, ui), -1), (b - a) / 1e9, None))
             prev = b
         seqs[e] = toks
