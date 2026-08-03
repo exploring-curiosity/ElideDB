@@ -124,6 +124,26 @@ def entry_colours(db, entries, med_diag):
     return out
 
 
+def background_colour(cr, entries, n=40):
+    """The scene's dominant colour, measured: median Lab over random
+    frames (downsampled). Junk ledger entries - shadow halos, table
+    patches - sit near it; blocks are saturated against it."""
+    import cv2
+    rng = np.random.default_rng(0)
+    vals = []
+    pool = [(sv, a) for e, sv, x, y, a, b, mem in entries]
+    while len(vals) < n and pool:
+        sv, ts_ = pool[rng.integers(len(pool))]
+        im = cr.frame(sv, int(ts_))
+        if im is None:
+            continue
+        lab = cv2.cvtColor(im[::8, ::8], cv2.COLOR_RGB2LAB)             .reshape(-1, 3).astype(np.float32)
+        vals.append(np.median(lab, 0))
+    bg = np.median(np.stack(vals), 0).astype(np.float32)
+    print(f"background colour: Lab {np.round(bg, 0)}")
+    return bg
+
+
 def ledgers(db):
     segs, series, med_diag, thr, agents = view_segments(db)
     iv = rest_intervals(series, thr)
@@ -131,8 +151,35 @@ def ledgers(db):
     entries = spot_chain(iv, med_diag)
     print(f"spot entries: {len(entries):,} "
           f"({len(entries)/150:.1f}/episode-view)")
-    ec = entry_colours(db, entries, med_diag)
-    ec = [r for r in ec if r[6] is not None]
+    import os
+    cache = Path(os.environ.get("ELIDEDB_LEDGER_CACHE",
+                                "/tmp/ledger_ec.npz"))
+    if cache.exists():
+        z = np.load(cache, allow_pickle=True)
+        ec = list(z["ec"])
+        print(f"entry colours from cache ({len(ec)})")
+    else:
+        ec = entry_colours(db, entries, med_diag)
+        ec = [r for r in ec if r[6] is not None]
+        np.savez(cache, ec=np.array(ec, object))
+        print(f"entry colours cached -> {cache}")
+    # JUNK-ENTRY FILTER, measured not assumed: shadow halos and table
+    # patches rest as convincingly as blocks (46 entries/ep-view vs ~8
+    # real; their colours destroyed the slot fit - cut hit 255 Lab).
+    # Drop entries near the measured background or agent colour; both
+    # bars Otsu-fitted from the entries' own distance distributions.
+    from chain_slotline import agent_colour
+    cr2 = Cropper(db, med_diag)
+    bg = background_colour(cr2, entries)
+    ag = agent_colour(db, agents, cr2)
+    d_bg = np.array([float(np.linalg.norm(r[6] - bg)) for r in ec])
+    d_ag = np.array([float(np.linalg.norm(r[6] - ag)) for r in ec])
+    bar_bg = otsu(d_bg)
+    bar_ag = otsu(d_ag)
+    keep = (d_bg > bar_bg) & (d_ag > bar_ag)
+    print(f"entry filter: {int(keep.sum()):,} of {len(ec):,} kept "
+          f"(bg bar {bar_bg:.0f}, agent bar {bar_ag:.0f})")
+    ec = [r for r, k in zip(ec, keep) if k]
     # colour cut fitted on within-episode entry pairs
     dists = []
     by_e = defaultdict(list)
