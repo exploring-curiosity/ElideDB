@@ -56,7 +56,6 @@ from elidedb.video import scan_video_packets                   # noqa: E402
 import full_write as fw                                        # noqa: E402
 from write_once import episode_events                          # noqa: E402
 
-STREAM = "sim"
 
 
 def probe(path):
@@ -71,9 +70,13 @@ def probe(path):
 
 
 def build_spans(src, limit=0):
-    """One span per episode directory, from the files alone. The
-    timeline is laid out gapped at construction (GAP_S between demos)
-    so 'one demo' is an actual time range."""
+    """One span per (episode, camera file): BOTH recorded views ingest
+    as streams simA/simB sharing the episode's clock - the timestamps
+    are identical by construction of the recording, which is what makes
+    cross-view association free at query time. The timeline is gapped
+    (GAP_S between demos) so 'one demo' is an actual time range;
+    episode rows are written for simA only (the retrieval unit), simB
+    is additional observation of the same spans."""
     eps = sorted(p for p in src.iterdir() if p.is_dir()
                  and p.name.startswith("ep"))
     if limit:
@@ -81,15 +84,21 @@ def build_spans(src, limit=0):
     spans, fps0 = [], None
     t = EPOCH_NS
     for i, d in enumerate(eps):
-        f = sorted(d.glob("cam*.mp4"))[0]
-        w, h, fps, n = probe(f)
-        if fps0 is None:
-            fps0 = fps
-        assert abs(fps - fps0) < 1e-6, f"{f}: fps {fps} != {fps0}"
-        spans.append({"episode": i, "file": i, "stream": STREAM,
-                      "path": f, "w": w, "h": h, "n": n,
-                      "t0": t, "t1": t + int((n - 1) * 1e9 / fps)})
-        t += int(n * 1e9 / fps + GAP_S * 1e9)
+        cams = sorted(d.glob("cam*.mp4"))
+        n0 = None
+        for ci, f in enumerate(cams[:2]):
+            w, h, fps, n = probe(f)
+            if fps0 is None:
+                fps0 = fps
+            assert abs(fps - fps0) < 1e-6, f"{f}: fps {fps} != {fps0}"
+            if n0 is None:
+                n0 = n
+            n = min(n, n0)           # views recorded in lockstep
+            spans.append({"episode": i, "file": i,
+                          "stream": "simA" if ci == 0 else "simB",
+                          "path": f, "w": w, "h": h, "n": n,
+                          "t0": t, "t1": t + int((n - 1) * 1e9 / fps)})
+        t += int(n0 * 1e9 / fps0 + GAP_S * 1e9)
     return spans, fps0
 
 
@@ -197,7 +206,8 @@ def main():
                       cols, ats, avec, astr, ev_rows, cost)
 
     shift = {(s["stream"], s["t0"]): 0 for s in spans}
-    fw.commit_episodes(db, spans, shift)
+    fw.commit_episodes(db, [s for s in spans if s["stream"] == "simA"],
+                       shift)
     nf = fw.commit_frames(db, cols)
     nv = fw.commit_vectors(db, ats, avec, astr)
     ne = fw.commit_events(db, ev_rows, spans)
@@ -207,7 +217,7 @@ def main():
            "wall_min": round((time.time() - t0) / 60, 1)}, flush=True)
     # the artifact is the test
     assert nf > 0 and nv == nf and len(db.table("episodes").scan()) \
-        == len(spans)
+        == len({s["episode"] for s in spans})
 
 
 if __name__ == "__main__":
