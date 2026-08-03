@@ -98,50 +98,115 @@ def spot_chain(iv, med_diag):
     return entries
 
 
-def entry_colours(db, entries, med_diag):
-    """Median Lab per entry over up to 3 rest crops (rest reads are
-    the reliable primitive: 0.78 single-crop, better with medians)."""
+def crop_at(cr, sv, pos, ts_):
+    im = cr.frame(sv, int(ts_))
+    if im is None:
+        return None
+    h = int(cr.med_diag * 0.5)
+    x0 = max(int(pos[0]) - h, 0)
+    y0 = max(int(pos[1]) - h, 0)
+    c = im[y0:int(pos[1]) + h, x0:int(pos[0]) + h]
+    return c if c.size >= 3 * 12 * 12 else None
+
+
+def embed_crops(crops, mid):
+    from elidedb import dinov3
+    E = dinov3.embed(crops, mid=mid)
+    E = np.asarray(E, np.float32)
+    return E / np.maximum(np.linalg.norm(E, axis=1, keepdims=True),
+                          1e-8)
+
+
+def entry_embeddings(db, entries, agents, med_diag):
+    """VISION-NATIVE entry signatures + junk galleries, all in ONE
+    encoder space (the store's kind encoder). No hand features: the
+    encoder itself distinguishes a green block from a red block from a
+    blue cylinder - that is the rule's point - and junk is whatever
+    matches the AGENT or BACKGROUND galleries by the store's own
+    fitted standard.
+    """
+    mid = (db.table("objkind_vectors").state().meta
+           or {}).get("encoder",
+                      "facebook/dinov3-vits16-pretrain-lvd1689m")
+    from elidedb import dinov3
+    print(f"loading kind encoder {mid.split('/')[-1]} (fp32)...",
+          flush=True)
+    dinov3._load(mid)
     cr = Cropper(db, med_diag)
+    rng = np.random.default_rng(0)
+
+    # entry crops (up to 3 rest samples each)
     from tqdm import tqdm
-    out = []
-    for e, sv, x, y, a, b, mem in tqdm(entries, desc="entry-crops",
-                                       mininterval=5):
-        ts_pick = np.linspace(a, b, min(3, max(1, len(mem)))) \
-            .astype(np.int64)
-        # snap to actual member sample times (frames exist there)
-        vals = []
-        for tp in ts_pick:
+    crops, owner = [], []
+    for i, (e, sv, x, y, a, b, mem) in enumerate(
+            tqdm(entries, desc="entry-crops", mininterval=5)):
+        for tp in np.linspace(a, b, min(3, max(1, len(mem))))                 .astype(np.int64):
             best = min(mem, key=lambda m: min(abs(m[0] - tp),
                                               abs(m[1] - tp)))
             ts_ = best[0] if abs(best[0] - tp) < abs(best[1] - tp) \
                 else best[1]
-            v = cr.lab(sv, (x, y), int(ts_))
-            if v is not None:
-                vals.append(v)
-        out.append((e, sv, x, y, int(a), int(b),
-                    np.median(np.stack(vals), 0).astype(np.float32)
-                    if vals else None))
-    return out
+            c = crop_at(cr, sv, (x, y), int(ts_))
+            if c is not None:
+                crops.append(c)
+                owner.append(i)
 
-
-def background_colour(cr, entries, n=40):
-    """The scene's dominant colour, measured: median Lab over random
-    frames (downsampled). Junk ledger entries - shadow halos, table
-    patches - sit near it; blocks are saturated against it."""
-    import cv2
-    rng = np.random.default_rng(0)
-    vals = []
-    pool = [(sv, a) for e, sv, x, y, a, b, mem in entries]
-    while len(vals) < n and pool:
-        sv, ts_ = pool[rng.integers(len(pool))]
+    # galleries: agent (its own box centres) and background (random
+    # positions far from every entry) - crops of the same size, same
+    # encoder, cuts fitted from the match distributions
+    ag_crops = []
+    keys = sorted(agents)
+    while len(ag_crops) < 200 and keys:
+        e, sv = keys[rng.integers(len(keys))]
+        rows = agents[(e, sv)]
+        ts_, x0, y0, x1, y1 = rows[rng.integers(len(rows))]
+        c = crop_at(cr, sv, ((x0 + x1) / 2, (y0 + y1) / 2), ts_)
+        if c is not None:
+            ag_crops.append(c)
+    ent_pos = defaultdict(list)
+    for e, sv, x, y, a, b, mem in entries:
+        ent_pos[(e, sv)].append((x, y))
+    bg_crops = []
+    ent_keys = sorted(ent_pos)
+    while len(bg_crops) < 200 and ent_keys:
+        e, sv = ent_keys[rng.integers(len(ent_keys))]
+        rows = agents.get((e, sv))
+        if not rows:
+            continue
+        ts_ = rows[rng.integers(len(rows))][0]
         im = cr.frame(sv, int(ts_))
         if im is None:
             continue
-        lab = cv2.cvtColor(im[::8, ::8], cv2.COLOR_RGB2LAB)             .reshape(-1, 3).astype(np.float32)
-        vals.append(np.median(lab, 0))
-    bg = np.median(np.stack(vals), 0).astype(np.float32)
-    print(f"background colour: Lab {np.round(bg, 0)}")
-    return bg
+        H, W = im.shape[:2]
+        x, y = rng.uniform(0.1, 0.9) * W, rng.uniform(0.1, 0.9) * H
+        if any(np.hypot(x - px, y - py) < 2.0 * med_diag
+               for px, py in ent_pos[(e, sv)]):
+            continue
+        c = crop_at(cr, sv, (x, y), int(ts_))
+        if c is not None:
+            bg_crops.append(c)
+
+    print(f"embedding {len(crops):,} entry + {len(ag_crops)} agent + "
+          f"{len(bg_crops)} background crops...", flush=True)
+    E = embed_crops(crops, mid)
+    A = embed_crops(ag_crops, mid)
+    B = embed_crops(bg_crops, mid)
+    V = np.zeros((len(entries), E.shape[1]), np.float32)
+    n = np.zeros(len(entries), np.int32)
+    for e_, o in zip(E, owner):
+        V[o] += e_
+        n[o] += 1
+    ok = n > 0
+    V[ok] /= n[ok, None]
+    V = V / np.maximum(np.linalg.norm(V, axis=1, keepdims=True), 1e-8)
+
+    a_match = (V @ A.T).max(1)
+    b_match = (V @ B.T).max(1)
+    bar_a = otsu(a_match[ok])
+    bar_b = otsu(b_match[ok])
+    keep = ok & (a_match < bar_a) & (b_match < bar_b)
+    print(f"vision junk filter: {int(keep.sum()):,} of {int(ok.sum()):,}"
+          f" kept (agent bar {bar_a:.2f}, background bar {bar_b:.2f})")
+    return V, keep
 
 
 def ledgers(db):
@@ -153,92 +218,64 @@ def ledgers(db):
           f"({len(entries)/150:.1f}/episode-view)")
     import os
     cache = Path(os.environ.get("ELIDEDB_LEDGER_CACHE",
-                                "/tmp/ledger_ec.npz"))
+                                "/tmp/ledger_emb.npz"))
     if cache.exists():
         z = np.load(cache, allow_pickle=True)
-        ec = list(z["ec"])
-        print(f"entry colours from cache ({len(ec)})")
+        V, keep = z["V"], z["keep"]
+        print(f"entry embeddings from cache ({int(keep.sum())} kept)")
     else:
-        ec = entry_colours(db, entries, med_diag)
-        ec = [r for r in ec if r[6] is not None]
-        np.savez(cache, ec=np.array(ec, object))
-        print(f"entry colours cached -> {cache}")
-    # JUNK-ENTRY FILTER, measured not assumed: shadow halos and table
-    # patches rest as convincingly as blocks (46 entries/ep-view vs ~8
-    # real; their colours destroyed the slot fit - cut hit 255 Lab).
-    # Drop entries near the measured background or agent colour; both
-    # bars Otsu-fitted from the entries' own distance distributions.
-    from chain_slotline import agent_colour
-    cr2 = Cropper(db, med_diag)
-    bg = background_colour(cr2, entries)
-    ag = agent_colour(db, agents, cr2)
-    d_bg = np.array([float(np.linalg.norm(r[6] - bg)) for r in ec])
-    d_ag = np.array([float(np.linalg.norm(r[6] - ag)) for r in ec])
-    bar_bg = otsu(d_bg)
-    bar_ag = otsu(d_ag)
-    keep = (d_bg > bar_bg) & (d_ag > bar_ag)
-    print(f"entry filter: {int(keep.sum()):,} of {len(ec):,} kept "
-          f"(bg bar {bar_bg:.0f}, agent bar {bar_ag:.0f})")
-    ec = [r for r, k in zip(ec, keep) if k]
-    # colour cut fitted on within-episode entry pairs
-    dists = []
+        V, keep = entry_embeddings(db, entries, agents, med_diag)
+        np.savez(cache, V=V, keep=keep)
+    # slots: corpus-DISCOVERED kind codebook in the encoder's own
+    # space, nearest-centroid completion (the fitted, vision-native
+    # replacement for every colour mechanism this script ever had)
+    from elidedb.transitions import discover
+    kept_idx = np.where(keep)[0]
+    lab_, cent, ti = discover(V[kept_idx])
+    print(f"kind codebook: {ti.get('types', 0)} types, unclustered "
+          f"{ti.get('unclustered_frac', 1):.2f}")
+    if not len(cent):
+        raise SystemExit("no kind clusters discovered")
+    mu = np.asarray(ti["mu"], np.float32)
+    sd = np.asarray(ti["sd"], np.float32)
+    Z = (V[kept_idx] - mu) / sd
+    near = np.linalg.norm(Z[:, None, :] - np.asarray(cent)[None, :, :],
+                          axis=2).argmin(1)
+    cid = np.where(lab_ >= 0, lab_, near)
     by_e = defaultdict(list)
-    for r in ec:
-        by_e[r[0]].append(r)
-    for e, rr in by_e.items():
-        for i in range(len(rr)):
-            for j in range(i + 1, len(rr)):
-                dists.append(float(np.linalg.norm(rr[i][6] - rr[j][6])))
-    cut = otsu(np.array(dists)) if dists else 30.0
-    print(f"entry colour cut: {cut:.1f} Lab (otsu, {len(dists):,} pairs)")
-    return by_e, cut, med_diag
+    for i, c in zip(kept_idx, cid):
+        e, sv, x, y, a, b, mem = entries[int(i)]
+        by_e[int(e)].append(((e, sv, x, y, int(a), int(b), None),
+                             int(c)))
+    return by_e, med_diag
 
 
-def transitions(by_e, cut, med_diag):
-    """Per episode: colour-cluster the entries, merge across views by
-    colour + time overlap, then per colour the ITINERARY of rest
-    spells; consecutive spells = one manipulation each."""
+def transitions(by_e, med_diag):
+    """Spells per (episode, kind) merged across views by time overlap;
+    per-kind itineraries -> transitions."""
     seqs = {}
-    for e, rr in by_e.items():
-        # colour clusters (slots by first appearance in time)
-        rr = sorted(rr, key=lambda r: r[4])
-        reps, cid = [], []
-        for r in rr:
-            hit = None
-            for lab0, sid in reps:
-                if float(np.linalg.norm(r[6] - lab0)) <= cut:
-                    hit = sid
-                    break
-            if hit is None:
-                hit = len(reps)
-                reps.append((r[6], hit))
-            cid.append(hit)
-        # merge same-colour entries overlapping in time across views
-        # (one physical rest spell seen twice)
-        spells = {}                    # slot -> [(a, b, x, y)]
-        for r, s_ in zip(rr, cid):
-            e_, sv, x, y, a, b, _lab = r
-            lst = spells.setdefault(s_, [])
+    for e, rows in by_e.items():
+        spells = defaultdict(list)
+        for r, c in rows:
+            _, sv, x, y, a, b, _ = r
+            lst = spells[c]
             hit = None
             for sp in lst:
                 if a <= sp[1] + int(1.0e9) and b >= sp[0] - int(1.0e9):
                     hit = sp
                     break
             if hit is None:
-                lst.append([a, b, x, y, 1])
+                lst.append([int(a), int(b), float(x), float(y)])
             else:
-                hit[0] = min(hit[0], a)
-                hit[1] = max(hit[1], b)
-        # itineraries -> transitions
+                hit[0] = min(hit[0], int(a))
+                hit[1] = max(hit[1], int(b))
         trans = []
-        for s_, lst in spells.items():
+        for c, lst in spells.items():
             lst.sort()
             for i in range(1, len(lst)):
-                dep = lst[i - 1][1]
-                arr = lst[i][0]
                 d = float(np.hypot(lst[i][2] - lst[i - 1][2],
                                    lst[i][3] - lst[i - 1][3]))
-                trans.append((dep, arr, s_, d))
+                trans.append((lst[i - 1][1], lst[i][0], c, d))
         trans.sort()
         seqs[e] = trans
     return seqs
@@ -268,8 +305,8 @@ def main():
     store = ROOT / (argv[argv.index("--store") + 1]
                     if "--store" in argv else "lake/sim_chains")
     db = Store.open(str(store))
-    by_e, cut, med_diag = ledgers(db)
-    seqs_t = transitions(by_e, cut, med_diag)
+    by_e, med_diag = ledgers(db)
+    seqs_t = transitions(by_e, med_diag)
     print(f"episodes {len(seqs_t)}, mean transitions "
           f"{np.mean([len(v) for v in seqs_t.values()]):.1f}")
     seqs = tokenise(seqs_t)
