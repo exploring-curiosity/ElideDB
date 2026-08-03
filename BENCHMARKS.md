@@ -891,3 +891,13 @@ the events log (v12). Findings: 12-d kinematic manifold clusters as
 boundary-kind alternation in the original tokens carries structure the
 whole-event profile collapses. Next: token-ise hold-state ALTERNATION
 (acquire/carry/release segments) instead of clustering event profiles.
+
+### Event-typing attempt 2: hold-alternation tokens (2026-08-03) - negative
+
+Mean segments/episode = 1.0: no alternation exists in the derivable
+hold signal, because `contact` = overlap with the WHOLE-ARM agent box
+(49% of participant samples fire) and no element records the gripper.
+CONVERGENT CONCLUSION with the mover-binding plateau: the write path
+needs a HAND sub-element (end-effector position + touch state) in
+trajectories. One requirement now gates both open fronts and the
+chain oracle gap (0.34 measured vs 1.00 ceiling).
