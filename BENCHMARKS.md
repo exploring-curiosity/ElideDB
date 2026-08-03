@@ -1005,3 +1005,24 @@ remaining gap. Route 2 - a tracker that HOLDS the carried block
 through the gripper, and cleaner proposals around the arm - is the
 one open road to chain-QbE 0.90. Gates unchanged: cap analysis
 (units + oracle slots -> toward 0.99), then the benchmark.
+
+## 2026-08-03 — Route 2 lab-side driven to bedrock
+
+Rest-ledger (object permanence as bookkeeping): the design dissolves
+the unpairable blind gap by construction, and each sub-iteration
+audit named the next stratum down - junk entries (46 vs 8 real/ep-
+view), an achromatic entry-colour space, lighting-broken within-
+episode colour constancy (smooth pair-distance decay, no
+bimodality; absolute classification survives what relative
+clustering cannot), and finally ENTRY UNDER-COVERAGE: a block's
+second resting spell usually produces no entry (transitions 0.3/ep
+vs 3.5 true). Benchmarks throughout: 0.19-0.26.
+
+FLOOR OF THE PROGRAM, now reached from every direction: per-frame
+object detection quality at the write. The generic proposer's soup
+(shadows, glare, arm fragments, missed blocks) caps every downstream
+mechanism - binding, typing, segmentation, timelines, ledgers. Next
+project: detection/tracking surgery in the write path (build_dinov3
+proposer layer), then re-run this entire measured ladder, whose
+instruments (oracle, cap analysis, decidability panels, colour
+controls) are all built and waiting.
