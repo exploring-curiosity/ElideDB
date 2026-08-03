@@ -856,3 +856,26 @@ quality around the gripper, and event-geometry (vanish/appear site)
 disambiguation. Also on record: the criteria are corpus-agnostic
 principles, but their selection was eval-guided against the sim
 control - same standing as the QbE mechanism program.
+
+## 2026-08-02 — Chain retrieval: mechanism validated, elements attributed
+
+chain_qbe.py: episode = event sequence (instance identity abstracted
+to SLOTS by first-appearance order), similarity = length-normalised
+Needleman-Wunsch, same seeds/k-ceiling as the appearance smoke.
+
+| configuration | swap | precarious | push_build | build_unstack |
+|---|---|---|---|---|
+| appearance fusion (baseline) | 0.20 | 0.55 | 0.10 | 0.15 |
+| chain: store kind-only | 0.25 | 0.35 | **0.55** | 0.20 |
+| chain: + slots + motion | 0.20 | 0.20 | 0.20 | 0.15 |
+| **chain: ORACLE (truth prims)** | **1.00** | **1.00** | **1.00** | **1.00** |
+
+(yield at k=1.5*sup; oracle prec 0.67 = every truth in the ceiling.)
+
+The reading, end to end: contextual retrieval by chain alignment WORKS
+- perfect recall with correct event tokens - and the entire remaining
+gap is write-path element quality, now attributed per component:
+event TYPING (types at majority-baseline purity vs primitives) is the
+biggest lever; slots wait on binding coherence (45%); motion carries
+nothing for chain shape. The write-path targets now have an
+end-to-end consumer metric.
