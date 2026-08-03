@@ -227,28 +227,30 @@ def motion_segments(db):
                 # primitive alphabet: place (0,0), stack (0,1),
                 # unstack (1,0), push (0,0)-short.
                 def on_at(ts_, mv, pos):
-                    # nearest-sample lookup: tracks are sparse and an
-                    # exact-ts join missed the base block almost always
+                    # ON = CO-LOCATION with a pre-existing RESTING
+                    # participant: a stack lands where a block already
+                    # sits, a place lands where nothing is. No vertical
+                    # test - single-view y confounds height with depth
+                    # (measured to noise) - but "something was already
+                    # there" is depth-robust.
                     if pos is None or ts_ is None:
                         return 0
                     import bisect as _bb
-                    for (e2, o2), (t2, x2, y2, _nd) in series.items():
+                    for (e2, o2), (t2, x2, y2, nd2) in series.items():
                         if e2 != e or o2 == mv:
                             continue
                         i2 = _bb.bisect_left(t2, ts_)
-                        best = None
                         for c_ in (i2 - 1, i2):
-                            if 0 <= c_ < len(t2) and \
-                                    abs(int(t2[c_]) - ts_) <= 0.5e9:
-                                best = c_
-                        if best is None:
-                            continue
-                        if abs(float(x2[best]) - pos[0]) \
-                                < 0.6 * med_diag and \
-                                0.15 * med_diag \
-                                < float(y2[best]) - pos[1] \
-                                < 1.3 * med_diag:
-                            return 1
+                            if not (0 <= c_ < len(t2)):
+                                continue
+                            if abs(int(t2[c_]) - ts_) > 0.5e9:
+                                continue
+                            if nd2[c_] >= thr:
+                                continue          # moving, not resting
+                            d2 = float(np.hypot(x2[c_] - pos[0],
+                                                y2[c_] - pos[1]))
+                            if d2 < 0.9 * med_diag:
+                                return 1
                     return 0
                 # qualifiers read the RESTING scene, not the fragment
                 # edge: the boundary sample is mid-air or in-gripper.
@@ -336,8 +338,13 @@ def colour_slots(db, merged, spans, med_diag=61.0):
             c = im[y0:int(pos[1]) + h, x0:int(pos[0]) + h]
             if c.size < 48:
                 continue
-            lab = cv2.cvtColor(c, cv2.COLOR_RGB2LAB).reshape(-1, 3)
-            labs[(e, si)] = lab.mean(0).astype(np.float32)
+            # centre core + MEDIAN Lab: the mean dragged table pixels
+            # in and the fitted cut ballooned to 101 units, merging
+            # distinct colours
+            hh, ww = c.shape[:2]
+            core = c[hh // 4:3 * hh // 4 + 1, ww // 4:3 * ww // 4 + 1]
+            lab = cv2.cvtColor(core, cv2.COLOR_RGB2LAB).reshape(-1, 3)
+            labs[(e, si)] = np.median(lab, 0).astype(np.float32)
     # fit the same/different cut from within-episode pair distances
     dists = []
     for e, ss in merged.items():
