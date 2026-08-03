@@ -804,3 +804,32 @@ times in a 27,680-interval proposal soup. Identity-by-appearance is at
 its ceiling on this corpus; the remaining link is EVENT-MEDIATED (the
 event knows its mover before and after the carry) - the join layer's
 next mechanism, with the sim truthset as its gradeable target.
+
+### Binding + identity, final state (2026-08-02, commits 28abb3c..f0782ca)
+
+| metric (truth audit) | start | final |
+|---|---|---|
+| objects | 21,492 | 3,889 |
+| identities per true block | 2.67 | **1.76** |
+| same-block event id consistency | 8% | **45%** |
+| events object-bound | 95% | 100% |
+| kind AUC via truth labels | 0.51 | 0.57 (0.79 via pixel-colour control) |
+
+What moved it: two-stage identity (continuity components + calibrated
+merge) x agent-appearance veto (4,197 arm-fragment tracks excluded from
+mover candidacy) x contact-gated mover selection. What is measured and
+still open: absolute mover correctness - the colour control puts the
+bound object at the true mover's colour only ~13-17% (small-n; most
+bound tracks are not colour-labelable crops), so binding is now far
+more COHERENT (same id for the same block) while often still anchored
+to a nearby proposal rather than the block crop itself. Next front:
+candidate quality at the grip point, graded on the sim colour control.
+
+The user's cosine challenge, answered with numbers: instance matching
+of pooled crop descriptors across positions is genuinely weak (same
+block across a carry 0.60 vs different blocks 0.40, AUC 0.72; pooled
+interval descriptors invert entirely - same 0.54 vs different-tail
+0.86, context domination). Cosine is not the sin; the pooled, context-
+dominated representation is - and no cut on it can both bridge carries
+and keep instances apart. Continuity and agent-mediated structure, not
+appearance, carry within-episode identity.
