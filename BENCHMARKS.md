@@ -985,3 +985,23 @@ systematic negative that redirects the 0.90 program to either a
 boundary-free representation (slot-activity timelines, agent-colour-
 suppressed crops) or a write-path tracker that holds the carried
 block through the gripper.
+
+### Route 1: slot-activity timeline (2026-08-03) - closed negative
+
+Boundary-free representation (per-0.5s "which colour moves" timeline,
+agent-colour-suppressed crops): benchmark 0.24 dev / 0.33 holdout,
+coloured-bin coverage 0.63 - and the audit that explains it: per-bin
+colour matches the TRUE mover 14% of the time. At-rest colour reads
+measured 0.78 earlier; in-motion reads fail even with suppression,
+and the strongest-mover-per-bin selection lands on proposal junk.
+The representation dissolves the pairing problem as designed, but no
+representation survives 14%-reliable primitives when the oracle needs
+~95% sequence fidelity.
+
+FOUR INDEPENDENT NEGATIVES now converge (mover binding plateau ~15%,
+kinematic typing, gap-pairing decidability panel, in-motion colour):
+the write path's per-moment mover identification is the entire
+remaining gap. Route 2 - a tracker that HOLDS the carried block
+through the gripper, and cleaner proposals around the arm - is the
+one open road to chain-QbE 0.90. Gates unchanged: cap analysis
+(units + oracle slots -> toward 0.99), then the benchmark.
