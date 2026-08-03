@@ -901,3 +901,36 @@ CONVERGENT CONCLUSION with the mover-binding plateau: the write path
 needs a HAND sub-element (end-effector position + touch state) in
 trajectories. One requirement now gates both open fronts and the
 chain oracle gap (0.34 measured vs 1.00 ceiling).
+
+## 2026-08-03 — Chain-QbE 0.90 run: single-view ceiling measured
+
+Target: chain-template yield >= 0.90 (oracle: 1.00). Iteration ladder,
+each rung audited against sim truth (film or truthset):
+
+| configuration | dev mean yield | holdout |
+|---|---|---|
+| event kinds (best prior) | 0.337 | - |
+| motion segments, first cut | 0.250 | 0.225 |
+| + vetoes, per-track speeds | 0.175 | 0.200 |
+| + windowed net displacement | 0.212 | 0.175 |
+| + scale-anchored threshold | 0.175 | 0.250 |
+| + rest-backed participants (otsu) | 0.213 | 0.150 |
+| + ON-relation qualifiers | 0.312 | 0.200 |
+| + colour slots (rest crops) | 0.262 | **0.350** |
+| z-fusion (moves+kinds+appearance) | 0.337 | 0.300 |
+
+Segmentation is structurally right (6.9 segs/ep vs 5-8 true, 91% of
+segments on a real manipulation). The walls, each measured: carries go
+BLIND inside the gripper (31% of manipulations fully covered; grasp +
+release fragments rejoin by no available signal); single-view image y
+irreducibly confounds tower height with table depth (ON-relations at
+noise); identity across a carry 0.54 cosine; rest-crop colours
+contaminated. Fusion does not lift (correlated failures).
+
+VERDICT: ~0.34 is the single-view element ceiling; 0.90 requires
+TWO-VIEW GEOMETRY. Every episode's second camera is already on disk;
+cross-view time sync is free (shared clock). The build: ingest the
+second stream, associate rest-crops across views (appearance, no
+text), estimate per-episode table homography from static structure,
+triangulate heights -> real ON-relations + end heights + repaired
+slots -> re-run this ladder. Oracle says the mechanism is waiting.
