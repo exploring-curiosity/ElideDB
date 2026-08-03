@@ -622,6 +622,41 @@ def interval_pairs(rows, iou_diff=0.1, iou_same=0.8, start_frac=0.25):
     return neg, pos
 
 
+def handoff_pairs(rows, gap_s=1.0, iou_min=0.5):
+    """Proven-same evidence every corpus produces in BULK: track handoffs.
+
+    An interval that ends and another that begins at the same place
+    within `gap_s` is one object twice - things do not teleport, and
+    nothing else can arrive at that exact spot that fast. This is the
+    within-group continuity that double-detection positives cannot
+    supply (a clean proposer produces almost none: 77 pairs on the sim
+    corpus vs 927k negatives), and it is exactly the decision event
+    binding depends on: "is the block after the occlusion the block
+    from before it".
+
+    The retained box is the track's FIRST box, so a pair is emitted only
+    when the dying track's origin still overlaps the resuming track's
+    origin - true for the static objects that dominate any corpus, a
+    miss (never a mislabel) for objects whose track broke mid-flight.
+    """
+    from bisect import bisect_right
+    by = {}
+    for i, r in enumerate(rows):
+        by.setdefault(r[0], []).append(i)
+    out = []
+    gap = int(gap_s * 1e9)
+    for idxs in by.values():
+        idxs.sort(key=lambda i: rows[i][1]["ts"])
+        ts = [rows[i][1]["ts"] for i in idxs]
+        for i in idxs:
+            e = rows[i][1]["t1"]
+            for k in range(bisect_right(ts, e), bisect_right(ts, e + gap)):
+                j = idxs[k]
+                if _iou(rows[i][1]["box"], rows[j][1]["box"]) >= iou_min:
+                    out.append((i, j) if i < j else (j, i))
+    return out
+
+
 def calibrate(V, pairs, pos=None, q=CAL_Q, floor=0.5, ceil=0.95):
     """Fit the match cut from proven pairs, on this corpus.
 
@@ -662,7 +697,7 @@ def calibrate(V, pairs, pos=None, q=CAL_Q, floor=0.5, ceil=0.95):
     return float(np.clip(grid[int(j.argmax())], floor, ceil)), len(neg)
 
 
-def fit_cut(V, groups, neg, pos=None, grid=None):
+def fit_cut(V, groups, neg, pos=None, grid=None, handoff=None):
     """Fit the cut by MAXIMISING what identity is actually for.
 
     Both free samples - proven-different and proven-same - are SAME-FRAME
@@ -706,6 +741,8 @@ def fit_cut(V, groups, neg, pos=None, grid=None):
         grid: candidate cuts. Defaults to percentiles of the proven-
               different similarities, so the range adapts to the corpus
               rather than being a hand-written span.
+        handoff: track-handoff proven-same pairs (handoff_pairs). When
+              supplied in bulk they CONSTRAIN the objective - see below.
     Returns:
         (cut, report) - report lists every candidate that was tried.
     """
@@ -714,13 +751,15 @@ def fit_cut(V, groups, neg, pos=None, grid=None):
     span = int(g.max()) + 2
     N = np.asarray(neg, np.int64).reshape(-1, 2)
     Pp = np.asarray(pos if pos is not None else [], np.int64).reshape(-1, 2)
+    H = np.asarray(handoff if handoff is not None else [],
+                   np.int64).reshape(-1, 2)
     if grid is None:
         s = (np.einsum("ij,ij->i", V[N[:, 0]], V[N[:, 1]]) if len(N)
              else np.array([MATCH]))
         grid = np.unique(np.round(np.percentile(
             s, [90, 95, 97.5, 99, 99.3, 99.5, 99.7, 99.9]), 3))
-    report = []
-    for cut in grid:
+
+    def _row(cut):
         ids = Gallery(match=float(cut)).assign(V)
         n = int(ids.max()) + 1
         # objects present in more than one group
@@ -736,8 +775,33 @@ def fit_cut(V, groups, neg, pos=None, grid=None):
         if len(Pp):
             row["recovered_pct"] = round(100.0 * float(
                 (ids[Pp[:, 0]] == ids[Pp[:, 1]]).mean()), 1)
-        report.append(row)
-    best = max(report, key=lambda r: r["recur"])
+        if len(H):
+            row["handoff_pct"] = round(100.0 * float(
+                (ids[H[:, 0]] == ids[H[:, 1]]).mean()), 1)
+        return row
+
+    def _pick(rep):
+        # Recurrence alone is GAMEABLE BY FRAGMENTATION on a lookalike
+        # corpus: identical twins across episodes mean noise-clusters of
+        # one kind still span groups, so the count keeps rising as the
+        # cut climbs while real objects shatter (measured on the sim
+        # store: 21,492 objects for ~450 true blocks, 2.67 ids per
+        # block, 8% same-block event agreement). A cut that cannot
+        # re-find an object across a one-second track break identifies
+        # nothing - so when handoff pairs exist in bulk, continuity
+        # recovery is a CONSTRAINT on the recurrence objective, not a
+        # tiebreaker: maximise recurrence among cuts that recover >=70%
+        # of handoffs, and if none does, take the best recovery there is.
+        if len(H) >= 30:
+            ok = [r for r in rep if r.get("handoff_pct", 0.0) >= 70.0]
+            if ok:
+                return max(ok, key=lambda r: r["recur"])
+            return max(rep, key=lambda r: (r.get("handoff_pct", 0.0),
+                                           r["recur"]))
+        return max(rep, key=lambda r: r["recur"])
+
+    report = [_row(cut) for cut in grid]
+    best = _pick(report)
     # The grid is percentiles of the proven-DIFFERENT similarities, and
     # that anchor breaks when the descriptor is much better than the
     # negatives are hard: recurrence keeps rising past the negatives'
@@ -749,26 +813,12 @@ def fit_cut(V, groups, neg, pos=None, grid=None):
     # or the ceiling is reached - the fit must end bracketed, not
     # truncated by an artifact of where the negatives happened to end.
     while best["cut"] == report[-1]["cut"] and best["cut"] < 0.985:
-        cut = round(best["cut"] + (0.99 - best["cut"]) / 2, 3)
-        ids = Gallery(match=float(cut)).assign(V)
-        n = int(ids.max()) + 1
-        u = np.unique(ids.astype(np.int64) * span + g)
-        per = np.bincount((u // span).astype(np.int64), minlength=n)
-        row = {"cut": float(cut), "objects": n,
-               "recur": int((per > 1).sum()),
-               "singleton_pct": round(100.0 * float(
-                   (np.bincount(ids) == 1).mean()), 1)}
-        if len(N):
-            row["false_merge_pct"] = round(100.0 * float(
-                (ids[N[:, 0]] == ids[N[:, 1]]).mean()), 3)
-        if len(Pp):
-            row["recovered_pct"] = round(100.0 * float(
-                (ids[Pp[:, 0]] == ids[Pp[:, 1]]).mean()), 1)
-        report.append(row)
-        if row["recur"] > best["recur"]:
-            best = row
-        else:
+        report.append(_row(round(best["cut"]
+                                 + (0.99 - best["cut"]) / 2, 3)))
+        nxt = _pick(report)
+        if nxt["cut"] == best["cut"]:
             break
+        best = nxt
     return best["cut"], report
 
 

@@ -50,7 +50,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from elidedb import Store                                      # noqa: E402
 from elidedb.identity import (Gallery, calibrate,              # noqa: E402
-                              fit_cut, interval_pairs)
+                              fit_cut, handoff_pairs, interval_pairs)
 
 
 def load(db):
@@ -61,7 +61,13 @@ def load(db):
                                           OV["t1"], OV["object_id"]))}
     idx = np.array([key[k] for k in zip(P["stream"], P["ts"], P["t1"],
                                         P["object_id"])])
-    V = np.asarray(OV["vector"], np.float32).reshape(-1, 512)[idx]
+    # dim from the data, never hardcoded: the nano-ReID era's 512 was
+    # left here through the DINOv3 rebuild to 768-d, and reshape(-1,512)
+    # SCRAMBLED every row - proven-SAME pairs measured 0.045 cosine
+    # while proven-different tails sat at 0.91, an impossible inversion
+    # that made every refit sweep since the rebuild pure noise.
+    dim = len(OV["vector"][0])
+    V = np.asarray(OV["vector"], np.float32).reshape(-1, dim)[idx]
     V /= np.linalg.norm(V, axis=1, keepdims=True) + 1e-8
     rows = [(str(s), {"ts": int(a), "t1": int(b), "box": list(bx)})
             for s, a, b, bx in zip(P["stream"], P["ts"], P["t1"], P["box"])]
@@ -127,8 +133,9 @@ def main():
 
     t = time.time()
     neg, pos = interval_pairs(rows)
+    hand = handoff_pairs(rows)
     print(f"  proven-different {len(neg):,}   proven-same {len(pos):,}   "
-          f"({time.time() - t:.0f}s)")
+          f"handoffs {len(hand):,}   ({time.time() - t:.0f}s)")
     # every co-existing pair, disjoint or not: the sample the cut used to
     # be fitted on, kept here so the contamination is visible, not argued
     allco, _ = interval_pairs(rows, iou_diff=1.01)
@@ -137,21 +144,85 @@ def main():
     print(f"  cut on CLEAN negatives        (box-disjoint,      "
           f"n={len(neg):,})  {calibrate(V, neg)[0]:.3f}")
 
+    # CONTINUITY FIRST. Measured with true vectors: handoff recovery
+    # tops out at 38% at the loosest sensible cut, where false-merges
+    # already run 2.5% - NO single appearance cut can deliver both
+    # continuity and separation, because the pooled track descriptor
+    # genuinely drifts across a break. But a handoff IS identity, by
+    # geometry, needing no descriptor at all. So intervals are chained
+    # into continuity components (union-find over handoff pairs) and
+    # appearance merges COMPONENTS - "identity rides on tracks" taken
+    # to its conclusion. Binding inherits the part it needs for free:
+    # the same block before and after an occlusion break is one
+    # component by construction.
+    parent = list(range(len(rows)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i, j in hand:
+        parent[find(i)] = find(j)
+    comp = np.array([find(i) for i in range(len(rows))])
+    _, comp = np.unique(comp, return_inverse=True)
+    nc = int(comp.max()) + 1
+    C = np.zeros((nc, V.shape[1]), np.float32)
+    np.add.at(C, comp, V)
+    C /= np.maximum(np.linalg.norm(C, axis=1, keepdims=True), 1e-8)
+    # component episode + assignment order: earliest member close
+    first = np.full(nc, np.iinfo(np.int64).max, np.int64)
+    cepi = np.zeros(nc, np.int64)
+    for k in range(len(rows)):
+        t1_ = int(rows[k][1]["t1"])
+        if t1_ < first[comp[k]]:
+            first[comp[k]] = t1_
+            cepi[comp[k]] = epi[k]
+    print(f"  continuity components: {nc:,} from {len(rows):,} intervals")
+    # negatives lifted to components; a component pair is proven
+    # different if any member pair is
+    seen = set()
+    neg_c = []
+    for i, j in neg:
+        a, b = int(comp[i]), int(comp[j])
+        if a != b and (min(a, b), max(a, b)) not in seen:
+            seen.add((min(a, b), max(a, b)))
+            neg_c.append((min(a, b), max(a, b)))
+    co = np.argsort(first)
+    cback = np.empty(nc, np.int64)
+    cback[co] = np.arange(nc)
+    remap = {int(o_): n for n, o_ in enumerate(co)}
+    neg_co = [(remap[a], remap[b]) for a, b in neg_c]
+
     t = time.time()
-    cut, report = fit_cut(V, epi, neg, pos)
-    print(f"\n  swept against cross-episode recurrence "
-          f"({time.time() - t:.0f}s):")
+    # The component cut comes from CALIBRATE, not the recurrence sweep:
+    # with continuity consumed into the components there is no proven-
+    # same evidence left at this level, and recurrence alone re-picked
+    # the fragmenting top edge (21,154 objects - measured). One-sided
+    # calibration on the clean lifted negatives is the honest remaining
+    # signal: tighter than all but 0.5% of proven-different pairs.
+    cut = calibrate(C[co], neg_co)[0]
+    _, report = fit_cut(C[co], cepi[co], neg_co,
+                        grid=sorted({round(cut, 3), 0.68, 0.74, 0.80,
+                                     0.86, 0.90, 0.94}))
+    print(f"\n  component-level sweep (record only; cut CALIBRATED "
+          f"from clean negatives) ({time.time() - t:.0f}s):")
     print(f"    {'cut':>6}{'objects':>9}{'singl%':>8}{'RECUR':>8}"
-          f"{'false-merge':>13}{'recovered':>11}")
+          f"{'false-merge':>13}{'recovered':>11}{'handoff':>9}")
     for r in report:
         print(f"    {r['cut']:>6.3f}{r['objects']:>9,}"
               f"{r['singleton_pct']:>8.1f}{r['recur']:>8,}"
               f"{r.get('false_merge_pct', 0):>12.3f}%"
               f"{r.get('recovered_pct', 0):>10.1f}%"
+              f"{r.get('handoff_pct', 0):>8.1f}%"
               + ("   <- fit" if r["cut"] == cut else ""))
 
+    print("  (continuity pairs are same-component by construction; the "
+          "sweep decides only cross-component merging)")
     old = np.asarray(P["object_id"], np.int32)[o]
-    ids = Gallery(match=cut).assign(V)
+    cid = np.asarray(Gallery(match=cut).assign(C[co]))
+    ids = cid[cback[comp]]
     a, b = shape(old, epi), shape(ids, epi)
     print(f"\n  {'':<10}{'objects':>9}{'singl%':>9}{'recur':>8}{'largest':>9}")
     print(f"  {'before':<10}{a[0]:>9,}{a[1]:>9.1f}{a[2]:>8,}{a[3]:>9,}")
@@ -177,7 +248,8 @@ def main():
                         for c in tb.column_names})
         db.table(name).replace(out, kind="index",
                                meta={"match_cut": round(float(cut), 3),
-                                     "fit": "cross-episode recurrence"})
+                                     "fit": "recurrence s.t. handoff"
+                                            ">=70%"})
         print(f"  rewrote {name}: {len(out):,} rows")
 
     # participants are stated as object:<id>, and the ids just changed
