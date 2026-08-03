@@ -81,10 +81,16 @@ def view_segments(db):
         * max(int(d["y1"][i]) - int(d["y0"][i]), 1)
         for i in range(len(d["ts"])) if d["is_agent"][i]])
 
+    agents = defaultdict(list)        # (e, sv) -> [(ts, x, y)]
     per_obj = defaultdict(list)
     areas = defaultdict(list)
     for i in range(len(d["ts"])):
         if d["is_agent"][i]:
+            e = spans[bisect.bisect_right(starts,
+                                          int(d["ts"][i])) - 1][1]
+            agents[(e, str(d["stream"][i]))].append(
+                (int(d["ts"][i]), int(d["x0"][i]), int(d["y0"][i]),
+                 int(d["x1"][i]), int(d["y1"][i])))
             continue
         k = (str(d["stream"][i]), int(d["track_ts"][i]),
              int(d["t1"][i]), int(d["object_id"][i]))
@@ -153,7 +159,9 @@ def view_segments(db):
                 segs[(e, sv)].append((int(a), int(b), int(mover)))
             if ts_ is not None:
                 run = [ts_]
-    return segs, series, med_diag, thr
+    for v in agents.values():
+        v.sort()
+    return segs, series, med_diag, thr, agents
 
 
 def landing(series, e, sv, ts, thr, after, anchor=None, max_d=None):
@@ -278,7 +286,7 @@ def on_at(series, e, sv, mover, pos, ts, med_diag, thr, g=None):
 
 def units(db):
     """Cross-view manipulation units per episode + qualifiers."""
-    segs, series, med_diag, thr = view_segments(db)
+    segs, series, med_diag, thr, agents = view_segments(db)
     grav = fit_gravity(series, segs)
     print(f"fitted gravity projections: {len(grav)} (episode, view) pairs")
     out = {}
@@ -397,7 +405,7 @@ def units(db):
         us = us2
         us.sort()
         out[e] = us
-    return out, med_diag, series, thr
+    return out, med_diag, series, thr, agents
 
 
 class Cropper:
@@ -482,70 +490,84 @@ def unit_colours(db, uu, med_diag):
     return labs, cut, cr
 
 
-def pair_fragments(uu, series, med_diag, thr, cr):
-    """THE discriminator, on EXACT anchors: a completed manipulation
-    leaves a resting track BORN at the unit's own last in-motion
-    position; a grasp fragment ends mid-carry where nothing ever
-    rests. Symmetrically a release fragment begins mid-carry - no
-    resting track DIES at its first position. Merge open-tail units
-    into open-head successors inside the corpus-fitted window. The
-    guessed-landing anchors of earlier versions found neighbour blocks
-    and self-poisoned every test built on them (measured: 2/591, then
-    86/272 merges); the unit's own motion endpoints are not guesses."""
+def pair_fragments(uu, agents, med_diag):
+    """THE fix, from first principles: the AGENT bridges the blind
+    gap. During a carry the arm travels FROM the fragment's end TO the
+    resumption point - for every gap moment it stays on the path, so
+    d(agent, p1) + d(agent, p2) - d(p1, p2) stays small (the ellipse
+    with foci at the two fragments' own motion endpoints). Between two
+    SEPARATE manipulations the arm RETREATS - it leaves the ellipse.
+    The agent is the one element tracked 100%; anchors are the units'
+    own exact endpoints; the tolerance is Otsu-fitted from the
+    corpus's own excess distribution. No crops, colours or identity.
+    """
+    import bisect
     durs = [(u[1] - u[0]) / 1e9 for v in uu.values() for u in v]
     win_s = float(np.percentile(durs, 95)) if durs else 4.0
     print(f"fitted pairing window: {win_s:.1f}s (P95 unit duration)")
 
-    def rest_at(e, anchors, ts_, born):
-        for sv, pos in anchors.items():
-            for (e2, sv2, o2), (t2, x2, y2, nd2) in series.items():
-                if e2 != e or sv2 != sv or len(t2) < 3:
-                    continue
-                if born:
-                    dt = (int(t2[0]) - ts_) / 1e9
-                    px_, py_ = float(x2[0]), float(y2[0])
-                    still = float(np.median(nd2[:3])) < thr
-                else:
-                    dt = (ts_ - int(t2[-1])) / 1e9
-                    px_, py_ = float(x2[-1]), float(y2[-1])
-                    still = float(np.median(nd2[-3:])) < thr
-                if -0.5 <= dt <= 2.0 and still and np.hypot(
-                        px_ - pos[0], py_ - pos[1]) < 1.5 * med_diag:
-                    return True
-        return False
+    def excess(e, prev, cur):
+        vals = []
+        for sv in ("simA", "simB"):
+            p1 = prev[7].get(sv)
+            p2 = cur[6].get(sv)
+            ag = agents.get((e, sv))
+            if p1 is None or p2 is None or not ag:
+                continue
+            ts_a = [r[0] for r in ag]
+            lo = bisect.bisect_left(ts_a, prev[1])
+            hi = bisect.bisect_right(ts_a, cur[0])
+            if hi <= lo:
+                continue
+            base = float(np.hypot(p1[0] - p2[0], p1[1] - p2[1]))
 
-    out, colours = {}, {}
-    n_merge = n_open = 0
+            def dbox(bx, pt):
+                # point-to-box distance: the gripper is somewhere in
+                # the agent box, and the whole-arm CENTROID mutes the
+                # retreat signal (measured: merges at the centroid bar
+                # dropped the oracle cap)
+                cx = min(max(pt[0], bx[1]), bx[3])
+                cy = min(max(pt[1], bx[2]), bx[4])
+                return float(np.hypot(pt[0] - cx, pt[1] - cy))
+
+            worst = 0.0
+            for i in range(lo, hi):
+                bx = ag[i]
+                worst = max(worst, dbox(bx, p1) + dbox(bx, p2) - base)
+            vals.append(float(worst))
+        return min(vals) if vals else None
+
+    # pass 1: candidate excesses, corpus-wide -> fitted bar
+    exs = []
+    for e, us in uu.items():
+        for i in range(1, len(us)):
+            if (us[i][0] - us[i - 1][1]) / 1e9 < win_s:
+                v = excess(e, us[i - 1], us[i])
+                if v is not None:
+                    exs.append(v)
+    bar = otsu(np.log10(np.array(exs) + 1.0)) if exs else 2.0
+    bar = 10 ** bar
+    print(f"fitted ellipse-excess bar: {bar:.0f}px "
+          f"({len(exs)} candidate gaps)")
+
+    out = {}
+    n_merge = 0
     for e, us in uu.items():
         merged = []
         for u in us:
-            a, b = u[0], u[1]
-            head_open = not rest_at(e, u[6], a, born=False)
-            if merged:
-                prev = merged[-1]
-                tail_open = not rest_at(e, prev[7], prev[1], born=True)
-                if tail_open:
-                    n_open += 1
-                if tail_open and head_open and \
-                        (a - prev[1]) / 1e9 < win_s:
+            if merged and (u[0] - merged[-1][1]) / 1e9 < win_s:
+                v = excess(e, merged[-1], u)
+                if v is not None and v <= bar:
                     n_merge += 1
-                    merged[-1] = (prev[0], b,
-                                  prev[2] and u[2], 0,
-                                  prev[4] + u[4], prev[5] + u[5],
-                                  prev[6], u[7], prev[8] + u[8])
+                    pv = merged[-1]
+                    merged[-1] = (pv[0], u[1], pv[2] and u[2], 0,
+                                  pv[4] + u[4], pv[5] + u[5],
+                                  pv[6], u[7], pv[8] + u[8])
                     continue
             merged.append(u)
         out[e] = merged
-        # ROBUST unit colour: median Lab over the unit's own IN-MOTION
-        # mover crops - the block is at those points by construction,
-        # against one guessed boundary crop that was often a neighbour
-        for ui2, m in enumerate(merged):
-            vals = [v for sv, pos, ts_ in m[8]
-                    if (v := cr.lab(sv, pos, ts_)) is not None]
-            colours[(e, ui2)] = (np.median(np.stack(vals), 0)
-                                 .astype(np.float32) if vals else None)
-    print(f"fragment pairing: {n_merge} merges ({n_open} open tails)")
-    return out, colours
+    print(f"fragment pairing: {n_merge} merges (agent-bridge ellipse)")
+    return out
 
 
 def assign_slots(uu, colours, cut):
@@ -574,12 +596,21 @@ def main():
     store = ROOT / (argv[argv.index("--store") + 1]
                     if "--store" in argv else "lake/sim_chains")
     db = Store.open(str(store))
-    uu0, med_diag, series, thr = units(db)
+    uu0, med_diag, series, thr, agents = units(db)
     print(f"episodes {len(uu0)}, raw units "
           f"{np.mean([len(v) for v in uu0.values()]):.1f}")
     cr = Cropper(db, med_diag)
-    uu, colours = pair_fragments(uu0, series, med_diag, thr, cr)
+    uu = pair_fragments(uu0, agents, med_diag)
     print(f"paired units {np.mean([len(v) for v in uu.values()]):.1f}")
+    # slot colours from LANDING-side crops of the merged units (the
+    # in-motion variant measured gripper-contaminated)
+    colours = {}
+    for e, us in uu.items():
+        for ui, u in enumerate(us):
+            vals = [v for sd, sv, pos, ts_ in u[5] if sd == "land"
+                    and (v := cr.lab(sv, pos, ts_)) is not None]
+            colours[(e, ui)] = (np.median(np.stack(vals), 0)
+                                .astype(np.float32) if vals else None)
     dists = []
     for e in uu:
         vs = [colours[(e, ui)] for ui in range(len(uu[e]))
