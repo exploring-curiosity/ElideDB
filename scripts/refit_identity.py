@@ -74,6 +74,71 @@ def load(db):
     return P, V, rows
 
 
+def carry_bridges(db, rows, boundary_s=0.6, carry_max_s=4.0):
+    """Continuity THROUGH THE AGENT: a track that dies in agent contact
+    and a track that begins in agent contact seconds later are the same
+    carried object - the agent's own track is continuous across the
+    move, and it held exactly one thing.
+
+    This is the bridge the object's pixels cannot supply. Measured on
+    the sim store: the same block's identities across a carry sit at
+    0.54 median cosine - no appearance cut both merges them (4.7% at
+    the calibrated cut) and keeps precision (false merges already 2.5%
+    by 0.68). Geometry-through-the-agent needs no descriptor at all.
+
+    An edge is added only when the pairing is UNAMBIGUOUS: exactly one
+    resuming candidate for the dying track and exactly one dying
+    candidate for the resuming track. Ambiguity (two blocks breaking
+    around the same grasp) yields a skip, never a guess.
+    """
+    import pyarrow.compute as pc
+    tr = db.table("trajectories").scan()
+    tr = tr.select(["stream", "track_ts", "t1", "ts", "contact",
+                    "is_agent"])
+    d = tr.to_pydict()
+    head, tail, agent, span = {}, {}, {}, {}
+    b_ns = int(boundary_s * 1e9)
+    for i in range(len(d["ts"])):
+        k = (str(d["stream"][i]), int(d["track_ts"][i]), int(d["t1"][i]))
+        ts_ = int(d["ts"][i])
+        a0, a1 = k[1], k[2]
+        span[k] = (a0, a1)
+        agent[k] = agent.get(k, False) or bool(d["is_agent"][i])
+        if d["contact"][i]:
+            if ts_ - a0 <= b_ns:
+                head[k] = True
+            if a1 - ts_ <= b_ns:
+                tail[k] = True
+    # presence row index per track key
+    idx_of = {}
+    for i, (s, m) in enumerate((r[0], r[1]) for r in rows):
+        idx_of[(s, int(m["ts"]), int(m["t1"]))] = i
+    enders = sorted((k for k in span if not agent[k] and tail.get(k)
+                     and k in idx_of), key=lambda k: k[2])
+    starters = sorted((k for k in span if not agent[k] and head.get(k)
+                       and k in idx_of), key=lambda k: k[1])
+    gap = int(carry_max_s * 1e9)
+    out = []
+    from bisect import bisect_left, bisect_right
+    st_ts = [k[1] for k in starters]
+    for ke in enders:
+        lo = bisect_right(st_ts, ke[2])
+        hi = bisect_right(st_ts, ke[2] + gap)
+        cands = [starters[x] for x in range(lo, hi)
+                 if starters[x][0] == ke[0]]
+        if len(cands) != 1:
+            continue
+        kj = cands[0]
+        # mutual: kj's unique predecessor must be ke
+        preds = [k2 for k2 in enders
+                 if k2[0] == kj[0] and 0 < kj[1] - k2[2] <= gap]
+        if preds != [ke]:
+            continue
+        i, j = idx_of[ke], idx_of[kj]
+        out.append((i, j) if i < j else (j, i))
+    return out
+
+
 def episodes_of(db, rows):
     ep = db.table("episodes").scan().to_pydict()
     by = {}
@@ -134,8 +199,11 @@ def main():
     t = time.time()
     neg, pos = interval_pairs(rows)
     hand = handoff_pairs(rows)
+    bridge = carry_bridges(db, rows)
     print(f"  proven-different {len(neg):,}   proven-same {len(pos):,}   "
-          f"handoffs {len(hand):,}   ({time.time() - t:.0f}s)")
+          f"handoffs {len(hand):,}   carry-bridges {len(bridge):,}   "
+          f"({time.time() - t:.0f}s)")
+    hand = hand + bridge
     # every co-existing pair, disjoint or not: the sample the cut used to
     # be fitted on, kept here so the contamination is visible, not argued
     allco, _ = interval_pairs(rows, iou_diff=1.01)
