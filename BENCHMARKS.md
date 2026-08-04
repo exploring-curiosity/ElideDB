@@ -1165,3 +1165,33 @@ now proven at every layer): rebuild per-event detection at the write
 to ≥0.95 position-verified recall — segmenter-tracker class (SAM-3
 video) machinery, gated by chain_grade.py which now exists exactly
 for that.
+
+## 2026-08-04 — Pivot: domain-blind window sequences (native/seq*)
+
+Owner-directed rethink: event grammars are TABLETOP grammar, not
+physics — a product ingesting arbitrary robotics video (driving, ego,
+warehouse) cannot ship hand-derived or sim-trained event parsers, and
+two generations of fitted-cut cascades failed the same way. New write
+path: frozen pretrained V-JEPA 2 ViT-L over 2s/1s-stride windows;
+an episode IS its window-vector sequence; retrieval = temporal
+alignment. No events, no elements, no fitted semantic cuts, nothing
+domain-specific anywhere. Embed cost 12s/ep (sim), 3.1s/ep (kitchen
+demos), MPS fp16.
+
+**Sim (adversarial-structure corpus, the structural floor):**
+pool 0.28/0.23, dtw 0.26/0.30, **delta-DTW 0.30/0.43**, novelty
+0.24/0.25 (DEV/HOLDOUT yield). Matches the known ~0.45 ceiling for
+every non-symbolic representation on this corpus — sim_chains was
+BUILT appearance-confusable; it measures the extreme that belongs to
+the cloud reranker tier, not the fast path.
+
+**G1 tracker-substrate record (native/proto.py, banked):** two-stage
+CoTracker3 (scout + segm_mask dense) 17s/view; recall 1.00/1.00
+attainable unfiltered; best filtered 0.74/0.80 recall, 0.20 prec,
+0.74 slots after 11 fitted-cut iterations — the hand-derived layer
+oscillates exactly like its pixel-era predecessor. Event grammar
+retired per owner directive; tracker survives as an optional generic
+motion descriptor only.
+
+Kitchen (real-video product truth) running: protocol-exact QbE mirror
+(native/seqbench_kitchen.py) vs committed channel-fusion 0.94/0.90.
