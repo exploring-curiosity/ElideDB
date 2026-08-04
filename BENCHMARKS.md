@@ -1195,3 +1195,29 @@ motion descriptor only.
 
 Kitchen (real-video product truth) running: protocol-exact QbE mirror
 (native/seqbench_kitchen.py) vs committed channel-fusion 0.94/0.90.
+
+## 2026-08-04 — Kitchen (real video): window-sequence QbE measured
+
+Protocol-exact mirror of bench_qbe (same truthset, seeds, k). Single
+domain-blind channel, frozen V-JEPA 2 window sequences:
+
+| variant | q03 | q04 | q05 | note |
+|---|---|---|---|---|
+| delta-DTW (temporal alignment) | 0.38 | **0.61** | **0.72** | best on motion-heavy queries |
+| pooled (no temporal shape) | 0.39 | 0.37 | 0.38 | alignment DOUBLES q04/q05 |
+| committed 8-channel fusion | — | 0.94 | 0.90 | the shipped system |
+
+All-query mean (dtwd): 0.218 — low-support needle queries (q00,q01,
+q08-q10) stay ~0, same as every single channel ever measured.
+
+**Verdict.** Temporal alignment over pretrained window sequences is
+REAL — it doubles pooled performance on manipulation queries (0.37→
+0.61, 0.38→0.72) with zero domain knowledge, zero training, one
+encoder, and it transfers unchanged between sim and kitchen (the same
+two scripts produced both corpora's numbers). As a SINGLE channel it
+does not replace the fused system (0.94/0.90) — it slots in as the
+sequence-shape channel the fusion never had, and as the universal
+default for corpora where no elements exist (any fresh upload). The
+domain-blind write path is therefore: window sequences ALWAYS (works
+on anything, day one), element channels only where a domain earns
+them, cloud reranker for structure — which is the product architecture.
