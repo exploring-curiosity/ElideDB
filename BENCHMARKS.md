@@ -1088,3 +1088,44 @@ orange-hue collision, after-guard). Open front: event association /
 persistence interplay at set-down moments, or a real segmenter-tracker
 (SAM-3 video) at the write. Token design is NOT the bottleneck
 (ablation flat); slot mechanism is sound (0.88 agreement).
+
+## 2026-08-03 — The one-push battery: channels, selection, recall fix, cross-view
+
+One comprehensive push per user directive (no more one-at-a-time):
+stage-graded diagnosis, then every candidate signal built and measured
+in a single sweep. chain_channels.py + chain_xview.py + chain_delta
+bounded persistence.
+
+**Stage diagnosis (measured, 140 truth set-downs):** raw components
+1.00 → grouped 0.99 → persistence 0.70. Event-BOUNDED persistence
+(state persists until the next event at that spot; additive OR so it
+only adds) took set-down recall to **0.91**; extraction then reads
+3.8/ep vs 3.5 true, cast 3.4 vs 3.0. But pairing is brittle BOTH ways
+- the recovered events broke LIFO slots 0.88 → 0.84 and tokens fell to
+0.20-0.25. Symbolic stage errors COMPOUND; the 0.992 oracle needs
+every stage ≥0.95.
+
+**Channel battery (11 channels, DEV / HOLDOUT yield):** iv2 0.31/0.28,
+sig2 0.30-0.31/0.30-0.35, fdnnv 0.16-0.18/0.25-0.30, scene DTW
+0.26/0.35, motion 0.20/0.33, novelty profile (change rhythm,
+layout-invariant) **0.36/0.45** - best single, tokens 0.20-0.24/
+0.15-0.25, raw event stream 0.24-0.25/0.23.
+
+**Seed-LOO selection (the fresh_bench recipe):** DEV 0.36-0.41,
+HOLDOUT 0.40-0.43. Different templates genuinely pick different
+channels (swap→tokens, precarious→sig2, push_then_build→scene/
+novelty) - plurality works, ceiling ~0.45.
+
+**Cross-view contrastive (the last structural bet):** tiny conv+GRU,
+InfoNCE simA↔simB, trains to 296/300 cross-view top-1 - and retrieves
+at 0.25/0.38. Instance discrimination collapses to episode timing
+fingerprints, not template structure, at 150 episodes.
+
+**Where this leaves the 0.90 gate.** Best compliant numbers: ~0.42-
+0.45 (selection / novelty), ≈3x chance, 2x the token route. Everything
+cheap is now measured and banked. The remaining road is narrow and
+named: pairing robustness (soft matching over the 0.91-recall event
+sets instead of LIFO+serial), arrival/departure classifier balance
+(523 vs 745), cross-view event fusion. fresh_bench's 0.90 was
+category-shaped queries; chains demand sequence+identity fidelity that
+no fixed channel measured today carries.

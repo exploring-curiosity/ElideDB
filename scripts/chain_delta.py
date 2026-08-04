@@ -282,29 +282,51 @@ def associate(comps, step, max_r):
     return [gr[3] for gr in open_]
 
 
-def persists(Fs, bb, c_ev, w, g, ga, strong, T):
-    """Bidirectional STATE persistence: the after-state must still be
-    there ~2w later, the before-state must have been there ~2w
-    earlier. This is what separates a block set-down from an arm pose
-    - both exceed any contrast threshold (measured: 139 events/view),
-    but only the block's state outlasts the windows. MEDIAN over the
-    check span keeps a transiting arm from failing a real event."""
+def persists(Fs, bb, c_ev, w, g, ga, strong, T,
+             prev_c=None, next_c=None):
+    """EVENT-BOUNDED state persistence: the after-state must hold
+    until the NEXT event at this spot, the before-state since the
+    PREVIOUS one - that is the true physical claim (a fixed 1.5w span
+    straddled the neighbouring stack at busy spots and rejected 30% of
+    real set-downs, measured stage-by-stage). The floor keeps the arm
+    out: its same-spot neighbours are always closer than 0.8w, so a
+    pose can never prove persistence, while stack cadence (~5s) can.
+    MEDIAN over the span keeps a transiting arm from failing a real
+    event."""
     y0, x0, y1, x1 = bb
     box = Fs[:, y0:y1 + 1, x0:x1 + 1, :]
-    # 1.5w: a 2.2w span straddled the NEXT event at busy spots (two
-    # stacks 5s apart) and the median failed real arrivals
     span = int(1.5 * w)
-    a0, a1 = c_ev + ga, min(c_ev + ga + w, T)
-    b0, b1 = max(c_ev - g - w, 0), c_ev - g
-    if a1 - a0 < 3 or b1 - b0 < 3:
+
+    def check(b_lim, a_lim, floor):
+        a0, a1 = c_ev + ga, min(c_ev + ga + w, a_lim)
+        b0, b1 = max(c_ev - g - w, b_lim), c_ev - g
+        if a1 - a0 < 3 or b1 - b0 < 3:
+            return False
+        A = np.median(box[a0:a1:2], 0)
+        B = np.median(box[b0:b1:2], 0)
+        cb0 = max(c_ev - g - span, b_lim)
+        ca1 = min(c_ev + ga + span, a_lim)
+        if min((c_ev - g) - cb0, ca1 - (c_ev + ga)) < floor:
+            return False
+        da = np.median(color_change(box[a0:ca1:2],
+                                    A[None]).mean((1, 2)))
+        db = np.median(color_change(box[cb0:b1:2],
+                                    B[None]).mean((1, 2)))
+        return da < 0.5 * strong and db < 0.5 * strong
+
+    # ADDITIVE: the full-span test (as always) OR the event-bounded
+    # test. Bounding alone LOST recall (0.70 -> 0.53 measured): junk
+    # candidates near a spot truncate real events' spans below any
+    # floor. As an OR it can only add: busy-spot set-downs whose full
+    # span straddles a neighbour pass the bounded test; arm churn
+    # fails both (its same-spot neighbours are closer than 0.4w).
+    if check(0, T, 0):
+        return True
+    if prev_c is None and next_c is None:
         return False
-    A = np.median(box[a0:a1:2], 0)
-    B = np.median(box[b0:b1:2], 0)
-    ck_a = box[a0:min(c_ev + ga + span, T):2]
-    ck_b = box[max(c_ev - g - span, 0):b1:2]
-    da = np.median(color_change(ck_a, A[None]).mean((1, 2)))
-    db = np.median(color_change(ck_b, B[None]).mean((1, 2)))
-    return da < 0.5 * strong and db < 0.5 * strong
+    return check(0 if prev_c is None else max(prev_c + g, 0),
+                 T if next_c is None else min(max(next_c - g, 0), T),
+                 int(0.4 * w))
 
 
 def stable_crop(F, bb, yx, i0, i1):
@@ -456,6 +478,7 @@ def extract(db, views, probe=False):
         px = med5.reshape(-1, 3)
         cents = k_means_rgb(px[rng.choice(len(px), 4000)], 3)
         ev_pos = []
+        cand = []
         for members in groups:
             if len(members) < 2:               # single-grid flicker
                 continue
@@ -463,8 +486,24 @@ def extract(db, views, probe=False):
             c_ev = int(round(np.average([m[0] for m in members],
                                         weights=[m[4] for m in
                                                  members])))
+            cand.append((c_ev, peak))
+        cand.sort(key=lambda cp: cp[0])
+        for ci, (c_ev, peak) in enumerate(cand):
+            # nearest candidate events at the SAME spot bound the
+            # persistence claim on each side
+            prev_c = next_c = None
+            for c2, p2 in cand:
+                if c2 == c_ev and p2 is peak:
+                    continue
+                if np.hypot(p2[1] - peak[1], p2[2] - peak[2]) \
+                        >= 2.0 * max_r:
+                    continue
+                if c2 < c_ev:
+                    prev_c = c2 if prev_c is None else max(prev_c, c2)
+                elif c2 > c_ev and (next_c is None or c2 < next_c):
+                    next_c = c2
             if not persists(Fs, peak[5], c_ev, w, g, ga, strong_cut,
-                            len(F)):
+                            len(F), prev_c, next_c):
                 continue
             cb = stable_crop(F, peak[5], peak[6], c_ev - w - g,
                              c_ev - g)
