@@ -1129,3 +1129,39 @@ sets instead of LIFO+serial), arrival/departure classifier balance
 (523 vs 745), cross-view event fusion. fresh_bench's 0.90 was
 category-shaped queries; chains demand sequence+identity fidelity that
 no fixed channel measured today carries.
+
+## 2026-08-03 — "Don't stop" push: the terminal measurement
+
+Sequence of builds, each measured: seriality DP parse (max-weight
+alternating dep→arr with skip costs — flat 0.10-0.30); fusion recipes
+over 12 channels (RRF / softmax-LOO / PRF — best frozen DEV 0.36,
+HOLDOUT 0.40; PRF hurts, weak channels poison pseudo-seeds);
+episode-profile bag features (0.19-0.20); soft persistence + peak-
+pixel states (pool recall of SOME event near every anchor: setdowns
+0.98, picks 1.00 — at 42 events/ep, 10:1 junk).
+
+**The grading lesson, learned four times then fixed:** every position-
+blind grader (nearest-in-time, existence-in-window) counted co-timed
+arm/shadow junk as recall. chain_grade.py grades with PALETTE-
+GROUNDED position verification (does the event's clean crop contain
+the truth block's colour on the correct side) — eval-side only.
+
+**Terminal numbers (position-verified):**
+- TRUE set-down recall of the detection layer: **0.48** (250/525).
+- Feature AUCs vs verified labels: ratio_max 0.678, area 0.591,
+  everything else ≤0.55 — no corpus-side feature separates junk.
+- Same-block crop matching: DINOv3 0.538, MAE 0.547 (masked crops),
+  MAE 0.522 (clean native crops) — identity unreadable at this crop
+  quality regardless of encoder or preparation.
+- **CEILING: verified events + TRUTH slots through the bench = DEV
+  0.225 / HOLDOUT 0.350.** At 0.48 recall no downstream machinery can
+  reach 0.90; the oracle needs ≥0.95 per stage.
+
+**Best standing result: channel selection DEV 0.41 / HOLDOUT 0.43
+(novelty single-channel 0.45)** — ~3x chance, 2x the token route.
+
+**The one door left** (unchanged from the session's first diagnosis,
+now proven at every layer): rebuild per-event detection at the write
+to ≥0.95 position-verified recall — segmenter-tracker class (SAM-3
+video) machinery, gated by chain_grade.py which now exists exactly
+for that.

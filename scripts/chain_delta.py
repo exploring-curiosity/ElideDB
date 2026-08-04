@@ -248,11 +248,12 @@ def grid_components(ts, F, strong):
             thr = max(2.0 * strong, float(np.percentile(v, 75)))
             k_ = v >= thr
             core = (ys[k_], xs[k_]) if int(k_.sum()) >= 4 else (ys, xs)
+            top = (int(ys[int(v.argmax())]), int(xs[int(v.argmax())]))
             comps.append((c, float(xs.mean()), float(ys.mean()),
                           len(ys), float(v.mean()),
                           (int(ys.min()), int(xs.min()),
                            int(ys.max()), int(xs.max())), (ys, xs),
-                          core))
+                          core, top))
     return comps, (Fs, fps, w, g, ga, step)
 
 
@@ -502,9 +503,14 @@ def extract(db, views, probe=False):
                     prev_c = c2 if prev_c is None else max(prev_c, c2)
                 elif c2 > c_ev and (next_c is None or c2 < next_c):
                     next_c = c2
-            if not persists(Fs, peak[5], c_ev, w, g, ga, strong_cut,
-                            len(F), prev_c, next_c):
-                continue
+            # PERSISTENCE IS EVIDENCE, NOT A GATE. The hard gate
+            # rejected real arrivals whenever junk candidates crowded
+            # the spot and collapsed the neighbour bounds (measured:
+            # true-colour purple arrivals with pers=False). Every
+            # candidate is emitted; the seriality parse weighs the
+            # flag globally.
+            pers = persists(Fs, peak[5], c_ev, w, g, ga, strong_cut,
+                            len(F), prev_c, next_c)
             cb = stable_crop(F, peak[5], peak[6], c_ev - w - g,
                              c_ev - g)
             ca = stable_crop(F, peak[5], peak[6], c_ev + ga,
@@ -512,24 +518,38 @@ def extract(db, views, probe=False):
             if cb is None or ca is None:
                 continue
             cx, cy = peak[1] * DS, peak[2] * DS
-
-            def state_rgb(cr, core):
-                img, _, (py0, px0) = cr
-                ys = np.clip(core[0] * DS + DS // 2 - py0 * DS, 0,
-                             img.shape[0] - 1)
-                xs = np.clip(core[1] * DS + DS // 2 - px0 * DS, 0,
-                             img.shape[1] - 1)
-                return np.median(img[ys, xs], axis=0) \
-                    .astype(np.float32)
-            vb = state_rgb(cb, peak[7])
-            va = state_rgb(ca, peak[7])
+            # State colours read DIRECTLY from the frames at the core
+            # pixels (the crop-mapped read landed on mask fill and
+            # junked half the corpus's set-downs, measured), plus a
+            # PEAK-PIXEL second opinion: the quartile core can dilute
+            # a small block with edge pixels; the strongest-change
+            # pixel's 3x3 is the purest object sample.
+            ys_c, xs_c = peak[7]
+            b0s, b1s = max(c_ev - g - w, 0), c_ev - g
+            a0s, a1s = c_ev + ga, min(c_ev + ga + w, len(F))
+            vb = np.median(np.median(
+                Fs[b0s:b1s:2][:, ys_c, xs_c, :], 0), 0) \
+                .astype(np.float32)
+            va = np.median(np.median(
+                Fs[a0s:a1s:2][:, ys_c, xs_c, :], 0), 0) \
+                .astype(np.float32)
+            ty, tx = peak[8]
+            sl_y = slice(max(ty - 1, 0), ty + 2)
+            sl_x = slice(max(tx - 1, 0), tx + 2)
+            vb2 = np.median(Fs[b0s:b1s:2, sl_y, sl_x, :]
+                            .reshape(-1, 3), 0).astype(np.float32)
+            va2 = np.median(Fs[a0s:a1s:2, sl_y, sl_x, :]
+                            .reshape(-1, 3), 0).astype(np.float32)
             all_events.append([ep, sv, int(ts[min(c_ev, len(ts) - 1)]),
                                cx, cy, float(peak[3]), len(crops),
                                len(crops) + 1,
                                surf_angle(vb, cents),
                                surf_angle(va, cents),
                                surf_ratio_std(vb, cents),
-                               surf_ratio_std(va, cents)])
+                               surf_ratio_std(va, cents),
+                               int(pers),
+                               surf_angle(vb2, cents),
+                               surf_angle(va2, cents)])
             crops += [cb[0], ca[0]]
             masks += [cb[1], ca[1]]
             ev_pos.append((peak[1], peak[2]))
@@ -636,6 +656,13 @@ def classify_events(events):
     ratio_cut = 10 ** cutr - 1e-3
     b_obj = (ang[:, 0] > surf_cut) | (rst[:, 0] > ratio_cut)
     a_obj = (ang[:, 1] > surf_cut) | (rst[:, 1] > ratio_cut)
+    if len(events) and len(events[0]) > 14:
+        # peak-pixel second opinion (a small block dilutes the
+        # quartile core; the strongest-change pixel is the purest
+        # object sample)
+        a2 = np.array([[e[13], e[14]] for e in events], np.float32)
+        b_obj |= a2[:, 0] > surf_cut
+        a_obj |= a2[:, 1] > surf_cut
     dirs = np.where(b_obj & a_obj, 0, np.where(a_obj, 1, -1))
     junk = (~b_obj) & (~a_obj)
     print(f"surface cut {surf_cut:.1f} (modes {10**m0-1:.1f}/"
