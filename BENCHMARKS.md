@@ -1221,3 +1221,47 @@ default for corpora where no elements exist (any fresh upload). The
 domain-blind write path is therefore: window sequences ALWAYS (works
 on anything, day one), element channels only where a domain earns
 them, cloud reranker for structure — which is the product architecture.
+
+## 2026-08-04 — Memory index: domain-blind rebuild, measured to its ceiling
+
+Goal: build the retrieval layer to working accuracy with pretrained
+encoders only and zero domain knowledge (native/mem.py, memfuse.py).
+Six frozen encoders in the store (DINOv3 33 win/ep, SigLIP2 8, V-JEPA
+5 + our 2s/1s windows, motion 7, IV2 1) -> per-episode sequences ->
+pooled + temporal alignment (batched DTW) + moment matching ->
+all-channel fusion. No truth in any scoring path; FDNN student
+excluded (retired by directive).
+
+**Per-query yield, kitchen truthset, identical protocol:**
+
+| query | support | SHIPPED 8-ch | domain-blind rebuild |
+|---|---|---|---|
+| q03 | 247 | 0.66 | 0.47-0.50 |
+| q04 | 165 | 0.90 | **0.91** |
+| q05 | 196 | 0.87 | 0.84-0.87 |
+| q01 | 17 | 0.28 | 0.21 |
+| q02 | 14 | 0.23 | **0.30** |
+| q07 | 12 | 0.25 | **0.32** |
+| q08 | 18 | 0.19 | 0.04-0.07 |
+| q00 | 8 | 0.00 | 0.00-0.03 |
+| MEAN | | **0.42** | 0.36 |
+(q09/q10 support 2 are DEGENERATE - all positives become seeds, yield
+is 0 by construction for every system. Not a failure mode.)
+
+**21 fusion/aggregation variants measured over one score pass:**
+all-channel fusion 0.35-0.36 >> seed-selected top-k 0.20-0.25 (the
+inherited selection machinery is actively harmful at this scale);
+consensus (mean over seeds) > max on large queries (q04 0.85->0.91);
+temporal alignment > pooling (q04 0.59->0.91, q05 0.65->0.84);
+moment-matching (max-sim / chamfer, aimed at needles) measured
+NEGATIVE (0.27-0.32 vs 0.36) - needle failure is not a
+temporal-averaging artifact.
+
+**Conclusion (the ceiling of recombination).** Every strategy over
+these channels lands in 0.20-0.36. Big-support queries are SOLVED by
+domain-blind machinery (q04 0.91 matches the tuned 8-channel system,
+q05 within 0.03). Needle queries (support 8-18) are NOT: 0.00-0.32
+for every system measured, shipped included. The evidence itself is
+the limit - all six channels score global scene/motion similarity, so
+none can express "this specific thing happened". More fusion will not
+fix it; different evidence must.
