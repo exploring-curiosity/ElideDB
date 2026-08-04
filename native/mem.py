@@ -79,16 +79,27 @@ def load_channels(db, store_name):
         d = db.table(t).scan().to_pydict()
         if "vector" not in d:
             continue
+        # ONE SEQUENCE PER STREAM. Multi-camera stores (sim: simA +
+        # simB on a shared clock) put two views in the same episode
+        # time range; sorting by ts alone interleaves them A,B,A,B and
+        # destroys exactly the temporal structure this index reads.
+        # The dominant stream is the episode's sequence.
         rows = {}
+        streams = d.get("stream")
         for i in range(len(d["ts"])):
             tt = int(d["ts"][i])
             j = bisect.bisect_right(starts, tt) - 1
             if j < 0 or tt > spans[j][1]:
                 continue
-            rows.setdefault(spans[j][2], []).append(
+            sv = str(streams[i]) if streams is not None else ""
+            rows.setdefault((spans[j][2], sv), []).append(
                 (tt, d["vector"][i]))
+        by_ep = {}
+        for (e, sv), rs in rows.items():
+            if e not in by_ep or len(rs) > len(by_ep[e][1]):
+                by_ep[e] = (sv, rs)
         seqs = {}
-        for e, rs in rows.items():
+        for e, (sv, rs) in by_ep.items():
             rs.sort(key=lambda r: r[0])
             seqs[e] = norm(np.array([v for _, v in rs], np.float32))
         if seqs:

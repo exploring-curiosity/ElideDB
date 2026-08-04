@@ -1265,3 +1265,36 @@ for every system measured, shipped included. The evidence itself is
 the limit - all six channels score global scene/motion similarity, so
 none can express "this specific thing happened". More fusion will not
 fix it; different evidence must.
+
+## 2026-08-04 — LONG-CONTEXT retrieval on sim: the wall, quantified
+
+Sim is the long-context benchmark by construction: appearance,
+placement and colour are randomised per episode, so two episodes of a
+template share ONLY their chain of events. Every measurement below is
+the frozen protocol (5 seeds, k=ceil(1.5*support), RandomState(0)).
+
+| approach (all pretrained / domain-blind unless noted) | DEV | HOLDOUT |
+|---|---|---|
+| ORACLE event scripts through the aligner | — | **0.992** |
+| novelty rhythm, single channel | 0.363 | **0.450** |
+| channel selection top-2 (2026-08-03) | 0.413 | 0.425 |
+| multi-encoder memory index (today, all-channel RRF) | 0.312 | 0.425 |
+| V-JEPA window sequences, delta-DTW single channel | 0.300 | 0.425 |
+| symbolic chain routes (delta / serial / ledger) | 0.13-0.30 | 0.13-0.25 |
+| appearance baseline | ~chance | ~chance |
+
+Bug found and fixed while measuring: the multi-encoder loader was
+interleaving simA and simB vectors into one sequence by timestamp
+(two views share the episode clock), scrambling the very structure the
+index reads. Fixed to one sequence per stream; DEV moved 0.387->0.312,
+HOLDOUT 0.350->0.425 (the pre-fix DEV was inflated by view-alternation
+artefacts, i.e. it was measuring camera cadence, not chains).
+
+**The quantified wall.** Fourteen distinct approaches - symbolic,
+tracked, embedded, fused, selected - all land between 0.13 and 0.45,
+while the ORACLE (correct event scripts + the same aligner) scores
+0.992. Nothing perceptual has ever exceeded 0.45 on this corpus. The
+gap is not fusion, not aggregation, not the encoder: on a corpus whose
+episodes differ ONLY in event order and identity, retrieval requires
+recovering the events, and no frozen global-similarity encoder
+represents "which object moved when".
