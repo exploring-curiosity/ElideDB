@@ -1039,3 +1039,52 @@ sweep: no text or hand features remain in any path candidate;
 Lab-based scripts marked as negative-result records; palette/name
 anchors exist only in eval graders. The floor - write-path detection
 quality - is unchanged and now measured rule-clean.
+
+## 2026-08-03 — Route 3: persistent-change detection (chain_delta.py)
+
+**Principle.** Every dead route watched the block WHILE IT MOVES
+(14–40% reliable). A manipulation instead leaves a PERSISTENT mark:
+guard-banded temporal-median states before/after each grid time,
+illumination-invariant RGB-angle differencing (a shadow scales the
+surface vector; a block replaces it), per-grid components associated
+into events, bidirectional state-persistence validation (the arm's
+poses pass any contrast bar but never persist). Direction from a
+fitted dominant-surface model (3-means over the episode-median image
++ channel-ratio-uniformity for table-hued blocks); identity is pure
+OBJECT-PERMANENCE BOOKKEEPING — per-(view,spot) LIFO stacks, exact for
+stacking, union-find slots, serial dep→next-arr pairing. No appearance
+clustering anywhere; every cut corpus-fitted.
+
+**Measured en route (all recorded in the code):** |RGB| diff drowns in
+the arm's table-wide shadow; a global change mask merges the arm's
+park envelope with every spot it visits (one 45%-of-frame site);
+per-grid components without persistence = 139 junk events/view; BOTH
+store DINOv3 encoders are colour-blind on block crops (cyan–blue
+0.85–0.90 ACROSS colours vs 0.73–0.84 same-object — DINO's
+colour-jitter augmentation), MAE is colour-aware (same-red 0.78,
+red–cyan −0.10) but absolute gallery/cluster machinery fails at scale
+regardless (hand-picked 7/7 → 24/75); asymmetric after-guard: negative
+(arr 439 vs 440, DEV 0.30 → 0.24).
+
+**Extraction vs truth (eval-side graders):** manipulations 3.1/ep vs
+3.5 true; cast 2.8 vs 3.0; slot pairwise agreement 0.88. BUT the
+median episode has 2 manipulations (16 episodes have 0) — per-episode
+variance, not the mean, is what retrieval feels.
+
+| tokens (from one extraction) | DEV yield | HOLDOUT yield |
+|---|---|---|
+| slots w1.0 (main) | 0.300 | 0.200 |
+| slots w0.5 | 0.312 | 0.200 |
+| no slots (w0) | 0.363 | 0.150 |
+| reuse-lag slots | 0.287 | 0.200 |
+| + ratio-uniformity surface test | 0.275 | 0.150 |
+
+**Verdict.** Best fully-compliant number to date (prior floor
+0.225/0.250) and the first route whose aggregate extraction stats
+match truth — but the 0.90 gate needs ≥95% per-episode event recall
+and the arrival-side deficit (arr ~440 vs dep ~655 corpus-wide)
+survived four candidate explanations (surface cut, shadow masks,
+orange-hue collision, after-guard). Open front: event association /
+persistence interplay at set-down moments, or a real segmenter-tracker
+(SAM-3 video) at the write. Token design is NOT the bottleneck
+(ablation flat); slot mechanism is sound (0.88 agreement).
