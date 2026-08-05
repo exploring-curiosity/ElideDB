@@ -687,3 +687,40 @@ cover everything, and at a stride shorter than an event some window
 always falls inside a single event, so a straddling span never has to
 corrupt a direction vector. That is now measured against truth and cpd
 spans directly.
+
+### A uniform grid BEATS the learned segmentation — steps 4 and 5 do not earn their place
+
+150 episodes, support 20, encoder r50+rank held fixed:
+
+| segmentation | yield | prec | units/ep |
+|---|---|---|---|
+| truth (oracle) | 0.525 | 0.350 | 6.5 |
+| **uniform 2 s, stride 0.5 s** | **0.408** | 0.272 | 47.4 |
+| uniform 3 s, stride 1.0 s | 0.400 | 0.267 | 23.0 |
+| uniform 4 s, stride 1.0 s | 0.392 | 0.261 | 22.0 |
+| **cpd (GraphGEBD/Ncut/CPD)** | **0.317** | 0.211 | 7.7 |
+
+**The entire step-4 + step-5 apparatus loses to a fixed grid with
+overlap.** GraphGEBD, recursive Ncut, the backbone study, the
+homogeneity stop, exact-DP change-point detection with a slope-heuristic
+penalty - all of it scores 0.317, while `while t + w <= dur: t += 1.0`
+scores 0.400. A uniform grid closes ~44% of the oracle gap that the
+learned segmentation could not.
+
+The reason follows directly from the cliff: value comes only from spans
+that lie INSIDE one event, and a partition gets one attempt per
+boundary. Overlapping windows get many attempts, so some window is
+always clean. Cutting in the right place is hard; covering every place
+is trivial.
+
+Cost is the honest counterweight: 23-47 units/episode against 7.7, so
+3-6x the vectors to encode, store and scan. The oracle remains both
+best AND cheapest (0.525 at 6.5 units) - perfect segmentation is worth
+having, it just is not reachable, and an unreachable optimum is not a
+plan.
+
+**Standing consequence: segmentation quality is not a lever on this
+corpus.** Steps 4 and 5 remain in the tree because a boundary set is
+useful for other things (seek points, display, byte-range reads), but
+they are no longer on the retrieval critical path and no further
+optimisation of them is justified by any measurement taken here.
