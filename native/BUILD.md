@@ -242,3 +242,53 @@ ego-motion dominates the flow field - global flow keeps moving when
 the *event* changes - so the collapse-of-tracking cue does not fire.
 That is a real and expected limitation of flow-on-ego-video, and it
 points at ego-motion compensation as the next thing to try there.
+
+---
+
+### STEP 4 — take 5: both defects fixed, thresholded emitter added
+
+**Fix 1 - patchwise saturation.** Old code gave each patch a fixed
+budget (~12 points) and aggregated with MIN; some patch always lost
+all its points, the score pinned at 1.0, no peaks existed, F1 was
+exactly 0.000. Now points are seeded over the whole frame and assigned
+to patches by position (so a patch's budget is not fixed, and empty
+patches simply do not vote), aggregated by MEAN over patches holding
+>=3 points.
+
+**Fix 2 - ego-motion compensation.** On driving, the camera's own
+motion dominates every pixel, so flow cues fire constantly. A global
+affine is fitted per frame pair and the RESIDUAL flow is scored,
+isolating what moved in the world from what moved because the camera
+did.
+
+**Fix 3 - thresholded emitter.** The earlier protocol predicted
+exactly as many boundaries as truth contained, which is not something
+a real system knows. Added an emitter that decides the count itself
+from a z>1 cut on the media's own score distribution - no truth, no
+per-corpus constant.
+
+| signal | sim matched | sim thresh | oxford matched | oxford thresh |
+|---|---|---|---|---|
+| PT framewise | 0.644 | **0.636** | 0.250 | 0.222 |
+| PT patchwise | 0.644 | 0.613 | **0.500** | **0.545** |
+| FN | 0.492 | 0.496 | 0.250 | 0.444 |
+| FN ego-compensated | 0.508 | 0.516 | **0.500** | 0.471 |
+| PT + FN-ego (z-sum) | 0.528 | 0.553 | 0.250 | 0.308 |
+
+Effect of the fixes on the domain they targeted: oxford patchwise
+**0.000 -> 0.545**, oxford FN **0.250 -> 0.471** with ego
+compensation. Neither hurt sim (patchwise now equals framewise at
+0.644).
+
+**Notable:** the thresholded emitter scores essentially the same as
+the count-matched oracle on sim (0.636 vs 0.644) despite emitting
+13.8 boundaries where 7.3 are true - it over-segments, and F1 barely
+suffers because the extra cuts fall near real ones. Over-segmentation
+is the benign failure mode for step 5 (units can be merged; missed
+boundaries cannot be recovered).
+
+**Status: step 4 is usable but not uniform.** sim ~0.64, oxford ~0.55
+with the patchwise variant, and no single variant leads on both
+(sim prefers framewise/patchwise equally, oxford needs patchwise or
+ego-compensation). Published reference for context: FlowGEBD 0.713 on
+Kinetics-GEBD.

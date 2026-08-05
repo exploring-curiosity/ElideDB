@@ -51,52 +51,120 @@ def arg(name, default, cast=str):
 
 
 # ---------------------------------------------------------------- PT
-def pixel_tracking(gray, grid=1, max_pts=200):
+def pixel_tracking(gray, grid=1, max_pts=200, agg="mean"):
     """Ratio of still-tracked points per frame. Low ratio = boundary.
-    grid=1 -> framewise; grid>1 -> patchwise (min ratio over patches)."""
+    grid=1 -> framewise; grid>1 -> patchwise.
+
+    Patchwise previously used MIN over patches with ~12 points each:
+    some patch always lost all its points, the score pinned at 1.0,
+    no peaks existed and F1 was exactly 0.00. Fixes: (a) points are
+    seeded over the WHOLE frame and assigned to patches by position,
+    so a patch's budget is not fixed and empty patches simply do not
+    vote; (b) aggregate by MEAN over patches that actually hold
+    points, not MIN.
+    """
     import cv2
     T = len(gray)
     H, W = gray[0].shape
     score = np.zeros(T)
-    cells = [(y, x) for y in range(grid) for x in range(grid)]
-    hs, ws = H // grid, W // grid
-    state = {}
-    for c in cells:
-        y, x = c
-        sub = gray[0][y * hs:(y + 1) * hs, x * ws:(x + 1) * ws]
-        p = cv2.goodFeaturesToTrack(sub, maxCorners=max_pts // len(cells),
+    hs, ws = max(H // grid, 1), max(W // grid, 1)
+
+    def seed(img):
+        p = cv2.goodFeaturesToTrack(img, maxCorners=max_pts,
                                     qualityLevel=0.01, minDistance=5)
-        state[c] = (p, len(p) if p is not None else 0)
+        return p
+
+    p0 = seed(gray[0])
+    base_cnt = np.zeros(grid * grid)
+    if p0 is not None:
+        for (x, y) in p0.reshape(-1, 2):
+            c = min(int(y) // hs, grid - 1) * grid + \
+                min(int(x) // ws, grid - 1)
+            base_cnt[c] += 1
     for t in range(1, T):
-        ratios = []
-        for c in cells:
-            y, x = c
-            p0, base = state[c]
-            if p0 is None or base == 0:
-                ratios.append(1.0)
-                continue
-            a = gray[t - 1][y * hs:(y + 1) * hs, x * ws:(x + 1) * ws]
-            b = gray[t][y * hs:(y + 1) * hs, x * ws:(x + 1) * ws]
-            p1, st, _ = cv2.calcOpticalFlowPyrLK(a, b, p0, None)
-            if p1 is None:
-                ratios.append(0.0)
-                state[c] = (None, base)
-                continue
-            ok = st.ravel() == 1
-            moved = np.linalg.norm((p1 - p0).reshape(-1, 2), axis=1) > 0.5
-            keep = ok & moved
-            ratios.append(float(keep.sum()) / max(base, 1))
-            nxt = p1[keep] if keep.any() else None
-            if nxt is None or len(nxt) < 4:
-                sub = gray[t][y * hs:(y + 1) * hs, x * ws:(x + 1) * ws]
-                nxt = cv2.goodFeaturesToTrack(
-                    sub, maxCorners=max_pts // len(cells),
-                    qualityLevel=0.01, minDistance=5)
-                state[c] = (nxt, len(nxt) if nxt is not None else 0)
+        if p0 is None or len(p0) < 4:
+            p0 = seed(gray[t])
+            base_cnt[:] = 0
+            if p0 is not None:
+                for (x, y) in p0.reshape(-1, 2):
+                    c = min(int(y) // hs, grid - 1) * grid + \
+                        min(int(x) // ws, grid - 1)
+                    base_cnt[c] += 1
+            continue
+        p1, st, _ = cv2.calcOpticalFlowPyrLK(gray[t - 1], gray[t],
+                                             p0, None)
+        if p1 is None:
+            score[t] = 1.0
+            p0 = seed(gray[t])
+            continue
+        ok = st.ravel() == 1
+        moved = np.linalg.norm((p1 - p0).reshape(-1, 2), axis=1) > 0.5
+        keep = ok & moved
+        if grid == 1:
+            score[t] = 1.0 - float(keep.sum()) / max(len(p0), 1)
+        else:
+            kept_cnt = np.zeros(grid * grid)
+            for (x, y), k in zip(p0.reshape(-1, 2), keep):
+                if not k:
+                    continue
+                c = min(int(y) // hs, grid - 1) * grid + \
+                    min(int(x) // ws, grid - 1)
+                kept_cnt[c] += 1
+            live = base_cnt >= 3            # patches with a real vote
+            if live.any():
+                r = kept_cnt[live] / np.maximum(base_cnt[live], 1)
+                score[t] = 1.0 - float(r.mean() if agg == "mean"
+                                       else r.min())
             else:
-                state[c] = (nxt, base)
-        score[t] = 1.0 - float(np.min(ratios))    # collapse = boundary
+                score[t] = 0.0
+        nxt = p1[keep] if keep.any() else None
+        if nxt is None or len(nxt) < 8:
+            p0 = seed(gray[t])
+            base_cnt[:] = 0
+            if p0 is not None:
+                for (x, y) in p0.reshape(-1, 2):
+                    c = min(int(y) // hs, grid - 1) * grid + \
+                        min(int(x) // ws, grid - 1)
+                    base_cnt[c] += 1
+        else:
+            p0 = nxt
     return score
+
+
+def ego_compensated_flow(gray, grid=GRID):
+    """Flow-normalisation AFTER removing global camera motion.
+
+    On ego video (driving) the camera's own motion dominates every
+    pixel, so 'the flow changed' fires constantly and boundary cues
+    drown (measured: oxford 0.29 vs sim 0.65). Estimating a global
+    affine per frame pair and scoring the RESIDUAL flow isolates what
+    moved in the world from what moved because the camera did.
+    """
+    import cv2
+    T = len(gray)
+    H, W = gray[0].shape
+    hs, ws = H // grid, W // grid
+    PF = np.zeros((T, grid * grid))
+    for t in range(1, T):
+        fl = cv2.calcOpticalFlowFarneback(gray[t - 1], gray[t], None,
+                                          0.5, 3, 15, 3, 5, 1.2, 0)
+        yy, xx = np.mgrid[0:H, 0:W]
+        A = np.stack([xx.ravel(), yy.ravel(),
+                      np.ones(H * W)], 1).astype(np.float32)
+        res = np.zeros((H, W, 2), np.float32)
+        for c in range(2):
+            b = fl[:, :, c].ravel()
+            sol, *_ = np.linalg.lstsq(A[::37], b[::37], rcond=None)
+            res[:, :, c] = (fl[:, :, c].ravel() - A @ sol).reshape(H, W)
+        mag = np.linalg.norm(res, axis=2)
+        k = 0
+        for y in range(grid):
+            for x in range(grid):
+                PF[t, k] = mag[y * hs:(y + 1) * hs,
+                               x * ws:(x + 1) * ws].max()
+                k += 1
+    denom = PF.sum(0, keepdims=True) + 1e-8
+    return (PF / denom).max(1)
 
 
 # ---------------------------------------------------------------- FN
@@ -200,25 +268,38 @@ def main():
             "PT_frame": pixel_tracking(gray, grid=1),
             "PT_patch": pixel_tracking(gray, grid=GRID),
             "FN": flow_normalization(gray, grid=GRID),
+            "FN_ego": ego_compensated_flow(gray, grid=GRID),
         }
+        sigs["PT+FNego"] = (
+            (sigs["PT_frame"] - sigs["PT_frame"].mean())
+            / (sigs["PT_frame"].std() + 1e-8)
+            + (sigs["FN_ego"] - sigs["FN_ego"].mean())
+            / (sigs["FN_ego"].std() + 1e-8))
         tol_rel = 0.05 * dur
         for k, s in sigs.items():
-            # predict as many boundaries as truth has (count-matched,
-            # so F1 measures PLACEMENT not calibration)
-            pk = peaks(s, min_gap=int(0.5 * FPS))[:max(len(gt), 1)]
-            pt = [float(times[i]) for i in pk]
-            f_rel, npd, ngt = f1_at(pt, gt, tol_rel)
-            f_abs, _, _ = f1_at(pt, gt, 1.0)
-            res.setdefault(k, []).append((f_rel, f_abs))
+            pk = peaks(s, min_gap=int(0.5 * FPS))
+            # COUNT-MATCHED (placement quality, optimistic) and
+            # THRESHOLDED (what step 5 actually consumes: the emitter
+            # must decide HOW MANY, from a cut fitted on the media's
+            # own score distribution - no truth, no per-corpus tuning)
+            pm = [float(times[i]) for i in pk[:max(len(gt), 1)]]
+            z = (s - s.mean()) / (s.std() + 1e-8)
+            pth = [float(times[i]) for i in pk if z[i] > 1.0]
+            f_m, _, _ = f1_at(pm, gt, tol_rel)
+            f_t, _, _ = f1_at(pth, gt, tol_rel)
+            res.setdefault(k, []).append((f_m, f_t, len(pth), len(gt)))
         print(f"  {name:<8} dur {dur:5.1f}s gt {len(gt):2d}  " +
-              "  ".join(f"{k} {res[k][-1][0]:.2f}" for k in sigs),
-              flush=True)
-    print()
+              "  ".join(f"{k}={res[k][-1][0]:.2f}/{res[k][-1][1]:.2f}"
+                        for k in sigs), flush=True)
+    print("\n  (matched = count-matched placement; thresh = emitter "
+          "decides count from a z>1 cut)")
     for k, v in res.items():
-        fr = np.nanmean([a for a, _ in v])
-        fa = np.nanmean([b for _, b in v])
-        print(f"STEP 4 flow/{k:<9} F1@0.05rel {fr:.3f}   F1@1s {fa:.3f}"
-              f"   (n={len(v)})")
+        fm = np.nanmean([a for a, _, _, _ in v])
+        ft = np.nanmean([b for _, b, _, _ in v])
+        npd = np.mean([c for _, _, c, _ in v])
+        ngt = np.mean([d for _, _, _, d in v])
+        print(f"STEP 4 flow/{k:<9} matched {fm:.3f}  thresh {ft:.3f}"
+              f"  (emits {npd:.1f} vs {ngt:.1f} true, n={len(v)})")
 
 
 if __name__ == "__main__":
