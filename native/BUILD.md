@@ -768,3 +768,53 @@ route is the one with evidence behind it - symbol sequences (labels)
 reach 0.942/0.890 where continuous vectors reach 0.600/0.400 with the
 SAME oracle spans. That is step 7's motivation and it is now measured
 rather than assumed.
+
+### The action-AUC ceiling: 0.721, and what it costs in yield
+
+Everything below was measured on dev-12 and the survivors on held-out
+60. All FAILED to beat siglip2 rank-pooling:
+
+| variant | action AUC | why it was tried / what it proves |
+|---|---|---|
+| **siglip2 rank-pool** | **0.721** | best; order-aware appearance change |
+| **siglip2 rank-ONLY** | **0.721** | mean term contributes NOTHING to action - same AUC at HALF the dimension (1152 vs 2304). Free 2x storage win. |
+| siglip2 rank nf=16 | 0.717 | temporal resolution is not the limit |
+| flow + siglip2 | 0.589 | two-stream HURTS; motion is not the discriminator |
+| sig endpoints | 0.538 | explicit before/after state fails |
+| SSv2 action probe | 0.536 | pretrained ACTION model, human-hand classes, robot arm corpus |
+| r50 rank nf=24 | 0.584 | +0.011 over nf=8 |
+| optical flow alone | 0.512 | chance |
+| discretisation (5 matchers x 5 k) | yield 0.20-0.31 | worse than DTW's 0.492 |
+
+**Two negative results that are worth more than the positives.**
+
+1. Discretisation failing SEPARATES the two properties labels have.
+   Labels are discrete AND noiseless; symbol histograms are discrete and
+   noisy, and they score 0.20-0.31 against DTW's 0.492. So discreteness
+   is worth nothing here - the entire label advantage is per-unit
+   ACCURACY. Steps 7/8 (vocabulary, assignment) therefore cannot rescue
+   a weak encoder, which is what they were queued to do.
+2. Flow failing says pick and place have nearly IDENTICAL arm
+   trajectories. They differ in the state left behind (block on table vs
+   in gripper), not in the motion - which is why appearance-CHANGE is
+   the only pooling that has ever worked here, and why a motion stream
+   dilutes it.
+
+**The projection, from four measured points:**
+
+| action AUC | yield |
+|---|---|
+| 0.521 | 0.214 |
+| 0.579 | 0.400 |
+| 0.691 | 0.492 |
+| 1.000 | 0.942 |
+
+Slope ~1.46 yield per unit AUC. **yield 0.80 needs action AUC ~0.90;
+yield 0.90 needs ~0.97.** No later step changes this - steps 7-13, the
+index, relate and commit all consume the same unit vectors, and the
+discretisation result proves the consuming layer cannot add accuracy
+that the encoder did not produce.
+
+**Verdict: 0.80/0.80 is NOT reachable with a frozen, generic,
+off-the-shelf encoder on this corpus.** The ceiling is 0.721 AUC ->
+~0.49 yield. That is a measured statement, not an estimate.

@@ -86,7 +86,8 @@ def _frame_enc(name):
     return KIND[kind], mid
 
 
-def enc_frames(F, spans, off=0.0, back="dinov3_ct", mode="mean"):
+def enc_frames(F, spans, off=0.0, back="dinov3_ct", mode="mean",
+               nf=NF):
     """Per-frame encoder pooled over the unit.
 
     mode=mean   : the plain average - what the unit LOOKS like
@@ -100,7 +101,7 @@ def enc_frames(F, spans, off=0.0, back="dinov3_ct", mode="mean"):
     fn, mid = _frame_enc(back)
     flat, idx = [], []
     for a, b in spans:
-        fr = frames_of(F, a, b, off=off)
+        fr = frames_of(F, a, b, nf=nf, off=off)
         idx.append((len(flat), len(flat) + len(fr)))
         flat += fr
     V = _norm(fn(mid, flat))
@@ -129,6 +130,18 @@ def enc_frames(F, spans, off=0.0, back="dinov3_ct", mode="mean"):
             r = (al[:, None] * seg).sum(0)
             r = r / max(np.linalg.norm(r), 1e-8)
             out.append(np.concatenate([m, r]))
+        elif mode == "rankonly":
+            # Direction of change ONLY - the mean is dropped. If pick
+            # and place differ by the STATE they leave behind rather
+            # than by the motion, then the scene-appearance term is
+            # dilution, not signal.
+            T = len(seg)
+            al = (2 * np.arange(1, T + 1) - T - 1).astype(np.float32)
+            r = (al[:, None] * seg).sum(0)
+            out.append(r / max(np.linalg.norm(r), 1e-8))
+        elif mode == "endpoints":
+            # Explicit before/after state, no averaging at all.
+            out.append(np.concatenate([seg[0], seg[-1]]))
         elif mode == "halves":
             # Crudest possible order preservation: what it looked like
             # first, then what it looked like after. If this alone
@@ -168,7 +181,115 @@ def enc_vjepa_tgroup(F, spans, off=0.0, groups=4):
     return _norm(np.stack(out))
 
 
+def enc_ssv2(F, spans, off=0.0, sqrt=True):
+    """Meta's SSv2 attentive probe on V-JEPA2 - 174-way ACTION evidence.
+
+    Every encoder tried so far is a generic appearance/feature model
+    asked to reveal an action as a side effect, and all of them land
+    near chance (best 0.691). This one was TRAINED to name actions:
+    Something-Something-v2's 174 classes are motion primitives
+    ("Picking something up", "Putting something into something"), and
+    the probe is Meta's released checkpoint, not anything fitted here.
+
+    The output is a DISTRIBUTION over action classes, which is also the
+    discrete-symbol representation the label oracle showed is worth
+    0.942/0.890 against 0.600/0.400 for continuous vectors on the same
+    spans. sqrt turns the simplex into Hellinger space so that a cosine
+    between two distributions behaves like a proper distribution
+    distance rather than being dominated by the top class.
+    """
+    from elidedb import action_probe as AP
+    out = []
+    for a, b in spans:
+        fr = frames_of(F, a, b, nf=16, off=off)
+        pr = AP.clip_action_probs(fr)
+        v = np.sqrt(pr) if sqrt else pr
+        out.append(np.asarray(v, np.float32))
+    return _norm(np.stack(out))
+
+
+def enc_ssv2_siglip(F, spans, off=0.0):
+    """Action evidence AND appearance - they answer different questions
+    (what happened vs what it looked like), so concatenating tests
+    whether they are complementary rather than redundant."""
+    a = enc_ssv2(F, spans, off)
+    b = enc_frames(F, spans, off, "siglip2", "rank")
+    return _norm(np.concatenate([a, b], axis=1))
+
+
+def enc_flow(F, spans, off=0.0, nf=16, grid=4):
+    """Motion descriptor per unit - the flow stream of a two-stream net.
+
+    Every encoder tried so far reads APPEARANCE and is asked to reveal
+    the action as a side effect; the best manages action AUC 0.691.
+    Simonyan & Zisserman's two-stream result is that the action lives in
+    MOTION, and appearance mostly identifies the scene. Here that is
+    dense Farneback flow, pooled on a grid x grid grid into (dx, dy)
+    plus magnitude, then rank-pooled over time so that "arm descends
+    then rises" is a different vector from "arm rises then descends" -
+    which is precisely pick versus place.
+
+    No model, no weights, no training. Just pixels.
+    """
+    import cv2
+    out = []
+    for a, b in spans:
+        fr = frames_of(F, a, b, nf=nf, off=off)
+        g = [cv2.cvtColor(np.ascontiguousarray(x[..., :3]),
+                          cv2.COLOR_RGB2GRAY) for x in fr]
+        prof = []
+        for i in range(len(g) - 1):
+            fl = cv2.calcOpticalFlowFarneback(
+                g[i], g[i + 1], None, 0.5, 3, 15, 3, 5, 1.2, 0)
+            h, w = fl.shape[:2]
+            ch, cw = h // grid, w // grid
+            cells = []
+            for r in range(grid):
+                for c in range(grid):
+                    blk = fl[r * ch:(r + 1) * ch, c * cw:(c + 1) * cw]
+                    dx, dy = blk[..., 0].mean(), blk[..., 1].mean()
+                    mg = np.hypot(blk[..., 0], blk[..., 1]).mean()
+                    cells += [dx, dy, mg]
+            prof.append(cells)
+        P = np.asarray(prof, np.float32)
+        if len(P) < 2:
+            out.append(np.zeros(grid * grid * 3 * 2, np.float32))
+            continue
+        m = P.mean(0)
+        T = len(P)
+        al = (2 * np.arange(1, T + 1) - T - 1).astype(np.float32)
+        r = (al[:, None] * P).sum(0)
+        r = r / max(np.linalg.norm(r), 1e-8)
+        out.append(np.concatenate([m / max(np.linalg.norm(m), 1e-8), r]))
+    return _norm(np.stack(out))
+
+
+def enc_flow_siglip(F, spans, off=0.0):
+    """Two-stream: motion AND appearance."""
+    return _norm(np.concatenate(
+        [enc_flow(F, spans, off),
+         enc_frames(F, spans, off, "siglip2", "rank")], axis=1))
+
+
+def enc_flow_r50(F, spans, off=0.0):
+    return _norm(np.concatenate(
+        [enc_flow(F, spans, off),
+         enc_frames(F, spans, off, "resnet50", "rank")], axis=1))
+
+
 ENCODERS = {
+    "sig_rankonly":  lambda F, s, o: enc_frames(F, s, o, "siglip2",
+                                                "rankonly"),
+    "sig_endpoints": lambda F, s, o: enc_frames(F, s, o, "siglip2",
+                                                "endpoints"),
+    "sig_rankonly16": lambda F, s, o: enc_frames(F, s, o, "siglip2",
+                                                 "rankonly", nf=16),
+    "flow":          lambda F, s, o: enc_flow(F, s, o),
+    "flow_siglip":   lambda F, s, o: enc_flow_siglip(F, s, o),
+    "flow_r50":      lambda F, s, o: enc_flow_r50(F, s, o),
+    "ssv2":          lambda F, s, o: enc_ssv2(F, s, o),
+    "ssv2_raw":      lambda F, s, o: enc_ssv2(F, s, o, sqrt=False),
+    "ssv2_siglip":   lambda F, s, o: enc_ssv2_siglip(F, s, o),
     "vjepa2_tgroup": lambda F, s, o: enc_vjepa_tgroup(F, s, o),
     "dino_rank":     lambda F, s, o: enc_frames(F, s, o, "dinov3_ct",
                                                 "rank"),
@@ -180,6 +301,18 @@ ENCODERS = {
                                                  "halves"),
     "r50_rank":      lambda F, s, o: enc_frames(F, s, o, "resnet50",
                                                 "rank"),
+    # Temporal RESOLUTION of the unit. Rank pooling reads the direction
+    # of change across a span from nf samples; at nf=8 over a 3 s window
+    # that is 2.7 Hz, which may simply be too coarse to see a grasp
+    # begin. Costs nothing but frames - no new model.
+    "r50_rank16":    lambda F, s, o: enc_frames(F, s, o, "resnet50",
+                                                "rank", nf=16),
+    "r50_rank24":    lambda F, s, o: enc_frames(F, s, o, "resnet50",
+                                                "rank", nf=24),
+    "dino_rank16":   lambda F, s, o: enc_frames(F, s, o, "dinov3_ct",
+                                                "rank", nf=16),
+    "siglip2_rank16": lambda F, s, o: enc_frames(F, s, o, "siglip2",
+                                                 "rank", nf=16),
     "vjepa2":        lambda F, s, o: enc_vjepa(F, s, o),
     "dino_mean":     lambda F, s, o: enc_frames(F, s, o, "dinov3_ct",
                                                 "mean"),
