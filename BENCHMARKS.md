@@ -1452,3 +1452,41 @@ exceeds 0.90 yield with precision above 0.52. The binding constraint
 is perception quality: the retrieval half is proven (oracle 0.99), and
 every local model available - frozen encoders, trackers, and a 4-bit
 7B VLM - fails to recover what happened accurately enough to feed it.
+
+## 2026-08-04 — SIM IS AT CHANCE: the number that reframes everything
+
+Random-guess yield on sim at k=1.5*support is **0.207** (20 true among
+145 candidates, k=30). Measured, every representation of every frozen
+encoder:
+
+| representation | yield | vs chance |
+|---|---|---|
+| random baseline | 0.207 | 1.00x |
+| scene first-frame | 0.208 | 1.00x |
+| scene evolution profile | 0.225 | 1.09x |
+| scene end-minus-start | 0.250 | 1.21x |
+| vjepa last-window | 0.258 | 1.25x |
+| scene last / first+last | 0.283 | 1.37x |
+| vjepa end-minus-start | 0.333 | 1.61x |
+| full multi-encoder index | 0.333 | 1.61x |
+| VLM descriptions (either form) | 0.19-0.23 | ~1.0x |
+| ORACLE event scripts | 0.99 | 4.8x |
+
+KITCHEN for contrast: random baseline 0.119, index q04 0.78-0.90 =
+**6.5-7.5x chance**. Kitchen retrieval genuinely works; sim retrieval
+has never engaged.
+
+**Why.** sim_chains was built adversarially: colour, shape, placement
+and camera are randomised per episode, so two episodes of one template
+share NOTHING visual - only the order and identity of events. It is a
+pure structural-reasoning benchmark, and structural reasoning at
+database speed is exactly what no frozen encoder does. Real corpora
+(driving, warehouse, drone) do not have this property: different
+scenarios there differ in appearance too, which is why kitchen works.
+
+**What would actually move it:** a general event-structure encoder
+trained ONCE on diverse multi-domain robot video and shipped frozen -
+zero-shot from the customer's point of view exactly as V-JEPA and
+SigLIP are zero-shot, and distinct from training on a customer's
+domain (which would not be zero-shot and would not transfer). Every
+frozen encoder in this store exists because someone did that once.
