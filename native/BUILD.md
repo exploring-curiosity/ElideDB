@@ -106,3 +106,46 @@ boundary.
 Consequence for step 5: segmentation will be usable on bench and poor
 on sim. Recording the split rather than averaging it away; sim's
 segmentation quality is the number to watch downstream.
+
+---
+
+### STEP 4 REVISION — the grade was inflated by a pooling confound
+
+While extending step 4 to a third domain (Oxford driving), the same
+estimator measured 0.734 one way and 0.611 another. Chasing that
+discrepancy exposed a flaw in the metric, not in the code:
+
+**Pooling window scores across media inflates AUC.** Media differ in
+baseline surprise level AND in how many boundaries they contain. A
+medium that is globally "hotter" and also boundary-dense contributes
+mostly positives at high values, which the pooled AUC reads as
+discrimination. The confound-free measure is AUC computed WITHIN each
+medium, then averaged.
+
+**Per-media AUC (mean ± sd across media), corrected:**
+
+| scale / estimator | sim | oxford |
+|---|---|---|
+| 0.5 s two-sided | 0.583 ± 0.20 | 0.578 |
+| 0.5 s **dir_change** | **0.642 ± 0.06** | **0.742** |
+| 1.0 s extrap | 0.639 ± 0.11 | 0.650 |
+| 2.0 s **extrap** | **0.705 ± 0.17** | 0.505 |
+| 2.0 s two-sided | 0.419 ± 0.16 | 0.402 |
+
+Every earlier step-4 number in this file (bench 0.844, sim 0.616 ->
+0.747) was computed with the pooled metric and is therefore
+OPTIMISTIC. The corrected sim figure is ~0.58-0.71 depending on
+configuration, with a standard deviation across episodes of 0.06-0.20
+- i.e. on some episodes the signal is near-random.
+
+**Second finding: no configuration wins on both domains.** sim's best
+is 2 s extrapolation residual (0.705) which is near-chance on driving
+(0.505); driving's best is 0.5 s direction-change (0.742) which is
+mid-tier on sim (0.642). Choosing per corpus would be exactly the
+domain knowledge this build forbids.
+
+**Status: STEP 4 FAILS its own bar.** The honest reading is that a
+frozen encoder's latent trajectory carries a weak, domain-dependent
+boundary signal (~0.6-0.7 per-media AUC, high variance), not a
+reliable one. Steps 5+ stand on this, so it must be resolved before
+they are built rather than after.

@@ -109,7 +109,95 @@ def estimators(V, k=3):
         s = v.std() + 1e-8
         z += (v - v.mean()) / s
     out["foote_multi"] = z
+
+    # ---- DERIVATIVE-SPACE estimators -------------------------------
+    # Appearance-based estimators fail when the scene does not change
+    # across a boundary (measured: sim 0.60 vs bench 0.84). What
+    # changes at such a boundary is the MOTION STATE - something stops,
+    # reverses, or starts. That lives in the derivative of the latent
+    # series, not its position.
+    D = np.zeros_like(V)
+    D[1:] = V[1:] - V[:-1]
+    Dn = D / (np.linalg.norm(D, axis=1, keepdims=True) + 1e-8)
+
+    # 7. direction reversal: cosine between successive motion vectors
+    d = np.zeros(n)
+    d[2:] = 1.0 - (Dn[2:] * Dn[1:-1]).sum(1)
+    out["dir_change"] = d
+
+    # 8. motion-energy change: |v| speeding up or slowing down
+    sp = np.linalg.norm(D, axis=1)
+    d = np.zeros(n)
+    d[1:] = np.abs(sp[1:] - sp[:-1])
+    out["speed_change"] = d
+
+    # 9. stop/start detection: local minima of speed are candidate
+    # boundaries (an object at rest between two manipulations)
+    s_sm = np.convolve(sp, np.ones(3) / 3, mode="same")
+    d = -(s_sm - s_sm.max())
+    out["rest_peak"] = d
+
+    # 10. two-sided in DERIVATIVE space: does the motion pattern before
+    # differ from the motion pattern after
+    d = np.zeros(n)
+    for i in range(n):
+        a0, a1 = max(0, i - k), i
+        b0, b1 = i + 1, min(n, i + 1 + k)
+        if a1 - a0 < 1 or b1 - b0 < 1:
+            continue
+        A = Dn[a0:a1].mean(0)
+        B = Dn[b0:b1].mean(0)
+        A /= np.linalg.norm(A) + 1e-8
+        B /= np.linalg.norm(B) + 1e-8
+        d[i] = 1.0 - float(A @ B)
+    out["deriv_two_sided"] = d
+
+    # 11. combined: appearance novelty AND motion-state change, z-summed
+    z = np.zeros(n)
+    for nm in ("two_sided", "dir_change", "speed_change"):
+        v = out[nm]
+        z += (v - v.mean()) / (v.std() + 1e-8)
+    out["combined"] = z
     return out
+
+
+def boundary_signal(F, dur, scales=(0.5, 1.0, 2.0), stride_frac=0.25,
+                    fps=None):
+    """THE step-4 product: one surprise series per media, multi-scale.
+
+    Window length must be small relative to event duration, and event
+    duration is unknown for an unseen corpus - measured: on sim the
+    same estimator moves 0.616 -> 0.682 -> 0.747 as the window shrinks
+    2s -> 1s -> 0.5s. So do not choose a scale: compute several and
+    z-combine, letting whichever scale matches the corpus dominate.
+
+    Returns (times, signal) on the finest grid.
+    """
+    import encode as E
+    if fps is not None:
+        E.frames_for.__defaults__ = (E.NF, fps)
+    base = min(scales) * stride_frac
+    grid = np.arange(0.0, max(dur - min(scales), 0.0) + 1e-9, base)
+    total = np.zeros(len(grid))
+    used = 0
+    for sc in scales:
+        spans, times = [], []
+        x = 0.0
+        while x + sc <= dur:
+            spans.append((x, x + sc))
+            times.append(x + sc / 2)
+            x += sc * stride_frac
+        if len(spans) < 8:
+            continue
+        V = E.encode_spans(F, spans)
+        est = estimators(V, k=3)
+        z = np.zeros(len(times))
+        for nm in ("two_sided", "extrap"):
+            v = est[nm]
+            z += (v - v.mean()) / (v.std() + 1e-8)
+        total += np.interp(grid, np.array(times), z)
+        used += 1
+    return grid, total / max(used, 1)
 
 
 def truth_boundaries(corpus):
