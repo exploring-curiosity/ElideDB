@@ -1298,3 +1298,38 @@ gap is not fusion, not aggregation, not the encoder: on a corpus whose
 episodes differ ONLY in event order and identity, retrieval requires
 recovering the events, and no frozen global-similarity encoder
 represents "which object moved when".
+
+## 2026-08-04 — Motion-structure channel: probed, NOT built (negative)
+
+Hypothesis: the oracle gap (0.992 vs <=0.45) is "which distinct thing
+moved when", which pretrained tracking gives semantics-free - a bundle
+is coherently-moving stuff, no agent/rest/pick vocabulary, as valid
+for cars as blocks. Representation: per-window motion magnitude per
+bundle-slot, slots ordered canonically by first motion; no thresholds
+beyond fitted merges (native/motstruct.py).
+
+Probe on 20 cached episodes, same-template vs different-template
+separability (AUC), six similarity variants:
+
+| variant | AUC |
+|---|---|
+| slot pattern, mean-removed | **0.631** |
+| total motion profile | 0.625 |
+| concurrent-count profile | 0.612 |
+| slot activity binarised | 0.601 |
+| number of active slots | 0.585 |
+| DTW over full structure | 0.576 |
+
+Reference, identical episodes and test: motion.dseq **0.675**,
+scene.dseq 0.642, sig2.dseq 0.608, vjseq.dseq 0.521, all pooled
+variants 0.48-0.56.
+
+**Verdict: do not build.** The best motion-structure variant (0.631)
+is BELOW an existing channel that costs nothing new (motion.dseq
+0.675) and barely above scene.dseq. Tracking 130 more episodes (~40
+min) to add a signal weaker than one already indexed is not
+justified. The measured lesson is sharper than the negative: the
+discriminative information on this corpus lives in the DELTA
+(change-profile) view of channels we already have - every dseq
+variant beats every pool variant - which is the same finding that
+made alignment beat pooling on kitchen.
