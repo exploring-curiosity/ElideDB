@@ -648,3 +648,42 @@ at 0.51 min/h against siglip2's ~10.
 
 sensitivity.py's slope must be re-measured with an encoder that can
 represent the action before it is quoted again.
+
+### The boundary-value curve is a CLIFF, not a slope  `native/sens2.py`
+
+Re-measured with an encoder that can represent the action, at the FULL
+corpus (150 episodes, support 20 per template):
+
+| boundary F1 | r50+rank yield | dino+rank yield | units/ep |
+|---|---|---|---|
+| **1.000** | **0.492** | **0.408** | 7.3 |
+| 0.867 | 0.300 | 0.267 | 7.7 |
+| 0.706 | 0.300 | 0.308 | 8.3 |
+| 0.561 | 0.308 | 0.283 | 8.6 |
+| 0.537 | 0.258 | 0.283 | 9.5 |
+| 0.496 | 0.267 | 0.233 | 11.0 |
+
+**All of the value sits in the last increment to perfect.** 1.000 ->
+0.867 costs 0.19 yield; 0.867 -> 0.496 costs nothing measurable. Since
+real segmentation will not reach 1.000, lifting step 5 from its current
+~0.57 to even 0.85 buys approximately zero. Chasing step 5 is chasing a
+cliff that cannot be climbed.
+
+**A methodology fault was caught here and is now fixed in the harness.**
+The first version of this run (40 episodes) produced a non-monotonic
+"curve" - boundary F1 0.847 scoring 0.167 while 0.492 scored 0.167 and
+0.528 scored 0.000. Cause: 40 episodes over 6 templates leaves ~6 per
+template, 5 become seeds, so SUPPORT was 1.7 and yield quantised to
+{0, 0.5, 1}. Pure noise presented as a trend. `score()` now returns
+support and both harnesses print it: a yield without its support is
+unreadable. Earlier u6retr numbers ran at 72 episodes (support ~7) and
+are re-confirmed at full corpus before being treated as settled.
+
+**Consequence: the response is not to fix step 5, it is to stop
+requiring a partition.** Step 5's first design position was "the spans
+partition the timeline exactly", justified by coverage - footage that
+belongs to no unit is unreachable. But dense OVERLAPPING windows also
+cover everything, and at a stride shorter than an event some window
+always falls inside a single event, so a straddling span never has to
+corrupt a direction vector. That is now measured against truth and cpd
+spans directly.

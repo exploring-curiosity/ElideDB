@@ -57,12 +57,19 @@ def units(enc, tag, ep, F, spans):
 
 
 def score(seqs, tmpl, seed_n=5):
-    """yield = true/support, prec = true/returned, k = 1.5 x support."""
+    """yield = true/support, prec = true/returned, k = 1.5 x support.
+
+    Returns (yield, prec, mean_support). SUPPORT IS PART OF THE RESULT:
+    with few episodes per template the support falls to 1-2 and yield
+    quantises to {0, 0.5, 1}, which produced a non-monotonic
+    "sensitivity curve" that was pure noise. Never read a yield without
+    its support.
+    """
     groups = {}
     for e in seqs:
         groups.setdefault(tmpl[e], []).append(e)
     rs = np.random.RandomState(0)
-    ys, ps = [], []
+    ys, ps, sups = [], [], []
     for tm, pool in sorted(groups.items()):
         if len(pool) < seed_n + 1:
             continue
@@ -76,7 +83,9 @@ def score(seqs, tmpl, seed_n=5):
         tr = sum(1 for e in got if tmpl.get(e) == tm)
         ys.append(tr / support)
         ps.append(tr / max(len(got), 1))
-    return float(np.mean(ys)), float(np.mean(ps))
+        sups.append(support)
+    return (float(np.mean(ys)), float(np.mean(ps)),
+            float(np.mean(sups)) if sups else 0.0)
 
 
 def main():
@@ -104,7 +113,26 @@ def main():
     print(f"STEP 6 end-to-end — {len(dirs)} episodes, "
           f"{len(names)} encoders, segmentations {segs}", flush=True)
 
+    def uniform(dur, w, st):
+        """Dense OVERLAPPING windows - not a partition.
+
+        The sensitivity ladder says yield only benefits from boundaries
+        that are essentially PERFECT (F1 1.000 -> 0.492, everything
+        below 0.867 flat at ~0.28). Real segmentation never reaches
+        that, so chasing step 5 is chasing a cliff we cannot climb.
+        Overlapping windows sidestep it: if a straddling span is what
+        corrupts a direction vector, then at stride < event length SOME
+        window always lies inside one event. Coverage is still total,
+        which was the only reason a partition was required.
+        """
+        out, t = [], 0.0
+        while t + w <= dur + 1e-6:
+            out.append((t, t + w))
+            t += st
+        return out or [(0.0, dur)]
+
     media, sp_truth, sp_cpd = {}, {}, {}
+    sp_uni = {}
     for d in tqdm(dirs, desc="decode+segment", unit="ep"):
         ei = int(d.name[2:])
         if ei not in ev:
@@ -114,6 +142,11 @@ def main():
         F = E.decode(cam, fps=FPS, w=256)
         media[ei] = F
         sp_truth[ei] = sorted(ev[ei])
+        for sg in segs:
+            if sg.startswith("uni:"):
+                _, w, st = sg.split(":")
+                sp_uni.setdefault(sg, {})[ei] = uniform(
+                    dur, float(w), float(st))
         if "cpd" in segs:
             CACHE.mkdir(parents=True, exist_ok=True)
             fp = CACHE / f"cpd_{ei}_{len(F)}.npy"
@@ -125,17 +158,19 @@ def main():
                 np.save(fp, np.array(sp_cpd[ei], np.float32))
 
     print(f"\n{'encoder':<15}{'seg':<8}{'yield':<9}{'prec':<9}"
-          f"{'units/ep'}")
+          f"{'units/ep':<10}{'support'}")
     for nm in names:
         for sg in segs:
-            SP = sp_truth if sg == "truth" else sp_cpd
+            SP = (sp_truth if sg == "truth"
+                  else sp_cpd if sg == "cpd" else sp_uni[sg])
             seqs = {}
             for ei, F in tqdm(media.items(), desc=f"{nm}/{sg}",
                               unit="ep", leave=False):
                 seqs[ei] = units(nm, sg, ei, F, SP[ei])
-            y, p = score(seqs, tmpl)
+            y, p, su = score(seqs, tmpl)
             nu = np.mean([len(v) for v in seqs.values()])
-            print(f"{nm:<15}{sg:<8}{y:<9.3f}{p:<9.3f}{nu:.1f}",
+            print(f"{nm:<15}{sg:<8}{y:<9.3f}{p:<9.3f}{nu:<10.1f}"
+                  f"{su:.1f}",
                   flush=True)
 
 
