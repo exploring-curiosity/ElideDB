@@ -32,7 +32,7 @@ exposure; consolidation by replay).
 | 1 | Ingest | keep | — | inherited, solid |
 | 2 | Sample | keep | — | inherited |
 | 3 | Encode (shared fn) | refactor | write/read vector identity | PENDING |
-| 4 | Score surprise | NEW | boundary-signal AUC vs truth boundaries | PENDING |
+| 4 | Score surprise | NEW | boundary-signal AUC vs truth boundaries | CLOSED - GraphGEBD Ncut, sim 0.711 / oxford 0.500; backbone study confirms DINOv3 ConvNeXt-Tiny (nothing beats it significantly, cheapest at 1.22 min/h) |
 | 5 | Segment | NEW | span F1 / boundary MAE vs truth spans | PENDING |
 | 6 | Encode units | refactor | unit-vector stability across views | PENDING |
 | 7 | Discover vocabulary | NEW | cluster purity vs truth labels (eval-only) | PENDING |
@@ -390,3 +390,76 @@ from perfect ones (yield 0.267 vs 0.267). So step 5 needs to produce
 reasonable, non-degenerate spans - not precise ones - and must not
 become another optimisation project. Emitter already exists (z-cut on
 Ncut ranking, emits 5-10 spans/episode against 6-9 true).
+
+### STEP 4 addendum — backbone study: is DINOv3 the right features?
+
+GraphGEBD's published 0.732 uses **ResNet50 / DINOv2**. This build
+substituted the in-repo DINOv3 ConvNeXt-Tiny without testing it, and
+DINOv3 is here for a *different job*: crop-vs-crop identity, where
+INVARIANCE is the goal (AUC 0.9994). Boundary detection wants the
+opposite - features that MOVE when the scene changes. So the
+substitution needed checking.
+
+`native/gebdback.py` holds the algorithm exactly fixed (same recursive
+contiguous Ncut, same depth 4, same MIN_SEG, same z-cut emitter) and
+swaps only `frame_features`. Two affinity scalings are reported per
+backbone, because sigma lives on cosine DISTANCE and a fixed sigma
+silently favours whichever space matches its scale.
+
+Harness validated: `dinov3_ct` reproduces graphgebd.py's 0.711 / 0.641
+to three decimals, so these are like-for-like swaps.
+
+**sim (12 episodes), F1@0.05 matched / emitter, sigma 0.25:**
+
+| backbone | sim | oxford | min/hour |
+|---|---|---|---|
+| resnet50 (ImageNet) | 0.738 / 0.690 | 0.250 / 0.200 | 1.42 |
+| **dinov3_ct (current)** | **0.711 / 0.641** | **0.500 / 0.400** | **1.22** |
+| siglip2-so400m | 0.683 / 0.627 | 0.000 / 0.222 | 21.8 |
+| dinov3_vits16 | 0.663 / 0.613 | 0.250 / 0.222 | — |
+| dinov3_vitb16 | 0.651 / 0.635 | 0.250 / 0.400 | — |
+| dinov2-base (paper's) | 0.629 / 0.585 | 0.250 / 0.545 | — |
+| vjepa2 (video-native) | 0.582 / 0.583 | 0.250 / 0.200 | 17.4 |
+| vit-mae-base | 0.476 / 0.463 | 0.250 / 0.222 | — |
+| resnet50+vjepa2, self-sigma | 0.750 / 0.693 | 0.500 / 0.444 | 18.8 |
+| siglip2+resnet50 | 0.748 / 0.715 | 0.000 / 0.222 | 23.2 |
+
+**The ordering at the top is NOT significant.** Paired per-episode
+bootstrap (10k, n=12) against dinov3_ct, matched F1:
+
+| variant | diff | 95% CI | wins/losses |
+|---|---|---|---|
+| resnet50 | +0.026 | [-0.044, +0.097] | 4 / 3 |
+| resnet50+vjepa2 | +0.038 | [-0.021, +0.094] | 5 / 2 |
+| siglip2+resnet50 | +0.037 | [-0.032, +0.102] | 4 / 2 |
+| dinov3_vits16 | -0.048 | [-0.109, +0.007] | 1 / 4 |
+| dinov2-base | -0.083 | [-0.170, +0.002] | 2 / 6 |
+| **dinov3_vitb16** | **-0.060** | **[-0.100, -0.022]** | 0 / 5 |
+| **vjepa2** | **-0.130** | **[-0.200, -0.055]** | 1 / 8 |
+| **vit-mae-base** | **-0.235** | **[-0.329, -0.149]** | 0 / 10 |
+
+Every CI above dinov3_ct straddles zero; the three below it in bold do
+not. So: **nothing measured beats DINOv3 ConvNeXt-Tiny significantly**,
+and V-JEPA2 alone, DINOv3 ViT-B and MAE are significantly worse.
+
+This CORRECTS an intermediate claim made while the run was in flight
+("ResNet50 beats DINOv3", "scaling DINOv3 monotonically hurts"). The
++0.026 is noise at n=12. What survives is narrower: the DINOv3 *ViT*
+variants do not help and ViT-B is significantly worse than
+ConvNeXt-Tiny - so there is no gain available by scaling DINOv3 up.
+
+**Decision: keep DINOv3 ConvNeXt-Tiny.** It is statistically tied for
+best AND the cheapest candidate (1.22 min/hour vs resnet50's 1.42).
+The best-*scoring* variant, resnet50+vjepa2 at 0.750/0.693, costs
+18.8 min/hour - ~15x the online budget - to buy a difference that is
+not significant, on a layer the sensitivity study already showed is
+not the bottleneck. Declined on cost.
+
+Caveats kept honest: oxford is ONE 19.1 s clip with 4 boundaries, so
+its F1 moves in ~0.25 steps - a second-domain sanity check, not a
+tiebreaker. sim n=12 cannot resolve differences below ~0.07. And
+sigma=0.25 remains a constant I chose; self-scaling it (per-media
+median distance) was tested and was not better for most backbones.
+
+Cost note: DINOv3 here is a SECOND model - native/encode.py (step 3)
+runs V-JEPA2 - so step 4's 1.22 min/hour is additive, not free.
