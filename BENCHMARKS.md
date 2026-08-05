@@ -1404,3 +1404,51 @@ encoders already order the pool better than it can. The tier is not
 refuted - the LOCAL judge is. What it would take: a frontier video
 model reading tens of frames (cloud-side, ~100 clips/query), not a
 4-bit 7B image-VLM on 6 frames.
+
+## 2026-08-04 — VLM descriptions at write: BOTH forms measured, both fail
+
+Target restated (owner): yield AND precision > 0.90 at k = 1.5*support
+where **k is a MAX BOUND, not a fixed return count** - abstention is
+allowed and required, so both metrics can exceed 0.90 by returning
+~support items that are nearly all true. (An earlier harness returned
+exactly k, which forces prec = yield/1.5; that was a harness bug.)
+
+**SIM (primary corpus, 6 templates, ~20 support each):**
+
+| approach | yield | prec |
+|---|---|---|
+| ORACLE (true event scripts) | 0.99 | - |
+| multi-encoder index, k=1.5 | 0.33 | 0.22 |
+| VLM one description per episode, k=1.0 | 0.13 | 0.13 |
+| VLM one description per episode, k=1.5 | 0.23 | 0.15 |
+| VLM windowed descriptions + DTW, k=1.0 | 0.19 | 0.19 |
+| VLM windowed descriptions + DTW, k=1.5 | 0.23 | 0.16 |
+| abstention rules over the index (best) | 0.33 | 0.22 |
+
+WHY the descriptions fail - inspected, not inferred. ep0 contains
+orange/cyan/blue blocks; the local VLM reports "the yellow block is
+lifted and placed on the brown block", calls the table a block, and
+repeats the same sentence for different windows. The oracle's 0.99
+needs the event script to be RIGHT; a 4-bit 7B VLM on 4x200px frames
+per window cannot see which object is which.
+
+**KITCHEN high-support with abstention (k=1.5 max bound):**
+
+| rule | yield | prec |
+|---|---|---|
+| return full k | 0.676 | 0.450 |
+| loo (seed-calibrated) | 0.664 | 0.458 |
+| gap (largest score drop) | 0.334 | 0.728 |
+| mad (median+3MAD) | 0.138 | 0.796 |
+
+Abstention TRADES yield for precision along a curve; it cannot put
+both above 0.90 because that needs the top ~support results to be
+nearly all true, i.e. near-perfect RANKING. Best single-query result
+today: q04 yield 0.78 prec 0.52 (returned 240 for support 160).
+
+**Conclusion.** Sixteen approaches measured across two corpora. On
+sim nothing exceeds 0.43 yield; on kitchen high-support nothing
+exceeds 0.90 yield with precision above 0.52. The binding constraint
+is perception quality: the retrieval half is proven (oracle 0.99), and
+every local model available - frozen encoders, trackers, and a 4-bit
+7B VLM - fails to recover what happened accurately enough to feed it.
