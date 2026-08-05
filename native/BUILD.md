@@ -601,3 +601,50 @@ min/hour of video against the 1 min/hour online budget; r50+rank is
 whether that tension is worth paying, which is what u6retr.py measures -
 an AUC is a proxy, and the one proxy trusted earlier in this build
 (boundary F1) was moving opposite to the real metric.
+
+### STEP 6 end to end — and the sensitivity result is now STALE
+
+`native/u6retr.py`, 72 episodes, yield/precision at k = 1.5 x support:
+
+| encoder | spans | yield | prec |
+|---|---|---|---|
+| vjepa2 (production) | truth | 0.167 | 0.106 |
+| r50 + rank | truth | 0.429 | 0.273 |
+| **siglip2 + rank** | **truth** | **0.595** | **0.379** |
+| vjepa2 (production) | cpd | 0.214 | 0.136 |
+| siglip2 + rank | cpd | 0.262 | 0.167 |
+| **r50 + rank** | **cpd** | **0.310** | **0.197** |
+
+**The AUC was honest this time**: with oracle spans the encoder fix
+takes yield 0.167 -> 0.595, a 3.6x lift, matching the action-AUC
+ordering exactly.
+
+**But it moves the bottleneck, and that invalidates a conclusion this
+build has been steering by.** sensitivity.py concluded "segmentation is
+NOT the bottleneck" - oracle boundaries yielded 0.267 against 0.267 at
+F1 0.5. That was measured with encode.py's V-JEPA2, which is
+order-blind and therefore near chance on the action. With a weak
+encoder the encoder is the binding constraint and boundary quality
+cannot show up. Now that the encoder represents the action, boundaries
+bind hard:
+
+    siglip2_rank   oracle spans 0.595  ->  cpd spans 0.262   (-0.333)
+    vjepa2         oracle spans 0.167  ->  cpd spans 0.214   (+0.047)
+
+V-JEPA2 gets slightly BETTER with worse spans, which is the signature of
+a signal that was noise all along. The 0.333 drop for siglip2_rank is
+now the single largest gap in the pipeline.
+
+Mechanism: rank pooling encodes the DIRECTION of change across a span,
+so it needs the span to contain one action. A span straddling a
+boundary produces a mixed direction vector. Mean pooling has nothing to
+corrupt, which is exactly why it did not care about boundaries.
+
+Consequence for the plan: **step 5 is the next thing to fix, not step
+7.** Also note r50+rank (0.310) beats siglip2+rank (0.262) under real
+spans while losing badly under oracle spans - a cheaper encoder that is
+less sensitive to misalignment currently wins the system-level number,
+at 0.51 min/h against siglip2's ~10.
+
+sensitivity.py's slope must be re-measured with an encoder that can
+represent the action before it is quoted again.
