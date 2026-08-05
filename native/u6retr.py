@@ -56,7 +56,7 @@ def units(enc, tag, ep, F, spans):
     return V
 
 
-def score(seqs, tmpl, seed_n=5):
+def score(seqs, tmpl, seed_n=5, abstain=True):
     """yield = true/support, prec = true/returned, k = 1.5 x support.
 
     Returns (yield, prec, mean_support). SUPPORT IS PART OF THE RESULT:
@@ -69,7 +69,7 @@ def score(seqs, tmpl, seed_n=5):
     for e in seqs:
         groups.setdefault(tmpl[e], []).append(e)
     rs = np.random.RandomState(0)
-    ys, ps, sups = [], [], []
+    ys, ps, sups, rets = [], [], [], []
     for tm, pool in sorted(groups.items()):
         if len(pool) < seed_n + 1:
             continue
@@ -79,13 +79,27 @@ def score(seqs, tmpl, seed_n=5):
         k = math.ceil(1.5 * support)
         cand = [e for e in seqs if e not in sd]
         sc = {e: max(dtw(seqs[s], seqs[e]) for s in sd) for e in cand}
-        got = sorted(sc, key=lambda x: -sc[x])[:k]
+        # ABSTENTION. k is a MAX BOUND, not a fixed return count.
+        # Returning exactly k caps precision at support/k = 1/1.5 =
+        # 0.667 no matter how good the ranking is - the label oracle
+        # measured 0.628 for exactly this reason, not because the
+        # labels were weak. The cut is calibrated label-free from the
+        # SEEDS: leave one seed out, score it against the others, and
+        # take the weakest such score as "what a true match looks
+        # like". Anything below that is not returned.
+        loo = [max(dtw(seqs[a], seqs[b]) for b in sd if b != a)
+               for a in sd] if len(sd) > 1 else []
+        cut = min(loo) if loo else -np.inf
+        ranked = sorted(sc, key=lambda x: -sc[x])[:k]
+        got = [e for e in ranked if sc[e] >= cut] if abstain else ranked
         tr = sum(1 for e in got if tmpl.get(e) == tm)
         ys.append(tr / support)
-        ps.append(tr / max(len(got), 1))
+        ps.append(tr / len(got) if got else 0.0)
         sups.append(support)
+        rets.append(len(got))
     return (float(np.mean(ys)), float(np.mean(ps)),
-            float(np.mean(sups)) if sups else 0.0)
+            float(np.mean(sups)) if sups else 0.0,
+            float(np.mean(rets)) if rets else 0.0)
 
 
 def main():
@@ -158,7 +172,7 @@ def main():
                 np.save(fp, np.array(sp_cpd[ei], np.float32))
 
     print(f"\n{'encoder':<15}{'seg':<8}{'yield':<9}{'prec':<9}"
-          f"{'units/ep':<10}{'support'}")
+          f"{'units/ep':<10}{'support':<9}{'returned'}")
     for nm in names:
         for sg in segs:
             SP = (sp_truth if sg == "truth"
@@ -167,10 +181,10 @@ def main():
             for ei, F in tqdm(media.items(), desc=f"{nm}/{sg}",
                               unit="ep", leave=False):
                 seqs[ei] = units(nm, sg, ei, F, SP[ei])
-            y, p, su = score(seqs, tmpl)
+            y, p, su, rt = score(seqs, tmpl)
             nu = np.mean([len(v) for v in seqs.values()])
             print(f"{nm:<15}{sg:<8}{y:<9.3f}{p:<9.3f}{nu:<10.1f}"
-                  f"{su:.1f}",
+                  f"{su:<9.1f}{rt:.1f}",
                   flush=True)
 
 

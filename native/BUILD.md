@@ -724,3 +724,47 @@ corpus.** Steps 4 and 5 remain in the tree because a boundary set is
 useful for other things (seek points, display, byte-range reads), but
 they are no longer on the retrieval critical path and no further
 optimisation of them is justified by any measurement taken here.
+
+### HARNESS FAULT: precision was capped at 0.667 by construction
+
+`score()` returned exactly k = ceil(1.5 x support). Only `support` of
+those can be true, so precision could never exceed support/k = 1/1.5 =
+0.667 however good the ranking became. Every precision figure recorded
+above this line was measured against a target it could not reach.
+
+The label oracle exposed it: 0.628 precision, which reads as "even
+perfect labels barely work" and is in fact just the cap.
+
+Fixed with a label-free abstention cut. k is a MAX BOUND: leave one
+seed out, score it against the remaining seeds, and take the weakest
+such score as "what a true match looks like"; nothing below it is
+returned. Nothing is fitted on truth.
+
+| config | yield | prec | returned (k=30) |
+|---|---|---|---|
+| LABEL ORACLE, padding to k | 0.942 | 0.628 | 30.0 |
+| **LABEL ORACLE, abstaining** | **0.942** | **0.890** | 22.0 |
+| siglip2+rank, truth spans | 0.600 | 0.400 | 30.0 |
+| **siglip2+rank, uniform grid** | **0.492** | **0.328** | 30.0 |
+| siglip2+rank, cpd | 0.325 | 0.237 | 28.8 |
+| r50+rank, uniform grid | 0.400 | 0.267 | 30.0 |
+| r50+rank, cpd | 0.317 | 0.211 | 30.0 |
+
+**The corrected ceiling is 0.942 / 0.890, not the 0.992 quoted earlier**
+in this file - that came from an older low-support run. Perfect action
+labels do NOT give perfect retrieval, so 0.90/0.90 sits just under the
+achievable maximum rather than comfortably below it.
+
+**Abstention does not fire for any real encoder** - `returned` stays at
+30 while the oracle drops to 22. That is a diagnosis, not a disappointed
+expectation: seed-to-seed similarity is no higher than
+seed-to-random-candidate, so the score distribution holds no confidence
+signal to cut on. Precision is not stuck because the cut is badly
+chosen; it is stuck because the representation does not separate true
+from false at all.
+
+Consequence: the remaining gap is representational, and the discrete
+route is the one with evidence behind it - symbol sequences (labels)
+reach 0.942/0.890 where continuous vectors reach 0.600/0.400 with the
+SAME oracle spans. That is step 7's motivation and it is now measured
+rather than assumed.

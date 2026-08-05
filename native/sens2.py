@@ -87,10 +87,10 @@ def main():
                               desc=f"{enc} lv{lv}", unit="ep",
                               leave=False):
                 seqs[ei] = units(enc, f"sens{lv}", ei, F, spans[lv][ei])
-            y, p, su = score(seqs, tmpl)
+            y, p, su, rt = score(seqs, tmpl)
             nu = np.mean([len(v) for v in seqs.values()])
             print(f"{enc:<15}{np.mean(qual[lv]):<14.3f}{y:<9.3f}"
-                  f"{p:<9.3f}{nu:<10.1f}{su:.1f}", flush=True)
+                  f"{p:<9.3f}{nu:<10.1f}{su:<9.1f}{rt:.1f}", flush=True)
         print()
 
 
