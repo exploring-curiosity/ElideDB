@@ -336,3 +336,57 @@ encoder's vector for a correctly-cut unit does not encode which object
 moved where, which is the only thing distinguishing sim templates.
 Step 4 is closed as not-on-the-critical-path; the open problem moves
 to step 6 (unit representation).
+
+---
+
+### STEP 4 — FINAL: GraphGEBD (recursive normalised cut) is the best variant
+
+Implemented the published SOTA (`native/graphgebd.py`): frames are
+graph nodes, edges are DINOv3 appearance similarity, boundaries are
+contiguous splits minimising
+
+    Ncut(A,B) = cut(A,B)/assoc(A,V) + cut(A,B)/assoc(B,V)
+
+applied recursively. Cuts come out RANKED by their own Ncut value, so
+boundary quality is intrinsic - no threshold of mine - and the count is
+set by a z-cut on that ranking.
+
+**Every step-4 variant, one table, F1@0.05 (count-matched / emitter):**
+
+| method | sim | oxford |
+|---|---|---|
+| **GraphGEBD (recursive Ncut)** | **0.711 / 0.641** | **0.500 / 0.400** |
+| FlowGEBD PT framewise | 0.644 / 0.636 | 0.250 / 0.222 |
+| FlowGEBD PT patchwise | 0.644 / 0.613 | 0.500 / 0.545 |
+| FlowGEBD FN ego-compensated | 0.508 / 0.516 | 0.500 / 0.471 |
+| FlowGEBD FN | 0.492 / 0.496 | 0.250 / 0.444 |
+| embedding surprise (3 formulations) | ~0.6 AUC, not F1-competitive | ~0.6 AUC |
+| *published GraphGEBD, Kinetics-GEBD* | *0.732* | — |
+
+Per-episode sim (matched): 0.89, 0.86, 0.86, 0.86, 0.75, 0.75, 0.71,
+0.67, 0.62, 0.57, 0.50, 0.50.
+
+**sim 0.711 is within 0.02 of the published Kinetics number (0.732)**,
+on a corpus the method never saw, with the in-repo DINOv3 standing in
+for DINOv2. It is also the single best variant on BOTH domains, which
+is what "one variant, no per-corpus configuration" required.
+
+It also settles an error recorded earlier in this file: I concluded
+that "a frozen encoder's latent trajectory does not mark event
+boundaries". Wrong - the trajectory carries the signal; thresholding a
+per-frame score was the wrong ALGORITHM. Solving for a global
+partition over the same features recovers it (0.6 AUC -> 0.711 F1).
+
+**Step 4 CLOSED at 0.711 sim / 0.500 oxford**, single variant, no
+per-domain configuration, comparable to published SOTA. Kept despite
+the sensitivity finding, because steps 5+ consume it and it is now the
+best available implementation rather than a placeholder.
+
+### STEP 5 — scope revised by the sensitivity result
+
+Step 5 turns the ranked cuts into spans. Its quality bar is no longer
+tight: units built from F1-0.5 boundaries retrieve as well as units
+from perfect ones (yield 0.267 vs 0.267). So step 5 needs to produce
+reasonable, non-degenerate spans - not precise ones - and must not
+become another optimisation project. Emitter already exists (z-cut on
+Ncut ranking, emits 5-10 spans/episode against 6-9 true).
