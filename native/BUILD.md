@@ -551,3 +551,53 @@ here. Measured: perfect boundaries give yield 0.267, F1-0.5 boundaries
 give 0.267, chance is 0.207. The curve is flat, so no step-4 or step-5
 number reaches the goal. Step 5 was fixed because it was broken, not
 because it moves the product metric.
+
+## STEP 6 — ENCODE UNITS.  `native/unitenc.py`, `native/u6retr.py`
+
+The measured bottleneck. sensitivity.py put oracle spans + real encoders
+at yield 0.267 and oracle spans + true LABELS at 0.992; that whole gap
+is what a unit vector fails to say about what happened inside it.
+
+**The ledger's metric was wrong on its own.** It asked for "unit-vector
+stability across views", but a constant function is perfectly stable and
+says nothing. The grade here is a pair: stability AND discriminability
+(AUC over unit pairs, same-label vs different-label, taken only ACROSS
+episodes so within-episode background similarity cannot win it).
+
+**Diagnosis: mean pooling is order-blind.** Reverse a clip and a mean
+is unchanged, so a pick cannot differ from a place. Every mean-pooled
+encoder sits at chance on the action - including the one currently in
+native/encode.py.
+
+**Held out, 60 unseen episodes, 390 truth units (chance = 0.500):**
+
+| encoder | action AUC | colour AUC | stability | min/h (units) |
+|---|---|---|---|---|
+| **siglip2 + rank pooling** | **0.691** | 0.506 | 0.933 | ~10.0 |
+| siglip2 + delta | 0.643 | 0.503 | 0.883 | ~10.0 |
+| r50 + rank | 0.579 | 0.500 | 0.912 | ~0.51 |
+| dino + rank | 0.538 | 0.498 | 0.906 | ~0.41 |
+| **vjepa2 mean-pooled (production)** | **0.521** | 0.500 | 0.997 | ~9.6 |
+| vjepa2 temporal-group concat | 0.539 (dev) | 0.477 | 0.995 | ~9.6 |
+| dino/siglip2 halves, meanstd | 0.50-0.54 (dev) | ~0.47 | ~0.99 | — |
+
+Rank pooling is the Bilen/Fernando dynamic-image closed form,
+`sum_t (2t - T - 1) . v_t`: parameter-free, one pass, and order-aware BY
+CONSTRUCTION - reverse the clip and it flips sign, which is exactly the
+property a mean lacks. Dev flattered it by 0.030 (step 5's dev gap was
+0.084), and stability stays 0.933, so the gain is not bought with noise.
+
+**Colour AUC is 0.498-0.506 everywhere - exact chance - and that is NOT
+a defect to chase here.** Checked directly: the action sequence
+identifies the template uniquely (6 distinct prim-sequences -> 6
+templates, 0 ambiguous episodes of 150). Object identity carries no
+information about the retrieval target in this corpus, so the whole
+0.267 -> 0.992 gap is an ACTION representation gap. That is what makes
+the pooling fix the right axis rather than a lucky one.
+
+**Cost tension, stated not hidden.** siglip2 unit encoding is ~10
+min/hour of video against the 1 min/hour online budget; r50+rank is
+0.51 min/h at AUC 0.579. Whether the AUC lift converts to yield decides
+whether that tension is worth paying, which is what u6retr.py measures -
+an AUC is a proxy, and the one proxy trusted earlier in this build
+(boundary F1) was moving opposite to the real metric.
