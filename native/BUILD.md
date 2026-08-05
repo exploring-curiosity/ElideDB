@@ -32,8 +32,8 @@ exposure; consolidation by replay).
 | 1 | Ingest | keep | — | inherited, solid |
 | 2 | Sample | keep | — | inherited |
 | 3 | Encode (shared fn) | refactor | write/read vector identity | PENDING |
-| 4 | Score surprise | NEW | boundary-signal AUC vs truth boundaries | CLOSED - GraphGEBD Ncut, sim 0.711 / oxford 0.500; backbone study confirms DINOv3 ConvNeXt-Tiny (nothing beats it significantly, cheapest at 1.22 min/h) |
-| 5 | Segment | NEW | span F1 / boundary MAE vs truth spans | PENDING |
+| 4 | Score surprise | NEW | boundary-signal AUC vs truth boundaries | CLOSED - GraphGEBD Ncut, sim 0.711 / oxford 0.500; backbone study confirms DINOv3 ConvNeXt-Tiny (nothing beats it significantly, cheapest at 0.68 min/h) |
+| 5 | Segment | NEW | span F1 / boundary MAE vs truth spans | PASS - sim spanF1 0.652, bMAE 1.18s, coverage 1.0, deterministic; oxford spanF1 0.000 (over-segments long uniform stretches, recorded not fixed) |
 | 6 | Encode units | refactor | unit-vector stability across views | PENDING |
 | 7 | Discover vocabulary | NEW | cluster purity vs truth labels (eval-only) | PENDING |
 | 8 | Assign | NEW | assignment agreement across views | PENDING |
@@ -413,16 +413,16 @@ to three decimals, so these are like-for-like swaps.
 
 | backbone | sim | oxford | min/hour |
 |---|---|---|---|
-| resnet50 (ImageNet) | 0.738 / 0.690 | 0.250 / 0.200 | 1.42 |
-| **dinov3_ct (current)** | **0.711 / 0.641** | **0.500 / 0.400** | **1.22** |
-| siglip2-so400m | 0.683 / 0.627 | 0.000 / 0.222 | 21.8 |
+| resnet50 (ImageNet) | 0.738 / 0.690 | 0.250 / 0.200 | 0.85 |
+| **dinov3_ct (current)** | **0.711 / 0.641** | **0.500 / 0.400** | **0.68** |
+| siglip2-so400m | 0.683 / 0.627 | 0.000 / 0.222 | 16.72 |
 | dinov3_vits16 | 0.663 / 0.613 | 0.250 / 0.222 | — |
 | dinov3_vitb16 | 0.651 / 0.635 | 0.250 / 0.400 | — |
 | dinov2-base (paper's) | 0.629 / 0.585 | 0.250 / 0.545 | — |
-| vjepa2 (video-native) | 0.582 / 0.583 | 0.250 / 0.200 | 17.4 |
+| vjepa2 (video-native) | 0.582 / 0.583 | 0.250 / 0.200 | 16.18 |
 | vit-mae-base | 0.476 / 0.463 | 0.250 / 0.222 | — |
-| resnet50+vjepa2, self-sigma | 0.750 / 0.693 | 0.500 / 0.444 | 18.8 |
-| siglip2+resnet50 | 0.748 / 0.715 | 0.000 / 0.222 | 23.2 |
+| resnet50+vjepa2, self-sigma | 0.750 / 0.693 | 0.500 / 0.444 | 17.03 |
+| siglip2+resnet50 | 0.748 / 0.715 | 0.000 / 0.222 | 17.57 |
 
 **The ordering at the top is NOT significant.** Paired per-episode
 bootstrap (10k, n=12) against dinov3_ct, matched F1:
@@ -449,9 +449,9 @@ variants do not help and ViT-B is significantly worse than
 ConvNeXt-Tiny - so there is no gain available by scaling DINOv3 up.
 
 **Decision: keep DINOv3 ConvNeXt-Tiny.** It is statistically tied for
-best AND the cheapest candidate (1.22 min/hour vs resnet50's 1.42).
+best AND the cheapest candidate (0.68 min/hour vs resnet50's 0.85).
 The best-*scoring* variant, resnet50+vjepa2 at 0.750/0.693, costs
-18.8 min/hour - ~15x the online budget - to buy a difference that is
+17.03 min/hour - 25x DINOv3 and 17x the 1 min/hour budget - to buy a difference that is
 not significant, on a layer the sensitivity study already showed is
 not the bottleneck. Declined on cost.
 
@@ -462,4 +462,64 @@ sigma=0.25 remains a constant I chose; self-scaling it (per-media
 median distance) was tested and was not better for most backbones.
 
 Cost note: DINOv3 here is a SECOND model - native/encode.py (step 3)
-runs V-JEPA2 - so step 4's 1.22 min/hour is additive, not free.
+runs V-JEPA2 - so step 4's 0.68 min/hour is additive, not free.
+
+All min/hour figures are WARM throughput (model load excluded) over
+400 frames, scaled to 14400 frames = 1 hour at the 4 fps decode rate.
+An earlier revision of this table quoted load-inclusive figures from a
+run whose frame-tiling was buggy (101 frames, not 400); those were
+~1.5-2x pessimistic for the cheap models. Fusion costs are additive -
+both backbones run over every frame.
+
+## STEP 5 — SEGMENT (ranked cuts -> spans).  `native/segment.py`  PASS
+
+Turns step 4's ranked boundaries into the actual retrieval units. Three
+design positions:
+
+1. **The spans partition the timeline exactly** - coverage 1.0, no gaps.
+   A unit set with holes leaves footage in the store but unreachable by
+   any query, and nothing reports it. Verified, not assumed.
+2. **Short spans are merged, never dropped** - dropping punches a hole.
+3. **No new threshold.** The minimum span length falls out of step 4:
+   recursive_ncut splits an interval at least MIN_SEG from either end
+   and recurses on disjoint children, so every boundary is >= MIN_SEG
+   from every other. At 4 frames / 4 fps that is 1.0 s. Degenerate
+   spans are impossible by construction. The grade checks it.
+
+**Emitter changed.** Step 4 used a z<0 cut on the Ncut values - keep
+everything below the mean, i.e. roughly half the candidates no matter
+how many real events the media holds. A count that cannot adapt is a
+defect, not a tuning knob, so it is now Otsu on the same values: split
+where they actually separate. Still fitted per media, still no constant
+of mine. Measured both ways:
+
+| emitter | sim spanF1 | sim bMAE | oxford bMAE | oxford spans |
+|---|---|---|---|---|
+| z<0 | 0.607 | 1.22 s | 3.36 s | 7 (truth 4) |
+| **otsu** | **0.652** | **1.18 s** | **2.49 s** | **6 (truth 4)** |
+
+**Grade (sim, n=12, otsu):**
+
+| | |
+|---|---|
+| span F1 @IoU0.5 | 0.652 (prec 0.612 / rec 0.711) |
+| boundary MAE | 1.18 s |
+| spans / media | 8.4 (truth 7.1) |
+| coverage | 1.0000, max gap 0.00 s |
+| shortest span | 1.00 s (= structural floor) |
+| gates | coverage / floor / determinism / non-degenerate: all PASS |
+
+**KNOWN LIMITATION, measured not assumed: oxford span F1 = 0.000.**
+Structural gates all pass there too, but not one predicted span reaches
+IoU 0.5 against truth. Oxford's truth contains a 9.0 s span of uniform
+driving; depth-4 recursion always splits downward, so the longest span
+produced is 4.6 s. **Boundary F1 hid this entirely** - 0.500 at the
+boundary level, 0.000 at the span level. Getting half the boundaries
+right says nothing about whether the resulting spans match, which is a
+reminder that step 4's metric was never the metric step 6 consumes.
+
+The fix is known - stop recursion on within-segment homogeneity rather
+than on a depth counter - and is deliberately NOT taken: the
+sensitivity study put step 5 off the critical path, and this is exactly
+the "another optimisation project" the step was scoped to avoid.
+Recorded so it is a decision rather than an oversight.
