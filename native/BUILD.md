@@ -292,3 +292,47 @@ with the patchwise variant, and no single variant leads on both
 (sim prefers framewise/patchwise equally, oxford needs patchwise or
 ego-compensation). Published reference for context: FlowGEBD 0.713 on
 Kinetics-GEBD.
+
+---
+
+### SENSITIVITY RESULT — segmentation is NOT the bottleneck (sim)
+
+Retrieval yield/prec as boundary quality degrades from perfect to
+near-useless (60 sim episodes, units encoded by the shared encoder,
+episodes matched by DTW over unit-vector sequences):
+
+| boundary F1 | yield | prec | units/ep |
+|---|---|---|---|
+| **1.000 (oracle)** | **0.267** | 0.167 | 7.3 |
+| 0.859 | 0.267 | 0.167 | 7.3 |
+| 0.713 (= published SOTA) | 0.233 | 0.146 | 8.2 |
+| 0.576 | 0.267 | 0.167 | 8.5 |
+| 0.538 | 0.300 | 0.188 | 9.4 |
+| 0.509 | 0.233 | 0.146 | 10.8 |
+
+**The slope is zero.** Halving boundary quality changes retrieval by
+less than the noise. And the CEILING with perfect boundaries is 0.267
+against a chance floor of 0.207.
+
+**Consequences, stated plainly:**
+
+1. Every hour spent on step 4 - surprise estimators, the shipped
+   predictor, FlowGEBD, and the planned GraphGEBD - is irrelevant to
+   the outcome on this corpus. Going from 0.64 to the published 0.73
+   would move retrieval by nothing.
+2. My earlier claim that "segmentation was worth ~0.36 yield" is
+   WRONG as a causal statement. That number came from comparing a
+   metadata-segmented kitchen store against a window-indexed one, and
+   attributed the whole gap to segmentation. On sim, measured directly
+   by holding everything else fixed, segmentation is worth ~0.06.
+3. The oracle EVENT-SCRIPT result (0.992) used truth *labels* - which
+   object, which action - not just truth boundaries. The gap between
+   0.267 (perfect boundaries, real encoder) and 0.992 (perfect
+   boundaries, perfect labels) is therefore entirely in what the units
+   ARE, not where they start and end.
+
+**The bottleneck is unit CONTENT, not unit BOUNDARIES.** A frozen
+encoder's vector for a correctly-cut unit does not encode which object
+moved where, which is the only thing distinguishing sim templates.
+Step 4 is closed as not-on-the-critical-path; the open problem moves
+to step 6 (unit representation).
