@@ -1371,3 +1371,36 @@ different evidence - a model that scores query and candidate JOINTLY
 (cross-encoder / VLM), which is exactly the query-conditioned tier the
 architecture reserves for read time. The index's job is settled and
 measured: recall@200-500, cheap, universal, no domain knowledge.
+
+## 2026-08-04 — TIER-1 cross-encoder (VLM) on needles: measured, NEGATIVE
+
+Local judge: Qwen2.5-VL-7B-Instruct-4bit (MLX), 0.5 s/call, 3-6 frames
+per clip, top-150 pool, kitchen needle queries (native/vlmrank.py).
+
+**Scoring method matters more than the model.** Asked to rate 0-9 the
+VLM answers "9" to almost everything: pairwise AUC **0.11**. Reading
+the ANSWER TOKEN'S PROBABILITY instead (P(Yes) vs P(No)) recovers a
+real signal: AUC **0.766** (q04), **0.562** (q01). Same model, same
+frames - only the read-out changed.
+
+**End-to-end, that signal is still too weak to rerank with:**
+
+| variant | q00 | q01 | q02 | q07 | q08 | MEAN |
+|---|---|---|---|---|---|---|
+| Tier-0 index | 0.00 | 0.33 | 0.41 | 0.29 | 0.08 | 0.22 |
+| VLM replaces ranking (3 grp) | 0.00 | 0.25 | 0.15 | 0.14 | 0.05 | 0.12 |
+| VLM blended 50/50, 6 frames | - | 0.38 | 0.17 | 0.36 | 0.00 | 0.22 |
+
+Replacing the index ordering costs -0.10; blending recovers to parity
+(-0.02) with two real wins (q07 +0.14, q01 +0.04) and one real loss
+(q02 -0.22). A single-seed-group run had suggested +0.25/+0.29 - it
+did not survive averaging over 3 groups, and is recorded as noise.
+
+**Reading.** The two-tier PRECONDITION holds (recall@200 0.84-1.00 on
+these very queries, ranking headroom to 0.85), but a reranker only
+helps if it is substantially better than the retriever it is
+reordering. At pairwise AUC 0.56-0.77 this judge is not: six fused
+encoders already order the pool better than it can. The tier is not
+refuted - the LOCAL judge is. What it would take: a frontier video
+model reading tens of frames (cloud-side, ~100 clips/query), not a
+4-bit 7B image-VLM on 6 frames.
