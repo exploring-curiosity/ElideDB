@@ -192,3 +192,53 @@ model's own trained predictor) all land at ~0.6 per-media AUC with
 large across-episode variance. A frozen general-purpose video model's
 latent trajectory does not reliably mark event boundaries in these
 domains. Steps 5+ remain blocked.
+
+---
+
+### STEP 4 — take 4: MOTION CUES from the literature (major improvement on sim)
+
+I had declared step 4 blocked after three embedding-based formulations
+all reached ~0.6 per-media AUC. That conclusion was premature: I never
+checked the published unsupervised state of the art for this exact
+task, which does NOT use semantic embeddings.
+
+Literature (unsupervised / zero-shot Generic Event Boundary Detection):
+- **FlowGEBD** (WACV 2024): optical flow, non-parametric, training-free.
+  F1@0.05 = **0.713** Kinetics-GEBD, 0.623 TAPOS; **+31.7 points
+  absolute** over the unsupervised (embedding) baseline.
+- **GraphGEBD**: zero-shot graph + normalised cut, F1@0.05 = 0.732.
+- **UBoCo** (CVPR 2022): temporal self-similarity matrix + recursive
+  kernel matching.
+- Also noted: SAM-GEBD (zero-cost), CoSeg (cognitively-inspired
+  unsupervised event segmentation).
+
+Implemented FlowGEBD faithfully (`native/flowgebd.py`): Pixel Tracking
+(Shi-Tomasi points + Lucas-Kanade sparse flow; boundary where the
+tracked-point ratio collapses) and Flow Normalisation (dense Farneback,
+per-patch max displacement, accumulated and normalised). Adopted the
+field's metric, F1 at relative distance 0.05, so numbers are
+comparable to published work.
+
+| method | sim F1@0.05 | oxford F1@0.05 |
+|---|---|---|
+| **PT framewise (Lucas-Kanade)** | **0.647** | 0.286 |
+| FN (Farneback patches) | 0.492 | 0.250 |
+| PT patchwise | 0.000 (bug: score saturates) | 0.000 |
+| *published FlowGEBD, Kinetics-GEBD* | *0.713* | — |
+
+Per-episode sim F1 for PT framewise: 0.86, 0.75, 0.75, 0.71, 0.71,
+0.67, 0.67, 0.62, 0.62, 0.50, 0.46, 0.43.
+
+**Reading.** On sim, motion cues are dramatically better than every
+embedding formulation tried (0.647 F1 in the same ballpark as the
+published 0.713 on Kinetics) - the signal was never missing, I was
+reading the wrong channel. Caveat on the protocol: predictions are
+count-matched to the number of true boundaries, so this measures
+PLACEMENT quality, not how many boundaries to emit; a thresholded
+version will score lower and is what step 5 actually needs.
+
+Oxford stays poor (0.286). Driving boundaries are stops/turns where
+ego-motion dominates the flow field - global flow keeps moving when
+the *event* changes - so the collapse-of-tracking cue does not fire.
+That is a real and expected limitation of flow-on-ego-video, and it
+points at ego-motion compensation as the next thing to try there.
