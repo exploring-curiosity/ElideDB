@@ -1566,3 +1566,41 @@ by excluding a channel - it is the unit of evaluation itself]. The
 kitchen figure of 0.655 yield / 0.436 prec is therefore still an
 UPPER BOUND on true zero-shot performance, measured with segmentation
 handed to the system for free.
+
+## 2026-08-05 — FRESH SEGMENTATION-FREE STORES: the clean number
+
+Both corpora re-written from RAW VIDEO with zero metadata
+(native/rawwrite.py): uniform 2/4/8 s window grids, no boundaries
+given, frozen V-JEPA2 per window. Retrieval returns TIME RANGES and is
+graded by overlap with truth spans (native/rawbench.py). Metrics are
+only yield and precision, k = 1.5*support as a max bound.
+
+| corpus | yield | prec | chance |
+|---|---|---|---|
+| sim (long-context, 6 templates, support 20) | **0.208** | 0.194 | 0.207 |
+| bench (high-support q3/q4/q5) | **0.296** | 0.303 | ~0.12 |
+
+sim: 6,006 windows / 150 files. bench: 24,634 windows / 4 raw files
+(235 min continuous, back-to-back demos).
+
+**Sim is exactly at chance.** With segmentation removed, the last
+apparent signal disappears: 0.208 vs 0.207 random. Everything the
+segmented store showed on sim (0.33) was carried by knowing where
+episodes began and ended.
+
+**Bench is 2.5x chance but far from the target**: 0.296/0.303 versus
+0.655/0.436 with oracle segmentation and 0.90 with the fully
+contaminated pipeline. Segmentation was worth ~0.36 yield, i.e. MOST
+of what looked like retrieval quality.
+
+**Complete honest ladder for kitchen high-support QbE:**
+
+| configuration | yield | what it assumed |
+|---|---|---|
+| shipped 8-channel | 0.90 | oracle segmentation + trained student + domain-derived channels |
+| domain-blind channels | 0.655 | oracle segmentation |
+| segmentation-free, this build | 0.296 | nothing |
+
+Each removal of an assumption cost roughly half the score. The target
+of yield AND precision > 0.90 zero-shot is not approached by any
+configuration measured in this project.
