@@ -1333,3 +1333,41 @@ discriminative information on this corpus lives in the DELTA
 (change-profile) view of channels we already have - every dseq
 variant beats every pool variant - which is the same finding that
 made alignment beat pooling on kitchen.
+
+## 2026-08-04 — Two-tier architecture: precondition PROVEN, cheap Tier-1 REJECTED
+
+**Tier-0 recall (the number that decides the architecture).** Kitchen,
+2097 episodes, index = all-channel fusion of frozen encoders:
+
+| query | sup | yield@1.5sup | recall@100 | @200 | @500 |
+|---|---|---|---|---|---|
+| q07 | 12 | 0.43 | 0.94 | 1.00 | 1.00 |
+| q01 | 17 | 0.30 | 0.57 | 0.85 | 0.98 |
+| q02 | 14 | 0.44 | 0.80 | 0.84 | 0.98 |
+| q04 | 165 | 0.78 | 0.44 | 0.69 | 0.98 |
+| q05 | 196 | 0.80 | 0.42 | 0.68 | 0.93 |
+| q03 | 247 | 0.48 | 0.17 | 0.30 | 0.61 |
+| q08 | 18 | 0.06 | 0.18 | 0.34 | 0.75 |
+| q00 | 8 | 0.00 | 0.00 | 0.20 | 0.53 |
+| MEAN | | **0.41** | 0.44 | **0.61** | **0.85** |
+
+The answers ARE in the pool - on needle queries 84-100% of them sit in
+the top 200 while final yield is 0.30-0.44. Ranking, not recall, is
+the failure. Headroom for a reranker: 0.41 -> up to 0.85.
+
+**Cheap Tier-1 (same encoders, no shortcuts) - NEGATIVE.** Full-
+resolution sequences + symmetric late interaction + all-channel z
+fusion over the top-200 (native/rerank.py):
+
+| | q00 | q01 | q02 | q03 | q04 | q05 | q07 | q08 | MEAN |
+|---|---|---|---|---|---|---|---|---|---|
+| Tier-0 | 0.00 | 0.30 | 0.44 | 0.48 | 0.78 | 0.80 | 0.43 | 0.06 | 0.41 |
+| +Tier-1 | 0.07 | 0.32 | 0.49 | 0.30 | 0.69 | 0.68 | 0.23 | 0.08 | 0.36 |
+
+Helps needles (+0.02..+0.07), hurts large-support queries badly
+(-0.09..-0.20). **Conclusion: spending more compute on the SAME
+evidence cannot convert recall into precision.** Tier-1 must contribute
+different evidence - a model that scores query and candidate JOINTLY
+(cross-encoder / VLM), which is exactly the query-conditioned tier the
+architecture reserves for read time. The index's job is settled and
+measured: recall@200-500, cheap, universal, no domain knowledge.
