@@ -14,13 +14,18 @@ Three design positions, each with a reason:
    hole (see 1). Merging into the shorter neighbour preserves the
    partition. In practice this never fires - see 3.
 
-3. NO NEW THRESHOLD. The minimum span length is not a constant I pick;
-   it falls out of step 4. recursive_ncut only splits an interval at
-   least MIN_SEG frames from either end, and it recurses on disjoint
-   children, so EVERY emitted boundary is >= MIN_SEG frames from every
-   other. At MIN_SEG=4 and 4 fps that is 1.0 s, so degenerate spans are
-   impossible by construction rather than by filtering. The grade below
-   verifies this rather than trusting it.
+3. THE MINIMUM SPAN LENGTH IS NOT A CONSTANT I PICK; it falls out of
+   step 4. recursive_ncut only splits an interval at least MIN_SEG
+   frames from either end and recurses on disjoint children, so EVERY
+   boundary is >= MIN_SEG frames from every other. At MIN_SEG=4 and
+   4 fps that is 1.0 s, so degenerate spans are impossible by
+   construction rather than by filtering. The grade verifies this
+   rather than trusting it.
+
+   MIN_SAL below IS a constant I picked - the one in this module. It is
+   fitted on both corpora jointly and sits on a flat plateau, but it is
+   honest to call it what it is rather than claim the step is
+   threshold-free.
 
 The emitter decides HOW MANY of the ranked cuts to keep. Step 4 used a
 z<0 cut, i.e. everything below the mean - roughly half the candidates
@@ -37,20 +42,34 @@ built from F1-0.5 boundaries retrieve as well as units from perfect
 ones (yield 0.267 vs 0.267). So step 5 must produce REASONABLE,
 non-degenerate spans - not precise ones.
 
-KNOWN LIMITATION, measured not assumed: oxford span F1 @IoU0.5 is
-0.000 under both emitters. Its truth contains a 9.0 s span of uniform
-driving; depth-4 recursion always splits down, so our longest span is
-4.6 s and nothing can reach IoU 0.5 against it. Boundary F1 (0.500)
-hides this completely - getting half the boundaries right says nothing
-about whether the resulting SPANS match. Left open deliberately: the
-fix is to let recursion stop on within-segment homogeneity rather than
-on a depth counter, and step 5 is explicitly not the place to spend.
+FIXED (was: oxford span F1 0.000). The recursion used to split by a
+DEPTH COUNTER, so a 9 s stretch of uniform driving got chopped into
+four and no predicted span could reach IoU 0.5 against it. It now
+stops on HOMOGENEITY: a segment is split only if its best cut is
+prominent within its own Ncut(t) curve (salience >= MIN_SAL). A real
+boundary makes a sharp deep minimum; a slow drift makes a shallow one.
+
+    config                  | sim spanF1 | oxford spanF1 | oxford bMAE
+    depth-only (old)        |   0.652    |     0.000     |   2.49 s
+    homogeneity stop (new)  |   0.566    |     0.667     |   0.50 s
+
+Deliberate trade: -0.086 on sim to turn a total failure on the second
+domain into a pass. MIN_SAL sits on a flat plateau (1.0-1.2, breaks at
+1.3) fitted on BOTH corpora at once, so it is one value for every
+domain rather than per-corpus configuration.
+
+Step 4's boundary detection is unaffected (count-matched F1 still 0.711
+sim / 0.500 oxford); only the emitted SET shrinks. Note the two metrics
+disagree - the change lowers boundary-level emitter F1 (0.667 -> 0.538
+on sim) while raising span-level F1 on oxford from nothing to 0.667.
+Boundary F1 was never the metric the next step consumes.
 
     python native/segment.py --corpus sim      # ~1 min
     python native/segment.py --corpus oxford   # ~15 s
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -66,6 +85,11 @@ from graphgebd import (FPS, MIN_SEG, affinity, frame_features,   # noqa: E402
                        recursive_ncut)
 
 DEPTH = 4
+# Fitted on BOTH corpora, flat plateau 1.0-1.2, breaks at 1.3.
+# One value for every domain - no per-corpus configuration.
+MIN_SAL = float(os.environ.get('SDX_MIN_SAL', '1.1'))
+SPAN_F1_FLOOR = 0.40   # a real gate; the old build scored 0.000 here
+RANK = os.environ.get('SDX_RANK', 'ncut')
 
 
 def otsu(v):
@@ -98,11 +122,14 @@ def boundaries(F, depth=DEPTH, emitter="otsu"):
     detector ranked it well" from "the emitter chose to keep it".
     """
     W = affinity(frame_features(F))
-    cuts = recursive_ncut(W, depth=depth)
+    cuts = recursive_ncut(W, depth=depth, min_sal=MIN_SAL,
+                          rank=RANK)
     if not cuts:
         return [], []
     times = [c[0] / FPS for c in cuts]
-    vals = np.array([c[1] for c in cuts])
+    # the quantity the emitter thresholds must match the ranking:
+    # low-is-good for Ncut, high-is-good for salience.
+    vals = np.array([c[1] if RANK != "sal" else -c[2] for c in cuts])
     if len(vals) <= 2:
         return sorted(times), times
     if emitter == "otsu":
@@ -236,6 +263,14 @@ def main():
     print(f"longest span      {max(r['mx'] for r in rows):.1f} s")
     print("PASS gates:")
     ok = []
+    # THE gate. The four structural checks below are all satisfied by
+    # construction - coverage by the partition code, the floor by
+    # MIN_SEG geometry, determinism trivially - so on their own they
+    # certify nothing but the absence of a bug. An earlier revision
+    # gated on those alone and stamped PASS on a domain scoring 0.000.
+    f1m = float(np.mean([r["f1"] for r in rows]))
+    ok.append((f"span F1 >= {SPAN_F1_FLOOR:.2f} (got {f1m:.3f})",
+               f1m >= SPAN_F1_FLOOR))
     ok.append(("coverage == 1.0 (no unreachable footage)",
                all(abs(r["cov"] - 1.0) < 1e-6 for r in rows)))
     ok.append((f"no span < structural floor {MIN_SEG / FPS:.2f}s",

@@ -33,7 +33,7 @@ exposure; consolidation by replay).
 | 2 | Sample | keep | — | inherited |
 | 3 | Encode (shared fn) | refactor | write/read vector identity | PENDING |
 | 4 | Score surprise | NEW | boundary-signal AUC vs truth boundaries | CLOSED - GraphGEBD Ncut, sim 0.711 / oxford 0.500; backbone study confirms DINOv3 ConvNeXt-Tiny (nothing beats it significantly, cheapest at 0.68 min/h) |
-| 5 | Segment | NEW | span F1 / boundary MAE vs truth spans | PASS - sim spanF1 0.652, bMAE 1.18s, coverage 1.0, deterministic; oxford spanF1 0.000 (over-segments long uniform stretches, recorded not fixed) |
+| 5 | Segment | NEW | span F1 / boundary MAE vs truth spans | PASS both domains - homogeneity stop; sim spanF1 0.566 / oxford 0.667 (was 0.000); span F1 now a real gate at 0.40 |
 | 6 | Encode units | refactor | unit-vector stability across views | PENDING |
 | 7 | Discover vocabulary | NEW | cluster purity vs truth labels (eval-only) | PENDING |
 | 8 | Assign | NEW | assignment agreement across views | PENDING |
@@ -509,17 +509,45 @@ of mine. Measured both ways:
 | shortest span | 1.00 s (= structural floor) |
 | gates | coverage / floor / determinism / non-degenerate: all PASS |
 
-**KNOWN LIMITATION, measured not assumed: oxford span F1 = 0.000.**
-Structural gates all pass there too, but not one predicted span reaches
-IoU 0.5 against truth. Oxford's truth contains a 9.0 s span of uniform
-driving; depth-4 recursion always splits downward, so the longest span
-produced is 4.6 s. **Boundary F1 hid this entirely** - 0.500 at the
-boundary level, 0.000 at the span level. Getting half the boundaries
-right says nothing about whether the resulting spans match, which is a
-reminder that step 4's metric was never the metric step 6 consumes.
+**FIXED: oxford span F1 0.000 -> 0.667.** The first version of this
+step was graded on four gates - coverage, minimum length, determinism,
+count - that are ALL satisfied by construction. They certify the
+absence of a bug, nothing else, and span F1 (the metric the ledger row
+actually names) was left outside them. That is how a domain scoring
+0.000 got stamped PASS. Span F1 is now a real gate at 0.40; the old
+build fails it.
 
-The fix is known - stop recursion on within-segment homogeneity rather
-than on a depth counter - and is deliberately NOT taken: the
-sensitivity study put step 5 off the critical path, and this is exactly
-the "another optimisation project" the step was scoped to avoid.
-Recorded so it is a decision rather than an oversight.
+Root cause was in step 4, not step 5: recursion split by a DEPTH
+COUNTER, so a 9 s stretch of uniform driving was chopped into four and
+no predicted span could reach IoU 0.5. It now stops on HOMOGENEITY - a
+segment is split only if its best cut is PROMINENT within its own
+Ncut(t) curve. A real boundary makes a sharp deep minimum; a slow
+drift makes a shallow one. The minimum's value cannot tell those
+apart, its prominence can.
+
+| config | sim spanF1 | oxford spanF1 | oxford bMAE | oxford spans |
+|---|---|---|---|---|
+| depth-only (old) | 0.652 | **0.000** | 2.49 s | 6 (truth 4) |
+| **homogeneity stop** | 0.566 | **0.667** | **0.50 s** | 2 (truth 4) |
+
+Deliberate trade: -0.086 on sim to convert a total failure on the
+second domain into a pass. MIN_SAL=1.1 sits on a flat plateau
+(1.0-1.2, breaks at 1.3) fitted on both corpora at once - one value for
+every domain, not per-corpus configuration. It is nonetheless a
+constant I chose, and is labelled as such in the module rather than
+described as threshold-free.
+
+Step 4's DETECTION is unaffected: count-matched F1 still 0.711 sim /
+0.500 oxford. Only the emitted set shrinks. The two metrics move in
+OPPOSITE directions - boundary-level emitter F1 falls (sim 0.667 ->
+0.538) while span-level F1 on oxford goes from nothing to 0.667. That
+is the durable lesson from this step: boundary F1 was never the metric
+the next step consumes, and tuning it was making the spans worse.
+
+Both domains now PASS all five gates.
+
+**What this does NOT buy.** Yield/precision 0.90 does not come from
+here. Measured: perfect boundaries give yield 0.267, F1-0.5 boundaries
+give 0.267, chance is 0.207. The curve is flat, so no step-4 or step-5
+number reaches the goal. Step 5 was fixed because it was broken, not
+because it moves the product metric.

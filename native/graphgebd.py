@@ -67,12 +67,20 @@ def affinity(V, sigma=SIGMA, local=LOCAL):
     return W
 
 
-def best_contiguous_cut(W, lo, hi):
-    """Minimum-Ncut contiguous split of [lo,hi). Returns (t, ncut)."""
+def best_contiguous_cut(W, lo, hi, curve=False):
+    """Minimum-Ncut contiguous split of [lo,hi). Returns (t, ncut).
+
+    With curve=True also returns Ncut(t) for every candidate t, which
+    is what tells a REAL boundary from a mere drift: a real boundary
+    puts a sharp deep minimum in this curve, while a segment that is
+    just slowly changing (a car driving straight) gives a shallow,
+    smooth curve whose minimum is not special. The minimum's VALUE
+    cannot distinguish those; its prominence can.
+    """
     sub = W[lo:hi, lo:hi]
     n = hi - lo
     if n < 2 * MIN_SEG:
-        return None, np.inf
+        return (None, np.inf, np.empty(0)) if curve else (None, np.inf)
     tot = sub.sum(1)                       # assoc to the segment
     best_t, best_v = None, np.inf
     # cut(A,B) for split at t = sum of W[:t, t:]
@@ -90,32 +98,67 @@ def best_contiguous_cut(W, lo, hi):
             r += csum[a0 - 1, b0 - 1]
         return float(r)
 
+    vs = []
     for t in range(MIN_SEG, n - MIN_SEG + 1):
         cut = block(0, t, t, n)
         aA = float(tot[:t].sum())
         aB = float(tot[t:].sum())
         if aA <= 0 or aB <= 0:
+            vs.append(np.nan)
             continue
         v = cut / aA + cut / aB
+        vs.append(v)
         if v < best_v:
             best_v, best_t = v, t
-    return (lo + best_t if best_t is not None else None), best_v
+    bt = lo + best_t if best_t is not None else None
+    return (bt, best_v, np.array(vs)) if curve else (bt, best_v)
 
 
-def recursive_ncut(W, depth=4):
-    """-> [(frame_index, ncut_value)] ranked by cut quality."""
+def salience(vs):
+    """How PROMINENT the best cut is within its own segment's curve.
+
+    z-score of the minimum against the rest of the curve. Scale-free
+    and computed per segment, so it does not care what the absolute
+    Ncut level of a media is. A homogeneous stretch has a flat curve
+    and scores ~0 however low its minimum sits.
+    """
+    v = vs[np.isfinite(vs)]
+    if len(v) < 3:
+        return 0.0
+    sd = v.std()
+    return float((v.mean() - v.min()) / sd) if sd > 1e-12 else 0.0
+
+
+def recursive_ncut(W, depth=4, min_sal=0.0, rank="ncut"):
+    """-> [(frame_index, ncut_value)] ranked by cut quality.
+
+    min_sal > 0 stops recursion on segments with no prominent cut,
+    instead of splitting blindly until `depth` runs out. Depth-only
+    stopping is why a long uniform stretch got chopped up: the
+    recursion had no way to say "this segment does not want splitting".
+    """
     out = []
     stack = [(0, len(W), 0)]
     while stack:
         lo, hi, d = stack.pop()
         if d >= depth or hi - lo < 2 * MIN_SEG:
             continue
-        t, v = best_contiguous_cut(W, lo, hi)
+        t, v, vs = best_contiguous_cut(W, lo, hi, curve=True)
         if t is None or not np.isfinite(v):
             continue
-        out.append((t, v))
+        sal = salience(vs)
+        if min_sal > 0.0 and sal < min_sal:
+            continue                     # homogeneous: do not split
+        out.append((t, v, sal))
         stack.append((lo, t, d + 1))
         stack.append((t, hi, d + 1))
+    # Rank by PROMINENCE, not by raw Ncut. Raw Ncut rewards cutting a
+    # long smooth drift (the value is low simply because the two halves
+    # are far apart in time); prominence asks whether THIS split is
+    # special within its own segment, which is the question a boundary
+    # detector is actually asking.
+    if rank == "sal":
+        return sorted(out, key=lambda r: -r[2])
     return sorted(out, key=lambda r: r[1])       # best cuts first
 
 
