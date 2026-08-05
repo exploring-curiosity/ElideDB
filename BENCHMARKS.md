@@ -1526,3 +1526,43 @@ CORRECTION OF RECORD: every earlier claim in this file that the index
 "matches the shipped 8-channel system with zero domain knowledge"
 overstated it - the match was partly carried by channels keyed to
 domain-derived structure.
+
+## 2026-08-04 — WRITE-PATH AUDIT: the retrieval unit itself is dataset metadata
+
+Owner: "check the write path too, I don't think that's the only
+contamination." Correct. Found in scripts/write_once.py:
+
+```
+def episode_spans(files):
+    meta = pq.read_table(DATA / "meta/episodes/chunk-000/file-000.parquet",
+                         columns=["episode_index", "length",
+                                  ".../from_timestamp", ".../to_timestamp"])
+```
+
+**Every episode boundary in lake/fresh_bench is read from the Bridge
+dataset's own metadata parquet** - from_timestamp / to_timestamp per
+demo. The write path never segments video; it is TOLD where each demo
+starts and ends, then renders one H.264 segment per demo with an IDR
+each and separates them by a synthetic 60 s gap.
+
+Consequences for every number this project has produced on kitchen:
+1. The retrieval UNIT is oracle-segmented. A customer uploading a
+   3-hour raw video has no such boundaries; the database would have to
+   find them, and no measurement here has ever tested that.
+2. Channels inherit it: iv2 is 1 vector per oracle demo; sig2 8 per
+   oracle demo; native/seq.py windows are placed inside oracle spans.
+   "Uniform windows" are uniform WITHIN a given segmentation.
+3. The truthset is keyed to those same demo ids, so the benchmark can
+   only ask "which demos match", never "where in the video".
+
+sim_chains is cleaner on this axis - one generated mp4 per episode, so
+the boundary is the file itself, which a customer upload also has - but
+the corpus is synthetic and at chance for every method anyway.
+
+**Honest status of the zero-shot claim.** Two contaminations now found
+and recorded: (a) participant-tubelet and per-event channels [fixed:
+kitchen 0.74 -> 0.655], (b) oracle episode segmentation [NOT fixable
+by excluding a channel - it is the unit of evaluation itself]. The
+kitchen figure of 0.655 yield / 0.436 prec is therefore still an
+UPPER BOUND on true zero-shot performance, measured with segmentation
+handed to the system for free.
