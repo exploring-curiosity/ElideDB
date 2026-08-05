@@ -1490,3 +1490,39 @@ zero-shot from the customer's point of view exactly as V-JEPA and
 SigLIP are zero-shot, and distinct from training on a customer's
 domain (which would not be zero-shot and would not transfer). Every
 frozen encoder in this store exists because someone did that once.
+
+## 2026-08-04 — DOMAIN-BLIND AUDIT: my earlier kitchen numbers were contaminated
+
+Owner challenge: "just because you trained the model on domain data and
+removed those domain info doesn't make it domain blind." Correct, and
+the audit confirms it. Channel provenance in lake/fresh_bench:
+
+| channel | meta | domain-blind? |
+|---|---|---|
+| scene_vectors | DINOv3, unit=frame | YES - every frame, uniform |
+| sig2_vectors | SigLIP2 | YES - uniform windows |
+| iv2_vectors | InternVideo2, 1/episode | YES |
+| vjseq (native/seq.py) | V-JEPA2, 2s/1s windows | YES |
+| **vjepa_part_vectors** | V-JEPA2, **unit=participant_track** | **NO** - tubelets from the domain object/event pipeline |
+| **motion_vectors** | delta-appearance, 7.2/ep = per event | **NO** - events from the domain pipeline |
+| frame_vectors | fdnnv (student trained on this corpus) | NO (already excluded) |
+
+**Corrected numbers, pretrained-uniform channels only (k=1.5*support):**
+
+| corpus / query | contaminated index | DOMAIN-BLIND |
+|---|---|---|
+| kitchen q03 | 0.47 | 0.50 / prec 0.34 |
+| kitchen q04 | 0.91 | **0.68** / prec 0.45 |
+| kitchen q05 | 0.84 | **0.78** / prec 0.52 |
+| kitchen MEAN | 0.74 | **0.655** / prec 0.436 |
+| sim MEAN | 0.333 | 0.333 / prec 0.222 (chance 0.207) |
+
+So the honest zero-shot kitchen figure is **0.66 yield / 0.44 prec**,
+not the 0.78-0.90 previously quoted: q04 loses 0.23 and q05 0.06 when
+the participant-tubelet and per-event channels are removed. Sim is
+unchanged (those channels never helped there).
+
+CORRECTION OF RECORD: every earlier claim in this file that the index
+"matches the shipped 8-channel system with zero domain knowledge"
+overstated it - the match was partly carried by channels keyed to
+domain-derived structure.
