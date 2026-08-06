@@ -947,3 +947,71 @@ V-JEPA2 0.521, LAQ 0.275 yield). The consistent pattern across all
 three: action-specialised pretraining does not transfer to this
 corpus, while a frozen image encoder plus parameter-free order-aware
 pooling remains the best measured unit representation.
+
+## DEBUGGED: the bottleneck is EVENT COUNT, and the target is quantified
+
+Stopped swapping encoders and debugged where the 0.492 ceiling comes
+from. The answer was not the encoder.
+
+**1. The templates are near-identical as action sequences.**
+
+| template | sequence | len |
+|---|---|---|
+| push_then_build | pu-pi-st-pi-st | 5 |
+| relocate_build | pi-pl-pi-st-pi-st | 6 |
+| swap | pi-pl-pi-pl-pi-pl | 6 |
+| build_unstack_move | pi-pl-pi-st-**un**-pi-st | 7 |
+| two_sites_merge | pi-pl-pi-pl-pi-st-un | 7 |
+| precarious | pi-pl-pi-st-pi-st-**pi-st** | 8 |
+
+Every pair has similarity >= 0.57. build_unstack_move is
+relocate_build plus ONE inserted unstack - edit distance 1. precarious
+is relocate_build with the final motif repeated.
+
+**2. What separates them is COUNT, and count is deterministic.**
+5.00/6.00/6.00/7.00/7.00/8.00, all sd = 0.00.
+
+| signal | AUC separating same-template pairs |
+|---|---|
+| TRUE event count | **0.905** |
+| CPD-estimated count | 0.520 (chance) |
+
+**The most discriminative feature in the corpus arrives at chance.**
+
+**3. This finally explains the sens2.py cliff.** Only perfect boundaries
+help because only perfect boundaries give the right COUNT. Boundary F1
+0.867 already miscounts, and a miscount destroys the signal.
+
+**4. Seven counters, all at chance.** Appearance TSM + Foote novelty,
+change TSM + novelty, eigengap of the normalised Laplacian, Otsu on the
+spectrum, tighter affinity bandwidth, CPD slope heuristic:
+
+| estimator | AUC | exact % | \|err\| | mean pred (true 6.5) |
+|---|---|---|---|---|
+| true | 0.905 | 100 | 0.00 | 6.50 |
+| appearance TSM + novelty | 0.527 | 14 | 1.77 | 5.72 |
+| cpd (slope) | 0.520 | 13 | 1.97 | 7.73 |
+| change TSM + novelty | 0.523 | 13 | 2.58 | 8.29 |
+| eigengap | 0.466 | 1 | 4.22 | 2.28 |
+
+Eigengap predicting 2.3 blocks where there are 6.5 is the informative
+failure: the self-similarity matrix has NO clean block structure,
+because every frame shares the same table and blocks. Events are a weak
+perturbation on a large constant - the same root cause as the drone/car
+result, where appearance is dominated by scene rather than by action.
+
+**THE TARGET, QUANTIFIED.** To separate counts 5/6/6/7/7/8 the counter
+needs error well under +-0.5. The best available gives **1.77**. That is
+the gap, stated as a number rather than a feeling, and it is what any
+future work here has to move.
+
+**Restoring length to the matcher helps, but only slightly** - DTW is
+invariant to repetition by design, which is exactly what distinguishes
+these classes. Adding a length term: 0.492 -> **0.517 / 0.344** at
+w_len 0.3 (uniform windows already encode duration, since a 32 s
+episode gets more windows than a 20 s one, so DTW partly sees it).
+
+CAVEAT: templates differing chiefly by repetition count is a property of
+THIS synthetic corpus. The transferable lesson is the method - measure
+what actually discriminates the classes, then measure how well the
+pipeline estimates that specific quantity - not the conclusion.
