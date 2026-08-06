@@ -120,7 +120,25 @@ def encode_episode(F, mode="rank"):
     return v / max(np.linalg.norm(v), 1e-8)
 
 
-def score(vecs, lab, seed_n=5):
+def score(vecs, lab, seed_n=5, sess=None, cross_session=True):
+    """CROSS-SESSION only, and this is the whole validity of the number.
+
+    Bridge records same-task episodes back to back: `flip pot upright`
+    is 305 consecutive episodes from ONE video file, `take broccoli out
+    of pan` is 80% one file, most tasks are 99-100% consecutive. Without
+    a separation rule a query retrieves its own recording session -
+    same kitchen, same lighting, same camera pose - and scores high by
+    near-duplicate matching rather than by understanding the action.
+
+    Every other domain in this build already had such a rule (60 s
+    temporal exclusion on AGZ, cross-episode pairing on sim). Bridge did
+    not, which is exactly why it looked good and the others did not.
+
+    Candidates must come from a DIFFERENT video file than EVERY seed.
+    Tasks recorded in a single session therefore drop out entirely -
+    correctly, since cross-session generalisation cannot be tested with
+    one session.
+    """
     groups = collections.defaultdict(list)
     for e in vecs:
         groups[lab[e]].append(e)
@@ -131,9 +149,13 @@ def score(vecs, lab, seed_n=5):
         if len(pool) < seed_n + 1:
             continue
         sd = sorted(rs.choice(pool, seed_n, replace=False).tolist())
-        support = len(pool) - len(sd)
+        seed_sess = {sess[s] for s in sd} if sess else set()
+        cand = [e for e in vecs if e not in sd and
+                (not cross_session or sess[e] not in seed_sess)]
+        support = sum(1 for e in cand if lab[e] == tk)
+        if support < 2 or len(cand) < 5:
+            continue
         k = math.ceil(1.5 * support)
-        cand = [e for e in vecs if e not in sd]
         S = {e: max(float(vecs[e] @ vecs[s]) for s in sd)
              for e in cand}
         loo = [max(float(vecs[a] @ vecs[b]) for b in sd if b != a)
@@ -172,7 +194,7 @@ def main():
         print(f"   {len(bytask[tk]):5d} avail  {tk[:60]}")
 
     CACHE.mkdir(parents=True, exist_ok=True)
-    vecs, lab = {}, {}
+    vecs, lab, sess = {}, {}, {}
     rs = np.random.RandomState(0)
     for tk in want:
         eps = sorted(bytask[tk])
@@ -184,6 +206,7 @@ def main():
             if fp.exists():
                 vecs[ep] = np.load(fp)
                 lab[ep] = tk
+                sess[ep] = meta[ep][1]
                 continue
             tkk, fi, t0, ln = meta[ep]
             F = decode_clip(fi, t0, max(ln / FPS, 1.0))
@@ -193,9 +216,12 @@ def main():
             np.save(fp, v)
             vecs[ep] = v
             lab[ep] = tk
+            sess[ep] = fi
 
     print(f"\nencoded {len(vecs)} episodes")
-    ys, ps, sups, rets, per = score(vecs, lab)
+    xs = arg('--cross', 1, int)
+    ys, ps, sups, rets, per = score(vecs, lab, sess=sess,
+                                    cross_session=bool(xs))
     if not ys:
         print("no task had enough episodes")
         return
