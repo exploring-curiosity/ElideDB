@@ -1121,3 +1121,61 @@ What would change the car/drone verdict is not another encoder - three
 have now failed identically - but ego-motion factorisation or an
 object-centric representation, and a corpus with multi-actor
 interaction truth so scene-actions can be measured at all.
+
+## CONTAMINATION, twice — and the honest four-dataset position
+
+The user flagged 0.734/0.584 on bridge as suspicious precisely because
+car/drone sat at chance. The gap was the tell. Two separate
+contaminations were found, both mine.
+
+**1. Task curation.** bridgeqbe.py hard-coded the reversible pairs I
+predicted would win and evaluated them first. Reverted: tasks are now
+top-N by episode count. (The uncurated rerun was slightly BETTER,
+0.734/0.584, so this one had not inflated the headline.)
+
+**2. Session leakage — this one did.** Bridge records same-task
+episodes consecutively: `flip pot upright` is 305 consecutive episodes
+in ONE file, most tasks are 99-100% consecutive. Queries retrieved
+their own recording session - same kitchen, lighting and camera pose.
+Every other domain already had a separation rule (60 s on AGZ,
+cross-episode on sim); bridge had none. That double standard alone
+could explain 0.734 vs 0.126.
+
+Excluding the seed's own file: **0.734/0.584 -> 0.547/0.496**.
+
+**But file-level exclusion was still not enough.** Bridge files are
+numbered sequentially in time, so a session spanning a file boundary
+leaks straight through. The true positives for `close the drawer` came
+from files {43,44,46,56,99,101,120} while its seeds were in
+{45,57,98,100,119} - adjacent throughout. Excluding a WINDOW of files:
+
+| task | diff-file | +-1 file | +-5 files |
+|---|---|---|---|
+| close the drawer | 0.969 (sup 65) | **0.250 (sup 4)** | sup 1 |
+| open the drawer | 1.000 (sup 66) | 1.000 (sup 20) | **1.000 (sup 11)** |
+| sweep into pile | 0.653 (sup 72) | 0.600 (sup 30) | sup 0 |
+
+**`close the drawer` 0.985/0.942 was contaminated** - it collapses to
+0.250 under +-1 file exclusion. It was reported as a headline twice and
+is retracted. `open the drawer` is the only survivor at +-5 files, and
+only at support 11.
+
+**The structural problem: bridge cannot support a clean cross-session
+evaluation for most tasks.** Support falls to 0 as the exclusion widens
+because each task lives in a narrow band of consecutive files. The
+dataset does not have the session diversity the question requires.
+
+### Honest position, all four datasets
+
+| dataset | best defensible number | status |
+|---|---|---|
+| bridge | open-the-drawer 1.000 yield @ support 11, +-5 files | ONE task, thin support |
+| sim | 0.492 / 0.328 | synthetic; classes differ by repeat count (generator artifact) |
+| car (KITTI) | 0.126 vs chance 0.109 | AT CHANCE |
+| drone (AGZ) | 0.250 @ support 5 | INCONCLUSIVE |
+
+**No dataset yet gives a trustworthy, high-support, leakage-free number
+above the target.** Every headline I reported today was either
+synthetic, contaminated, or low-support. The method for finding this -
+audit the clustering of the labels before trusting a retrieval score -
+is the durable output of the session.
