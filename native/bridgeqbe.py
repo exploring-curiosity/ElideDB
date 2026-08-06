@@ -47,10 +47,12 @@ FPS = 5.0
 NF = 8                    # frames per unit
 CACHE = Path("/private/tmp/claude-501/bridgeqbe")
 
-# The discriminations that matter: reversible pairs in the same scene.
-PAIRS = [("open the drawer", "close the drawer"),
-         ("open microwave", "close microwave"),
-         ("put carrot on plate", "take carrot off plate")]
+# NO TASK CURATION. An earlier revision hard-coded the reversible
+# pairs I expected to win on (open/close drawer, open/close microwave)
+# and put them first. The write and read paths never saw those strings,
+# but choosing WHICH tasks to measure because I predicted they would
+# succeed is selection bias in the benchmark, and it inflated the
+# headline. Tasks are now taken purely by episode count.
 
 
 def episodes():
@@ -160,15 +162,10 @@ def main():
         if tk.strip():
             bytask[tk].append(ep)
     # the reversible pairs first, then fill with other high-support tasks
-    want = []
-    for a, b in PAIRS:
-        if len(bytask.get(a, [])) >= 10 and len(bytask.get(b, [])) >= 10:
-            want += [a, b]
-    for tk, eps in sorted(bytask.items(), key=lambda kv: -len(kv[1])):
-        if len(want) >= ntask:
-            break
-        if tk not in want and len(eps) >= 30:
-            want.append(tk)
+    # top-N by support, nothing else. Deterministic, no judgement.
+    want = [tk for tk, eps in
+            sorted(bytask.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+            if len(eps) >= 30][:ntask]
     print(f"bridge QbE — {len(want)} tasks, <= {per_task} episodes each, "
           f"encoder siglip2_{mode}")
     for tk in want:

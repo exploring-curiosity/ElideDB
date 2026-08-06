@@ -1064,3 +1064,60 @@ trajectory matters more than the scene. Precision is the weaker metric
 overall (0.576 vs yield 0.704), which means the abstention cut is
 admitting false matches on the mid-tier tasks even though it is perfect
 on drawers.
+
+## ALL FOUR DATASETS, one protocol — and the honest scope statement
+
+Audit found two problems and both are fixed here.
+
+**Violation reverted.** `bridgeqbe.py` hard-coded the reversible task
+pairs I predicted would win (open/close drawer, open/close microwave)
+and evaluated them first. The write and read paths never saw those
+strings, but choosing WHICH tasks to measure because I expected them to
+succeed is selection bias in the benchmark. Removed - tasks are now
+top-N by episode count, deterministic. The vector cache built under
+curation was deleted and recomputed. No weights were ever trained, so
+nothing learned from the labels; only my selection did.
+
+The uncurated rerun is BETTER, so the curation had if anything
+deflated the headline: **0.704/0.576 -> 0.734/0.584**.
+
+Also reverted: `MIN_SAL=1.1` in segment.py, fitted on the same 13 media
+used to evaluate it. Default is now 0.
+
+**Car and drone had never been evaluated.** They had only a
+representation-coherence ratio, which is not comparable to a yield.
+They have no repeated labelled events, so the task was CONSTRUCTED
+identically for both and without judgement: uniform windows -> each
+window described by its own sensor truth (speed, |turn|, climb,
+z-scored) -> k-means with k fixed in advance -> the same QbE protocol
+(5 seeds, k = ceil(1.5 x support) as a MAX bound, seed-calibrated
+abstention). Candidates within 60 s of a seed in the same media are
+excluded, or a continuous flight would retrieve its own neighbours.
+
+**Same encoder (siglip2 + rank pooling), same protocol, all four:**
+
+| dataset | units | yield | prec | chance yield | verdict |
+|---|---|---|---|---|---|
+| **bridge** (real robot, 10 tasks) | 400 | **0.734** | **0.584** | ~0.10 | WORKS |
+| sim (synthetic arm) | 150 eps | 0.492 | 0.328 | ~0.13 | partial |
+| drone (AGZ) | 300 | 0.250 | 0.167 | 0.025 | support 5 - INCONCLUSIVE |
+| car (KITTI) | 286 | **0.126** | 0.084 | **0.109** | AT CHANCE |
+
+**KITTI is at chance** (0.126 against a 0.109 baseline). AGZ is above
+its baseline but only 2 of 8 classes reached usable support - k-means on
+its kinematic state produced badly unbalanced clusters - so support 5
+makes that number noise, not evidence.
+
+**Scope statement this forces.** The pipeline works on manipulation-style
+data with a fixed camera, where appearance-change IS action-change. It
+does NOT work on moving-platform data, where the scene changes for
+reasons unrelated to the manoeuvre. That is now measured on the product
+metric for all four corpora rather than inferred from a proxy, and it
+matches the earlier coherence finding (ratio 0.94-0.98 on drone/car)
+and the cross-domain AUC (0.505 drone, 0.526 car) exactly. Three
+independent measurements, one conclusion.
+
+What would change the car/drone verdict is not another encoder - three
+have now failed identically - but ego-motion factorisation or an
+object-centric representation, and a corpus with multi-actor
+interaction truth so scene-actions can be measured at all.

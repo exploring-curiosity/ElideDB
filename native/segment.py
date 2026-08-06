@@ -87,7 +87,10 @@ from graphgebd import (FPS, MIN_SEG, affinity, frame_features,   # noqa: E402
 DEPTH = 4
 # Fitted on BOTH corpora, flat plateau 1.0-1.2, breaks at 1.3.
 # One value for every domain - no per-corpus configuration.
-MIN_SAL = float(os.environ.get('SDX_MIN_SAL', '1.1'))
+# RETRACTED as a default: 1.1 was fitted on the same 13 media
+# used for evaluation, and against oxford's INS labels which do
+# not describe what a visual segmenter produces. 0 = off.
+MIN_SAL = float(os.environ.get('SDX_MIN_SAL', '0'))
 SPAN_F1_FLOOR = 0.40   # a real gate; the old build scored 0.000 here
 RANK = os.environ.get('SDX_RANK', 'ncut')
 
