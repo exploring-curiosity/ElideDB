@@ -818,3 +818,77 @@ that the encoder did not produce.
 **Verdict: 0.80/0.80 is NOT reachable with a frozen, generic,
 off-the-shelf encoder on this corpus.** The ceiling is 0.721 AUC ->
 ~0.49 yield. That is a measured statement, not an estimate.
+
+## Cross-domain: the arm was measuring a different problem
+
+Four embodiments, vision-independent truth everywhere (GPS/IMU/OXTS/
+laser-tracker pose), one encoder, one metric.
+
+**Action AUC against a kinematic taxonomy** (still/cruise/turn/climb):
+
+| domain | units | AUC |
+|---|---|---|
+| drone (AGZ 45 min) | 259 | 0.505 |
+| car (KITTI 22 drives) | 148 | 0.526 |
+| arm (sim, reference) | — | 0.579 r50 / 0.691 siglip2 |
+
+chance 0.500. **Drone and car are at chance.**
+
+**That AUC is itself a flawed metric and the user caught it.** The
+kinematic classes are MINE - invented, then used to score an encoder on
+whether it recovers my invention. Same error as tuning boundary F1
+while span F1 collapsed. QbE needs no names: it needs only that similar
+things land near each other.
+
+### The taxonomy-free measurement  `native/style.py`, `native/motionrep.py`
+
+Truth as a continuous RULER, never as classes: each unit has a
+kinematic state vector from its own sensors, and the question is
+whether a unit's nearest neighbours in embedding space are more
+kinematically alike than random units. Reported as a ratio, so 1.0 is
+"nothing" in every domain regardless of how its motion is distributed.
+
+**Harness validated with a positive control before any conclusion:**
+
+| descriptor | ratio | stability |
+|---|---|---|
+| cheat (embedding = ruler) | **0.427** | — |
+| cheat + noise sd 0.5 | 0.617 | — |
+| cheat + noise sd 1.0 | 0.804 | — |
+| cheat + noise sd 2.0 | 0.909 | — |
+| residual flow (ego removed) | 0.968 | 0.825 |
+| appearance r50_rank (agz) | 0.977 | 0.802 |
+| appearance r50_rank (kitti) | 0.941 | 0.821 |
+| global affine motion | 0.997 | 0.888 |
+| nothing | 1.000 | — |
+
+The scale is 0.427 (perfect) to 1.000 (nothing). **Every real
+descriptor scores worse than sd=2.0 noise.**
+
+**Two findings that reframe the whole build.**
+
+1. **The structure is real but it is SCENE, not motion.** Stability is
+   0.80-0.89 - cluster two disjoint halves of the flight independently
+   and they agree - so unsupervised style clustering genuinely works
+   with no labels and no text. What it discovers is where in the city
+   the camera is, not what the platform did.
+
+2. **The arm was a different problem wearing the same clothes.** With a
+   fixed camera and fixed scene, the ONLY thing that changes appearance
+   is the action, so appearance-change proxies for action. On a moving
+   platform the scene changes for reasons unrelated to the manoeuvre and
+   the proxy dissolves. The arm's 0.579-0.721 was never an easier
+   version of the drone/car problem.
+
+Hand-built pixel descriptors - appearance, global motion, ego-
+compensated residual - do not recover physical style on real
+moving-camera footage. This is exactly the "distractors cause causal
+confusion" failure that Object-Centric Latent Action Learning
+(arXiv 2502.09680) was written to fix, and it is why that route is the
+honest next step rather than a preference.
+
+CAVEAT kept explicit: this ruler measures EGO-motion. The residual
+descriptor deliberately removes ego-motion, so scoring it here is
+unfair to it. Measuring scene-actions ("actor A acted on actor B")
+needs truth about OTHER actors, which none of the new domains provide -
+only the arm sim has that, and there the camera is static.
