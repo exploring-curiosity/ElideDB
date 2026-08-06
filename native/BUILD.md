@@ -892,3 +892,58 @@ descriptor deliberately removes ego-motion, so scoring it here is
 unfair to it. Measuring scene-actions ("actor A acted on actor B")
 needs truth about OTHER actors, which none of the new domains provide -
 only the arm sim has that, and there the camera is static.
+
+## Pretrained latent actions (LAPA / Open-X) — measured, and they lose
+
+The user's question: represent action without appearance and without
+text. The literature answer is latent action models - a VQ codebook of
+"what changed between two frames", learned by inverse/forward dynamics
+on unlabelled video. LAPA released `laq_openx.pt` (1.3 GB, ungated,
+Open-X pretrained). INFERENCE ONLY: nothing trained, nothing sees the
+truthset.
+
+Integration notes, because each is a place this could be wrong:
+config is undocumented and was recovered from tensor shapes (depth 8,
+codebook 8, code_seq_len 4 - pinned by a 3x3 vs 4x4 kernel in
+vq.cnn_encoder). It then loads **strict**, all 493 tensors. Five
+patches were needed to run on Apple Silicon: CUDA hardcoded in two
+files, a load_state_dict override that double-passes `strict`, and NSVQ
+sampling noise on a stale device. Device patches move tensors; they do
+not change arithmetic.
+
+**Result on sim (150 episodes, support 20, uniform 3 s/1 s windows):**
+
+| unit encoder | yield | prec |
+|---|---|---|
+| siglip2 rank-pooled (appearance) | **0.492** | **0.328** |
+| **LAQ latent actions** | **0.275** | **0.183** |
+| vjepa2 mean-pooled (old production) | 0.214 | 0.136 |
+| label oracle | 0.942 | 0.890 |
+
+Frame gap swept (0.25 s / 0.5 s / 1 s) in case the transition scale was
+wrong - no improvement, 0.233 at both larger gaps.
+
+**Not a degenerate-output artifact**, checked before concluding: 88
+distinct 4-tuples across 144 pairs, the most common covering 9%. Per
+position the codes spread {0..7} at positions 2-3, skewed to {2,7} at
+0-1. The representation is real and varied; it simply carries less of
+what separates these templates than appearance does.
+
+Likely cause, stated as hypothesis not fact: 4 codes from a codebook of
+8 is ~12 bits per transition, against 2304 continuous dimensions for
+siglip2+rank. LAPA's codebook is optimised for CONTROL - enough to
+decide the next action - not for discriminating event TYPES, and a
+12-bit bottleneck is a hard ceiling for retrieval.
+
+**Decision: not run on drone/car.** The arm is the best case for this
+checkpoint - manipulation matching Open-X's training distribution - and
+it lost by 0.22 yield there. Spending an hour to watch it lose by more
+on domains further from its training data is not a measurement worth
+making. Recorded as a decision rather than a silent omission.
+
+**This is the third pretrained action-specific model to lose to a
+generic appearance encoder with rank pooling** (SSv2 probe 0.536 AUC,
+V-JEPA2 0.521, LAQ 0.275 yield). The consistent pattern across all
+three: action-specialised pretraining does not transfer to this
+corpus, while a frozen image encoder plus parameter-free order-aware
+pooling remains the best measured unit representation.
