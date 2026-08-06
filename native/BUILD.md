@@ -1015,3 +1015,52 @@ CAVEAT: templates differing chiefly by repetition count is a property of
 THIS synthetic corpus. The transferable lesson is the method - measure
 what actually discriminates the classes, then measure how well the
 pipeline estimates that specific quantity - not the conclusion.
+
+## REAL DATA: bridge QbE reaches 0.914/1.000 — the synthetic corpus was the problem
+
+Every number above this line came from 150 synthetic MuJoCo episodes.
+Bridge is real: 50,415 teleoperated episodes, 22,199 task strings, 175
+tasks with >= 50 episodes, mean episode 7.1 s (single actions, not
+chains - so the count bottleneck found in sim does not arise at all).
+
+The tasks chosen are the HARD case on purpose: reversible pairs in the
+same scene, where appearance alone cannot help because a mean over
+frames is identical under time reversal.
+
+**siglip2 + rank pooling, whole episode as the unit, support 35:**
+
+| task | yield | prec |
+|---|---|---|
+| **close the drawer** | **0.914** | **1.000** |
+| close microwave | 0.829 | 0.547 |
+| sweep into pile | 0.829 | 0.569 |
+| **open the drawer** | **0.800** | **1.000** |
+| open microwave | 0.714 | 0.472 |
+| turn lever vertical to front | 0.543 | 0.358 |
+| put carrot on plate | 0.514 | 0.340 |
+| take carrot off plate | 0.486 | 0.321 |
+| **OVERALL** | **0.704** | **0.576** |
+
+**Two tasks clear the 0.80/0.80 bar outright**, at precision 1.000 -
+the seed-calibrated abstention cut returns only true matches. Compare
+sim's best: 0.492/0.328.
+
+**The lesson is about the benchmark, not the model.** This build spent
+its effort optimising against a synthetic corpus that was both harder
+AND less representative than the customer-shaped data sitting on disk.
+sim's classes differ by repetition count, which is a property of its
+generator; bridge's differ by what was actually done, which is the
+product question. Every architectural conclusion drawn from sim -
+including the "event count is the bottleneck" result immediately above -
+is scoped to sim and must not be generalised.
+
+Standing rule this produces: **measure on the most realistic corpus
+available FIRST, and use synthetic data only for controlled ablations.**
+The reverse order cost most of a day.
+
+Open items, honestly: the weak tasks are put/take carrot (0.51/0.49) and
+turn lever (0.54) - fine-grained manipulations where the gripper's
+trajectory matters more than the scene. Precision is the weaker metric
+overall (0.576 vs yield 0.704), which means the abstention cut is
+admitting false matches on the mid-tier tasks even though it is perfect
+on drawers.
