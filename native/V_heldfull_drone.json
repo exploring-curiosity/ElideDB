@@ -1,0 +1,53 @@
+{
+  "when": "2026-08-08 12:18",
+  "encoder": "facebook/dinov3-vitl16-pretrain-lvd1689m",
+  "res": [
+    256,
+    320,
+    384
+  ],
+  "wmode": "pos",
+  "scales": [
+    2.0,
+    4.0,
+    8.0
+  ],
+  "ctx_mult": 3.0,
+  "true_frac": 1.0,
+  "qspan": 8.0,
+  "rows": [
+    {
+      "store": "drone",
+      "media": 29,
+      "windows": 4923,
+      "minutes": 47.7,
+      "queries": 168,
+      "yield_": 0.788,
+      "prec": 0.812,
+      "yield_half": 0.591,
+      "prec_half": 0.879,
+      "support_half": 16.9,
+      "support": 11.0,
+      "returned": 11.4,
+      "chance": 0.009,
+      "rank1": 0.976,
+      "med_rank": 4.5,
+      "ident": 0.951,
+      "d_margin": 0.756,
+      "prune_recall": 0.842,
+      "bytes_probe": 5258581,
+      "bytes_full": 20164608,
+      "per_transform": {
+        "warp": 0.76,
+        "crop": 0.568,
+        "photo": 0.942,
+        "codec": 0.838,
+        "codec_hard": 0.76,
+        "tempo": 0.864
+      },
+      "weights": {
+        "c2": 1.0
+      }
+    }
+  ]
+}

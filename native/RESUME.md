@@ -42,13 +42,37 @@ falls as the distractor pool grows. Against the previous full-scale run
 (V_FINAL.json, single resolution, old cut) the same two stores were
 0.387 and 0.379 precision, so full scale nearly doubled.
 
-    held out   0.784 yield / 0.779 prec   3 corpora, media no A/B saw
-    selection  0.788 / 0.833              same 3 corpora
+HELD OUT AND AT FULL SCALE — the gap that used to be open here. Same
+stores, same protocol; only the QUERY sampler moves past every media
+architecture selection ever saw. Building a store is unsupervised and
+label-free, so all media belong in the distractor pool; what has to be
+held out is what SELECTION saw, and that is a property of the sampler.
 
-QUOTE THE HELD-OUT NUMBER for generalisation and the FULL-SCALE number
-for capability. car has no held-out set (all 22 drives used in the
-A/Bs), so the held-out mean is three corpora, not four. The held-out run
-is at A/B scale, so it does not yet answer "does it hold out AND scale".
+    store    dev -> held out (yield)      dev -> held out (prec)
+    sim      0.713 -> 0.701  -0.012       0.594 -> 0.557  -0.037
+    bridge   0.693 -> 0.713  +0.020       0.732 -> 0.688  -0.044
+    drone    0.796 -> 0.788  -0.008       0.820 -> 0.812  -0.008
+    MEAN(3)  0.734 -> 0.734  +0.000       0.715 -> 0.686  -0.030
+
+SEVEN SEQUENTIAL ARCHITECTURE CHOICES COST 0.000 YIELD AND 0.030
+PRECISION. And it replicates: the A/B-scale held-out run found the same
+shape (yield -0.004, precision -0.054), so the pattern is not an artifact
+of one draw, and the precision cost is SMALLER at full scale, not larger.
+
+Yield holding while precision slips is the expected signature: selection
+tuned where the abstention cut lands, which trades returned-count against
+correctness, and it barely touched whether the right rows rank at all.
+
+    A/B scale, held out    0.784 / 0.779   (selection set 0.788 / 0.833)
+
+car has no held-out set - all 22 drives were used in the A/Bs - so every
+held-out mean here is three corpora, not four.
+
+THE THREE NUMBERS TO QUOTE, and never one alone:
+
+    capability   0.751 / 0.757   4 corpora, full scale, development
+    generalises  0.734 / 0.686   3 corpora, full scale, held out
+    cost of selection            yield 0.000, precision 0.030
 
 ## Per-transform, full scale — where the loss actually is
 
