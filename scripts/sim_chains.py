@@ -62,6 +62,21 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from sim_stack import (Arm, PALETTE, RES, RFPS, SHAPES,        # noqa: E402
                        build_scene)
 
+# EMBODIMENT: SDX_ARM picks the machine; everything else - templates,
+# zones, verification - is untouched, which is the point: the same
+# rules verify every arm's data. panda keeps the original Arm class.
+import os as _os                                           # noqa: E402
+ARM_NAME = _os.environ.get("SDX_ARM", "panda")
+if ARM_NAME != "panda":
+    import sim_arms                                        # noqa: E402
+    import sim_stack as _ss                                # noqa: E402
+    _inc = sim_arms.stripped_model(ARM_NAME)
+    _ss.SCENE = _ss.SCENE.replace('<include file="panda.xml"/>',
+                                  f'<include file="{_inc}"/>')
+    _ss.PANDA_DIR = sim_arms.MEN / sim_arms.ARMS[ARM_NAME]["dir"]
+    build_scene = _ss.build_scene
+    Arm = (lambda m, d: sim_arms.GenericArm(m, d, ARM_NAME))
+
 Z_TOP = 0.2
 NCAMS = 2
 FREE_GAIN = 5.0          # nothing held: get there
@@ -295,7 +310,10 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
         hold = d.xpos[arm.hand].copy()
         n = int(0.25 / dt)
         for st in range(n):
-            d.ctrl[arm.grip] = 255.0 * (st + 1) / n
+            if hasattr(arm, "grip_ramp"):
+                arm.grip_ramp((st + 1) / n)
+            else:
+                d.ctrl[arm.grip] = 255.0 * (st + 1) / n
             arm.step_ik(hold, gain=CARRY_GAIN)
             mujoco.mj_step(m, d)
             if st % spf == 0:
