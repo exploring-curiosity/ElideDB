@@ -52,12 +52,42 @@ TAUS = (0.5, 2.0, 8.0)
 
 # One clip per corpus. sim/bridge/car were verified at zoom in earlier
 # sessions (eval/*.png); drone is a steady traverse.
+# MEASURED: with only these four, identity AUC saturates at 0.99-1.00
+# for ten of eleven descriptors - the negatives are a robot arm, a
+# towel, a street and an aerial traverse, so separating them is trivial
+# and the number says nothing. DISTRACTORS below put many more clips
+# from every corpus into the same pool, undisguised, so a disguised clip
+# has to beat real neighbours from its own recording rather than three
+# obviously different scenes.
 CLIPS = [
     ("sim",    "sim/ep0000",                     10.5, 18.5),
     ("bridge", "bridge/file-050",                20.0, 28.0),
     ("car",    "car/2011_09_26_drive_0039_sync", 28.0, 36.0),
     ("drone",  "drone/agz000",                   30.0, 38.0),
 ]
+N_DISTRACT = int(os.environ.get("SDX_DISTRACT", "60"))
+
+
+def distractors(seed=0):
+    """Undisguised clips from every corpus, as the pool the disguised
+    clip must out-rank. Same duration, sampled deterministically."""
+    rs = np.random.RandomState(seed)
+    out = []
+    for corpus, mid0, t0, t1 in CLIPS:
+        srcs = {s.id: s for s in vsrc.sources(corpus)}
+        ids = sorted(srcs)
+        n = 0
+        while n < N_DISTRACT // len(CLIPS) and ids:
+            mid = ids[rs.randint(len(ids))]
+            dur = srcs[mid].dur
+            if dur < (t1 - t0) + 1:
+                continue
+            a = round(float(rs.uniform(0, dur - (t1 - t0))), 1)
+            if mid == mid0 and abs(a - t0) < (t1 - t0):
+                continue                       # not the query itself
+            out.append((corpus, mid, a, a + (t1 - t0)))
+            n += 1
+    return out
 
 
 def _l2(V, axis=-1):
