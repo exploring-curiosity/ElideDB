@@ -144,6 +144,15 @@
   .hit .sc .mg { font-weight:400; font-size:9.5px; color:var(--faint);
                  margin-top:3px; }
   .hit .exp { margin-top:8px; }
+  .judge { display:flex; gap:5px; margin-top:6px; }
+  .judge button { border:1px solid var(--line); background:var(--panel);
+    color:var(--muted); border-radius:4px; padding:2px 9px; cursor:pointer;
+    font-size:11px; }
+  .judge button:hover { border-color:var(--accent); color:var(--ink); }
+  .judge button.y.on { background:var(--accent); border-color:var(--accent);
+                       color:#fff; }
+  .judge button.n.on { background:var(--signal); border-color:var(--signal);
+                       color:#fff; }
   .empty { padding:30px 18px; color:var(--faint); font-size:11.5px;
            line-height:1.8; }
   .err { color:var(--signal); font-size:11.5px; padding:12px 18px;
@@ -161,7 +170,10 @@
   </div>
   <div class="rail-h lbl">Stores</div>
   <div class="stores" id="stores"></div>
-  <div class="railfoot" id="foot"></div>
+  <div class="railfoot">
+    <div id="judged" style="color:var(--accent-ink)">no judgements yet</div>
+    <div id="foot" style="margin-top:8px"></div>
+  </div>
 </aside>
 
 <div class="main">
@@ -239,6 +251,18 @@
 
     <!-- ---------------- results ---------------- -->
     <div class="right">
+      <!-- THE SOURCE PLAYER. Pinned, always visible, autoplaying on a
+           loop while you scroll the results. Judging a hit means holding
+           it against the example, and an example you have to scroll back
+           to is an example you stop checking. -->
+      <div class="sec" id="srcwrap" style="display:none">
+        <div class="row" style="justify-content:space-between">
+          <span class="lbl">source &mdash; the example you gave</span>
+          <span class="lbl tnum" id="srcspan"></span>
+        </div>
+        <video id="srcvid" controls autoplay muted loop
+               style="margin-top:8px;max-height:190px"></video>
+      </div>
       <div class="sec"><span class="lbl">results</span>
         <div id="statwrap" style="margin-top:10px"></div>
       </div>
@@ -535,6 +559,10 @@ function render(j, tgt){
         <div class="m1">${h.media}</div>
         <div class="m2 tnum">${h.t0.toFixed(1)}s &rarr; ${h.t1.toFixed(1)}s
           &middot; ${(h.t1-h.t0).toFixed(1)}s</div>
+        <div class="judge">
+          <button class="y" data-v="good" data-i="${i}">&check; same kind</button>
+          <button class="n" data-v="bad"  data-i="${i}">&times; not</button>
+        </div>
         <div class="exp"></div>
       </div>
       <div class="sc tnum">${h.score.toFixed(3)}
@@ -544,6 +572,29 @@ function render(j, tgt){
           (h.score - s.threshold).toFixed(3)}</div>
       </div>
     </div>`).join('');
+  // the source, pinned and looping beside every result
+  const qq = j.query.upload
+    ? 'upload=' + encodeURIComponent(j.query.upload)
+    : 'store=' + encodeURIComponent(j.query.store) +
+      '&media=' + encodeURIComponent(j.query.media);
+  $('#srcwrap').style.display = 'block';
+  $('#srcvid').src = `/api/clip?${qq}&t0=${j.query.t0}&t1=${j.query.t1}`;
+  $('#srcspan').textContent = (j.query.media || j.query.upload) +
+    '  ' + j.query.t0.toFixed(1) + 's - ' + j.query.t1.toFixed(1) + 's';
+
+  document.querySelectorAll('.judge button').forEach(b => b.onclick = async e => {
+    e.stopPropagation();                       // do not toggle the clip
+    const h = shown[+b.dataset.i];
+    b.parentElement.querySelectorAll('button')
+      .forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    await fetch('/api/verdict', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({store: tgt, verdict: b.dataset.v,
+                            query: j.query, hit: h})});
+    verdictCount();
+  });
+
   document.querySelectorAll('.hit').forEach(el => el.onclick = () => {
     const h = shown[+el.dataset.i], box = el.querySelector('.exp');
     if (box.innerHTML) { box.innerHTML=''; return; }
@@ -574,7 +625,16 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
   S.sel = null; S.upload = null; gate();
 });
 
-loadStores(); status();
+async function verdictCount(){
+  try {
+    const v = await (await fetch('/api/verdicts')).json();
+    $('#judged').textContent = v.total
+      ? `judged ${v.total} (${v.good} same / ${v.bad} not) over ${v.queries} queries`
+      : 'no judgements yet';
+  } catch(e){}
+}
+
+loadStores(); status(); verdictCount();
 </script>
 </body>
 </html>

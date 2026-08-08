@@ -267,6 +267,59 @@ def _upload_source(uid):
     return vsrc.VideoSource(f"upload/{uid}", p)
 
 
+VERDICTS = ROOT / "native/verdicts.jsonl"
+
+
+def api_verdict(body):
+    """Record a human judgement on one (query, hit) pair.
+
+    THE ONLY LEGAL JUDGE. Under single-view and no-labels there is no
+    admissible automatic answer key for "is this the same KIND of thing"
+    - that is written into vgrade's own docstring - so the benchmark
+    measures a necessary condition (a distorted clip finds its original)
+    and nothing else. Reporting that number as retrieval quality is how
+    two weeks went by on a system that returns open roads for a query
+    about a tight one.
+
+    A verdict here is the missing quantity: a person looked at the source
+    and the result and said yes or no. Appended, never rewritten, with
+    the exact span and the build that produced it, so a later run can be
+    scored against judgements made before it existed.
+    """
+    q, h = body["query"], body["hit"]
+    rec = dict(when=time.strftime("%Y-%m-%dT%H:%M:%S"), build=build_id(),
+               store=body["store"], verdict=body["verdict"],
+               query=dict(media=q.get("media"), upload=q.get("upload"),
+                          t0=round(float(q["t0"]), 2),
+                          t1=round(float(q["t1"]), 2)),
+               hit=dict(media=h["media"], t0=round(float(h["t0"]), 2),
+                        t1=round(float(h["t1"]), 2),
+                        score=float(h.get("score", 0))))
+    with open(VERDICTS, "a") as f:
+        f.write(json.dumps(rec) + "\n")
+    return dict(ok=True, total=api_verdicts()["total"])
+
+
+def api_verdicts():
+    if not VERDICTS.exists():
+        return dict(total=0, good=0, bad=0, queries=0)
+    good = bad = 0
+    qs = set()
+    for line in VERDICTS.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except Exception:                                # noqa: BLE001
+            continue
+        good += r["verdict"] == "good"
+        bad += r["verdict"] == "bad"
+        q = r["query"]
+        qs.add((r["store"], q.get("media") or q.get("upload"),
+                q["t0"], q["t1"]))
+    return dict(total=good + bad, good=good, bad=bad, queries=len(qs))
+
+
 def api_upload(name, body):
     """Store the bytes, probe them, hand back a handle.
 
@@ -452,6 +505,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(api_status())
             if u.path == "/api/stores":
                 return self._json([store_summary(k) for k in _STORES])
+            if u.path == "/api/verdicts":
+                return self._json(api_verdicts())
             if u.path == "/api/media":
                 return self._json(api_media(q["store"]))
             if u.path == "/api/frame":
@@ -479,6 +534,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(api_upload(q.get("name", "clip.mp4"), raw))
             if u.path == "/api/qbe":
                 return self._json(api_qbe(json.loads(raw or b"{}")))
+            if u.path == "/api/verdict":
+                return self._json(api_verdict(json.loads(raw or b"{}")))
             return self._json({"error": "not found"}, 404)
         except Exception as e:                            # noqa: BLE001
             traceback.print_exc()

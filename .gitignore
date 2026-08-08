@@ -91,3 +91,4 @@ mujoco_menagerie/
 # regenerated on demand from the sources; stores/ is already ignored but
 # this is here so the intent survives a change to that line.
 stores/_deskcache/
+native/verdicts.jsonl
