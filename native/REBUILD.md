@@ -1,221 +1,229 @@
-# REBUILD — the complete plan after 2026-08-08
+# REBUILD v2 — the complete plan, 2026-08-08
+
+v1 of this file hand-coded three similarity axes and put distillation
+before the representation was proven. Both were wrong and both are fixed
+here. v1's evidence section stands.
 
 ## 0. What is established by LOOKING, not by any score
 
-Two contact sheets, both reproducible from the Desk:
+Two contact sheets, reproducible from the Desk, saved in eval/:
 
-**car 0039_sync 28-36s** (narrow street, parked cars both sides): the top
-hit is a wide-open street; the list is generic driving. Judged bad.
+- car 0039_sync 28-36s (narrow street): top hit is a wide-open road.
+- bridge file-050 20-28s (towel folding): every top hit is the same
+  towel in the same session. file-054 — same cloth, but the action is
+  placing cups ON it — passed the cut. file-047 — different cloth, arm
+  picking at a bowl — passed the cut.
 
-**bridge file-050 20-28s** (towel being folded): the top hits are all the
-same orange towel — but files 050/051/054 are the SAME session. The tell
-is file-054 at +0.114, above the cut: same towel, but the action there is
-placing cups ON it. Actor-scene matches, action does not, goal does not —
-retrieved anyway. file-047: different cloth, arm picking at a bowl —
-retrieved anyway.
+Diagnosis: the descriptor matches THE APPEARANCE OF THE MOVING REGION.
+No actor state, no action structure, no goal, no memory of anything
+before the window.
 
-Diagnosis, stated once and built on everywhere below:
+Corrections on the record:
+- "car has almost no structure" was measured in c2's view of car, not in
+  the pixels. There is structure and patterns in everything; extraction
+  is the product being built.
+- vgrade is re-identification. Demoted to a sanity gate; banned from
+  summaries. c2 is renamed what it is: the near-duplicate channel (real,
+  useful for dedup/"seen this exact moment"; not retrieval).
+- No number claimed about retrieval quality survives from before Phase E.
 
-    the current descriptor matches THE APPEARANCE OF THE MOVING REGION.
-    It has no representation of actor state, no representation of the
-    action's structure, and no representation of the goal/effect.
+## 1. The organizing principle (replaces the hand-coded axes)
 
-Corrections to the record:
-- "car has almost no structure to retrieve" was WRONG. What was measured
-  was separation in c2's view of car. The pixels contain the structure
-  (tight vs open, uphill, corridors of parked cars); the extractor cannot
-  see it. Extraction is the product being built.
-- vgrade's 0.751/0.757 is re-identification (a distorted span finds its
-  own original). It was quoted as retrieval quality. It is not. vgrade is
-  demoted to a sanity gate and never again appears as a headline.
-- The system as it stands does not answer the product question anywhere.
-  Re-id works; kind-retrieval does not exist yet.
+v1 defined similarity as actor state + action + goal. The user's
+correction is accepted: those are EXAMPLES of kinds of information, and
+enumerating kinds is a vocabulary one level up. Sometimes the query is
+about the background scene; sometimes an element in front; sometimes the
+maneuver; sometimes a chain of events. No fixed list covers it.
 
-## 1. The definition of similarity (the missing specification)
+The replacement comes from how world models work (JEPA/AMI, V-JEPA 2-AC,
+Dreamer/RSSM, Genie, Marble):
 
-Two clips are the same kind iff they agree on:
+    A representation is sufficient when it can PREDICT. State is
+    whatever the future depends on. Information is kept or discarded by
+    predictive relevance, not by a schema — the tight road constrains
+    future motion, the pedestrian will move, the parked corridor implies
+    parallax, the folded towel stays folded. All of it enters the state
+    UNNAMED, because prediction needs it, and sensor noise leaves for
+    the same reason.
 
-    ACTOR STATE   the agent and its configuration relative to its
-                  surroundings. Manipulation: arm + what it holds/faces.
-                  Ego corpora (car, drone): the ego camera IS the actor;
-                  its state is its geometric relation to the scene —
-                  clearance, layout, free space. "Tight" is a state.
-    ACTION        the structure of the motion being executed — how things
-                  move, independent of what color they are. Folding is a
-                  motion topology, not an orange blob.
-    GOAL/EFFECT   the persistent change the window produces: spread ->
-                  folded, gap ahead -> gap behind, door open -> shut.
+Four architectural facts follow, each stolen from a running system:
 
-A query matches a result when all three agree (strict) — reported beside
-per-axis agreement, because WHICH axis fails is the diagnostic.
+  P1  PREDICTION DEFINES STATE (JEPA; the AMI thesis). Train nothing to
+      classify, caption or match — train only to predict future latents.
+  P2  MEMORY IS A FILTERED RECURRENT STATE (RSSM; V-JEPA 2-AC's
+      block-causal predictor). The state at t accumulates everything so
+      far. Amnesiac per-window encoding — what c2 does — is the gap.
+  P3  PLACE STATE IS SEPARATE FROM MOMENT STATE (Marble: the persistent
+      scene is one artifact, moments happen inside it). A media owns one
+      slow accumulated scene state; moments are stored as deviations and
+      transitions against it.
+  P4  SIMILARITY IS FUNCTIONAL (V-JEPA 2-AC plans by comparing predicted
+      future latents to a goal latent). Two moments are alike if they
+      imply alike — alike states, alike transitions, alike futures. The
+      operator inside can still be a distance; the object it runs on is
+      structured state, never one flat appearance vector.
 
-## 2. Rules (unchanged, restated so this file stands alone)
+And the derived signal that unlocks long chains:
 
-- Vision only. No text, labels, class lists, sensors, or any encoder
-  whose space is shaped by a vocabulary. Single view. One approach for
-  all corpora.
-- No eval/truth media in ANY training or distillation input, ever. The
-  student is a one-to-one function copy of its teacher; every gradient
-  step matches teacher outputs on non-eval inputs. There is no
-  "fine-tuning" step anywhere in this plan — post-surgery recovery is
-  RE-DISTILLATION against the teacher, same data rule.
-- Judging is human eyes (the user as gate; Claude's eyes as a dev
-  instrument, recorded with provenance). No VLM in any shipping path and
-  no VLM-generated truthset. Eval materials live under eval/ (gitignored,
-  unreachable from the query path).
-- Every proxy screen must sample negatives at the operating point where
-  ranking is decided (the hard-negative lesson: near-zero negatives rank
-  self-consistency, and self-consistency is not retrieval).
+  P5  SURPRISE SEGMENTS TIME. Prediction error spikes at event
+      boundaries, label-free. window -> event (surprise-bounded) ->
+      chain (sequence of transitions) -> episode. Chain retrieval is
+      sequence alignment over transitions, not pooling minutes into one
+      vector.
 
-## 3. Phase E — evaluation first (nothing else is trusted until this exists)
+The judge axes (actor / action / goal) SURVIVE ONLY IN THE EVAL as
+questions a human answers about a pair. They are probes, not schema.
 
-E1. QUERY BATTERY. 8-12 queries per store, chosen by LOOKING at contact
-    sheets of the corpus, spanning distinct kinds (bridge: fold, pick,
-    place, drawer, door, wipe; car: tight passage, open road, turn, stop,
-    oncoming; drone: ascend, traverse, hover, turn; sim: per event type).
-    Frozen as (media, t0, t1) in eval/battery.json with a one-line
-    intent note FOR JUDGES ONLY (eval/ never touches the system).
+## 2. Rules (standing, restated)
 
-E2. CONFUSERS BY CONSTRUCTION. For each query, the battery records at
-    least one known SAME-SCENE-DIFFERENT-ACTION span (judged not-match)
-    and, where the corpus contains one, a DIFFERENT-SCENE-SAME-ACTION
-    span (judged match). Today's failure is exactly the first cell of
-    that 2x2, so the metric is sensitive to it by design.
+- Vision only. No text, labels, class lists, sensors, codebooks, or any
+  encoder shaped by a vocabulary. Single view. One approach, all corpora.
+- NO eval/truth media in any training input — prediction training and
+  distillation both draw from a written, committed input manifest that
+  excludes every eval and held-out medium. Fresh sim generator episodes,
+  the ~90 unused bridge hours, oxford/nuscenes/lab footage, augmentation.
+  (KITTI has no disjoint day on disk; the driving domain is covered by
+  nuscenes/oxford. car is eval-only.)
+- There is no fine-tuning step anywhere. Model surgery recovery is
+  re-distillation against the teacher. Self-supervised prediction trains
+  on non-eval media only.
+- Judging is human eyes; the user is the gate; Claude's eyes are a dev
+  instrument with provenance recorded. No VLM on any shipping path, no
+  VLM truthsets. eval/ is gitignored and unreachable from the query path.
+- Proxy screens must sample negatives at the operating point (the
+  hard-negative lesson). Same-session spans are the hard negatives.
+- Online budget stands: the write path target remains ~1 min per media
+  hour after distillation; the world-model core is sized for it.
 
-E3. JUDGING. Desk verdicts become three-axis: actor / action / goal,
-    each yes/no, per (query, hit), appended to verdicts.jsonl with span,
-    score, build, provenance (user | dev). The source player stays
-    pinned so judging is a comparison, not a memory test.
+## 3. Phase E — evaluation first (unchanged from v1, plus chains)
 
-E4. SCORING HARNESS vjudge.py. Scores ANY system against the accumulated
-    pool: per-query precision-of-judged at the returned list, strict and
-    per-axis, plus ACTION-OVER-SCENE — of the retrieved judged hits, the
-    fraction that are action-matches vs scene-only matches. Coverage
-    (judged fraction of returned) prints on every row; unjudged is never
-    counted as wrong (the pool-limited lesson). Verdicts accumulate
-    across builds so later systems are scored against judgements made
-    before they existed.
+E1  Query battery: 8-12 per store, picked by LOOKING, spanning kinds —
+    including scene-focused and element-focused queries on purpose, and
+    2-3 CHAIN queries per store (multi-event spans in sim, multi-step
+    manipulations in bridge). Frozen as (media, t0, t1) in
+    eval/battery.json with judge-only intent notes.
+E2  Confusers by construction: per query, a known same-scene/
+    different-action span, and a different-scene/same-action span where
+    the corpus has one. Today's failure is the first cell.
+E3  Desk judging: per-axis verdicts (actor / action / goal, yes/no)
+    per (query, hit), source player pinned, provenance user|dev,
+    appended to verdicts.jsonl with span, score, build.
+E4  vjudge.py: scores ANY system against the pool. Strict + per-axis
+    precision-of-judged, ACTION-OVER-SCENE (of judged retrieved hits,
+    action-matches vs scene-only matches), coverage on every row,
+    unjudged never counted as wrong. Verdicts accumulate across builds.
+E5  Baseline row: the current system judged first — the honest zero.
 
-E5. RETIREMENT. vgrade stays runnable as the re-id sanity gate. Its
-    numbers are banned from summaries. The eval that gets quoted is E4.
+## 4. Phase W — the world-model memory layer (the core build)
 
-Deliverables: eval/battery.json, Desk 3-axis judging, vjudge.py, an
-initial judged pool (dev-provenance) over the current system as the
-baseline row — the honest zero point.
+W1  MODEL. Perception stays frozen DINOv3 patch features. On top, a
+    small causal predictor — RSSM-style recurrent state or block-causal
+    transformer, tens of M params (V-JEPA 2-AC's 300M shape at ~1/10
+    scale) — consuming the feature stream at 4 Hz and predicting future
+    latents at three horizons (~0.5 s / ~2 s / ~8 s). Multi-horizon
+    heads give fast / mid / slow state bands: transitions vs object
+    motion vs scene identity. Feasibility precedent: FDNN-V2's
+    predictive training ran on this machine.
 
-## 4. Phase D — capacity: FDNN distillation of the frozen backbone
+W2  TRAINING. Objective: predict future DINOv3 latents (cosine + scale
+    match), teacher-forced one-step plus short rollouts (the V-JEPA
+    2-AC recipe against error accumulation). Data: the non-eval
+    manifest only, committed before the run. No labels, no actions
+    (our streams have none at write time), no eval media, no other
+    objective of any kind.
 
-Why now: every representation experiment in Phase R pays the encoder
-cost. 6-8 s per query and 17-21 min per store-hour makes iteration the
-bottleneck. Distillation is also the ONLY step that is fully measurable
-without any truth set: the target is the teacher's own output.
+W3  WHAT THE STORE HOLDS, per stream:
+      state    filtered state at surprise boundaries + fixed stride,
+               kept as a SMALL SPATIAL GRID plus a global vector — one
+               flat vector would erase element-level facets
+      trans    the delta between settled states around each event: the
+               action/effect signature, unnamed
+      surprise the prediction-error trace: event boundaries + the
+               "something happened" signal (replaces energy)
+      place    one slow accumulated scene state per media (P3); moment
+               records store deviations against it
+    All columnar, all counted by the byte ledger, elision measured as
+    ever.
 
-D1. TEACHER: DINOv3 ViT-L/16 (frozen). Later, any adopted flow/depth
-    model gets the same treatment (distill-every-channel rule).
+W4  RETRIEVAL. The example is encoded by the SAME filter (its own
+    frames as context — short context is a real limitation, measured
+    not assumed). Then:
+      intent    what is invariant across the example's own sub-windows
+                and (when given) across a SET of examples — facet
+                selection with no labels: if the examples share the
+                scene band, the query is about place; if they share the
+                transition, it is about the action
+      match     candidate prune on state bands -> exact rerank on the
+                intent-weighted state + transition
+      rollout   optional tier: roll both states forward with the
+                predictor, compare predicted trajectories (functional
+                similarity; expensive; rerank-only)
+      chains    sequence alignment (DTW/edit) over each media's
+                transition sequence for chain queries
+      abstain   the self-derived cut, unchanged in spirit, recomputed
+                for the new score space.
+    The old per-query channel weighting is dead; intent-from-invariance
+    replaces it and must be validated on E2's confuser pairs before it
+    ships.
 
-D2. STUDENT: the teacher's macro-structure retained — patch embed,
-    attention blocks, residual layout — with MLP neurons replaced by
-    FDNN rule-1 heterogeneous units (FINER oscillator / Gabor / poly
-    sub-functions, as in fdnnvideo.py). Start at ~ViT-S capacity;
-    grow only if the fidelity gate fails at target size.
+W5  GATES (in order):
+      a. surprise boundaries land where a human puts event boundaries
+         (checked by eyes on contact sheets, all four corpora);
+      b. state bands separate E2's confuser cells — same-scene/
+         different-action must score LOW on the transition band and
+         high on the scene band, visibly, per corpus;
+      c. E4 on the battery beats the c2 baseline on ACTION-OVER-SCENE
+         and on strict precision-of-judged;
+      d. write-path cost measured, with the path to the online budget
+         stated (the predictor is small; decode still dominates).
 
-D3. DATA RULE (the one that was violated in spirit before): inputs are
-    disjoint from every eval medium, including held-out ranges —
-    fresh sim episodes from the generator, bridge chunk files outside
-    the 60 eval + held-out lists (~90 h unused), other on-disk imagery
-    (oxford, nuscenes-mini, lab), heavy pixel augmentation. The input
-    manifest is written to disk BEFORE training and committed.
+## 5. Phase B — hand-built baselines (kept, demoted)
 
-D4. LOSS: token-level match to the teacher (patch tokens + CLS) at the
-    output and at 3-4 intermediate depths, cosine + scale. Then rule 2
-    (apoptosis by measured contribution) -> re-distill -> rule 3
-    (neurogenesis where residual error concentrates) -> re-distill.
-    No step ever sees eval media. No step optimizes anything but
-    teacher agreement.
+Flow figure/ground, actor-centric pooling, persistent start->end change:
+built SMALL, not as the product but as (a) baselines Phase W must beat
+on E4 and (b) diagnostic probes for what W's state actually captures.
+If a hand primitive beats the learned state on some axis, that is a
+finding about W's training, not a shipping decision.
 
-D5. GATES, all three required:
-    a. fidelity: mean token cosine to teacher >= 0.95 on held-out
-       DISJOINT inputs, and measured (inference only) on eval corpora;
-    b. store-swap: rebuild one store with the student, Spearman rank
-       correlation of search results vs the teacher store >= 0.9 on the
-       battery;
-    c. wall-clock: >= 5x encoder speedup at the shipping resolution
-       ladder on this machine, measured not estimated.
+## 6. Phase D — distillation, LAST
 
-## 5. Phase R — representation: extract actor / action / goal from pixels
+Moved from before-R (v1) to after-W, because distillation is a
+one-to-one FUNCTION COPY: probe inputs in, teacher outputs matched. It
+preserves capacity, it cannot add information, and a copy of an unproven
+teacher reproduces its faults at high fidelity. So it runs only on the
+teacher stack that E4 has validated:
 
-Principle: DECOMPOSE FIRST, THEN POOL TIME. One global vector cannot
-carry three kinds of information; three channels can. All primitives are
-functions of pixels only. Each candidate is tested at the operating
-point — full store as distractors, same-session spans as the hard
-negatives — and judged by eyes via E. No other acceptance exists.
-
-R1. FIGURE/GROUND WITHOUT LABELS. The actor is what moves coherently
-    (common fate): optical flow + DINOv3 patch affinity -> actor mask
-    per frame. Ego corpora: everything moves, so figure/ground becomes
-    the FLOW FIELD itself (divergence = passing through; asymmetry =
-    turning; fast near-border flow = close structure). Verified by
-    looking at masks/fields on all four corpora before anything is
-    built on top.
-
-R2. STATE channel. Manipulation: actor-centric pooled features (what
-    the arm holds / faces), separated from scene. Ego: clearance
-    profile from the flow/depth field — the geometry of free space,
-    which is what "tight" is. Appearance enters only inside the actor
-    region, never the whole frame.
-
-R3. ACTION channel. The time pattern of the ACTOR-CENTRIC signal, not
-    the global frame: rank pooling and self-similarity applied to
-    actor-local features and to mask/flow SHAPE (area, contour,
-    spread) so folding matches folding in any color. Direction
-    sensitivity (open vs close) is preserved by construction — rank
-    pooling stays antisymmetric.
-
-R4. GOAL/EFFECT channel. Persistent change: the difference between the
-    window's settled start and settled end states, computed on the
-    region the action touched (spread towel -> folded towel is an
-    area/shape change; the prior delta-appearance result, AUC 0.98,
-    says this signal is strong). Symmetric actions with different ends
-    are separated exactly here.
-
-R5. Each of R1-R4 is a small store build (10 min/corpus) -> battery ->
-    contact sheets -> judged. Keep/kill per channel per corpus. A
-    channel that helps one corpus and hurts another is not shipped
-    with a per-corpus switch — it is redesigned until one rule works,
-    or killed (one-approach rule).
-
-## 6. Phase I — integrate
-
-- Store schema: state / action / goal channels per window (+ energy).
-- Query planning: per-query channel weighting REBUILT from scratch. The
-  old one rewarded self-consistency across adjacent windows and was the
-  fault in two consecutive iterations; the new one must be validated on
-  the battery's confuser pairs before it ships. Abstention cut is
-  unchanged (self-derived, no fitted constants).
-- Full rebuild, all four stores, student encoder. Quoted results: E4
-  (strict + per-axis + action-over-scene + coverage), re-id sanity,
-  elision, latency. In that order.
+  - DINOv3 perception -> FDNN student (teacher structure retained, MLP
+    neurons -> rule-1 heterogeneous units; apoptosis -> RE-DISTILL ->
+    neurogenesis -> RE-DISTILL; every gradient matches teacher outputs
+    on the non-eval manifest).
+  - The W predictor is already student-sized; it ships as-is.
+  Gates: token fidelity >= 0.95 on held-out disjoint inputs; store-swap
+  rank correlation >= 0.9 on the battery; measured wall-clock >= 5x.
 
 ## 7. Sequence, budgets, kill criteria
 
-    E   eval harness + baseline judged pool          first, ~1-2 days
-    D   distillation                                  starts in parallel
-        (independent of E's design; gate is teacher fidelity)
-        training on this machine is honestly multi-day; plan runs
-        overnight with tracked stages and real ETAs
-    R   primitives on the teacher at tiny scale while D trains;
-        full iteration speed once D lands
-    I   only after >= 2 R channels beat the baseline on E4
+    E   harness + baseline judged pool         ~1-2 days, first
+    W1-2 predictor training                    starts once E1 exists;
+         multi-day on this machine; tracked stages, real ETAs, tqdm
+    B   baselines at tiny scale                while W trains
+    W3-5 store + retrieval + gates             after training lands
+    D   distillation                           only after W passes E4
 
 Kill criteria:
-- an R candidate that does not beat c2 on ACTION-OVER-SCENE at equal
-  scale dies, whatever its other numbers;
-- a D student that misses the fidelity gate at target size gets one
-  capacity increase, then the architecture is reconsidered;
-- any step whose acceptance depends on a number the eval harness cannot
-  produce does not run.
+- W fails gate (a) after two training recipes -> the predictor is
+  re-scoped (bigger context, different horizon set) once; a second
+  failure reopens the architecture question rather than tuning on.
+- Anything that cannot beat the c2 baseline on ACTION-OVER-SCENE at
+  equal scale dies, whatever its other numbers.
+- A D student missing fidelity at target size gets one capacity
+  increase, then the architecture is reconsidered.
+- No step ships on a number the eval harness cannot produce.
 
-What does NOT survive from before: c2-as-the-product (it remains as the
-re-id/near-duplicate channel, which is real and useful — dedup, "have I
-seen this exact moment" — but is no longer called retrieval), vgrade as
-a headline, and every claim of retrieval quality made before E exists.
+References that shaped Phase W: V-JEPA 2 / V-JEPA 2-AC (arXiv
+2506.09985) — frozen encoder + block-causal latent predictor, rollout
+loss, planning by predicted-latent distance; LeCun's JEPA/AMI program —
+prediction in latent space as the definition of understanding; Dreamer
+RSSM — filtered recurrent state as memory; Marble (World Labs) —
+persistent place state separate from moments; Genie — long-horizon
+consistency from causal latent context.
