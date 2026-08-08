@@ -1,0 +1,142 @@
+{
+  "when": "2026-08-06 19:52",
+  "encoder": "facebook/dinov3-convnext-tiny-pretrain-lvd1689m",
+  "scales": [
+    2.0,
+    4.0,
+    8.0
+  ],
+  "ctx_mult": 3.0,
+  "true_frac": 1.0,
+  "qspan": 8.0,
+  "rows": [
+    {
+      "store": "sim",
+      "media": 60,
+      "windows": 2466,
+      "minutes": 26.0,
+      "queries": 144,
+      "yield_": 0.332,
+      "prec": 0.215,
+      "support": 11.0,
+      "returned": 16.4,
+      "chance": 0.017,
+      "rank1": 0.535,
+      "med_rank": 4.0,
+      "ident": 0.833,
+      "d_margin": 0.633,
+      "prune_recall": 0.717,
+      "bytes_probe": 1810236,
+      "bytes_full": 6746976,
+      "per_transform": {
+        "warp": 0.341,
+        "crop": 0.174,
+        "photo": 0.72,
+        "codec": 0.174,
+        "codec_hard": 0.045,
+        "tempo": 0.538
+      },
+      "weights": {
+        "c1": 0.008,
+        "c2": 0.483,
+        "c3": 0.509
+      }
+    },
+    {
+      "store": "bridge",
+      "media": 10,
+      "windows": 5220,
+      "minutes": 50.0,
+      "queries": 144,
+      "yield_": 0.387,
+      "prec": 0.251,
+      "support": 11.0,
+      "returned": 16.6,
+      "chance": 0.007,
+      "rank1": 0.639,
+      "med_rank": 4.2,
+      "ident": 0.837,
+      "d_margin": 0.705,
+      "prune_recall": 0.908,
+      "bytes_probe": 4430280,
+      "bytes_full": 16954560,
+      "per_transform": {
+        "warp": 0.428,
+        "crop": 0.28,
+        "photo": 0.803,
+        "codec": 0.163,
+        "codec_hard": 0.038,
+        "tempo": 0.61
+      },
+      "weights": {
+        "c1": 0.015,
+        "c2": 0.471,
+        "c3": 0.513
+      }
+    },
+    {
+      "store": "car",
+      "media": 22,
+      "windows": 1194,
+      "minutes": 12.3,
+      "queries": 144,
+      "yield_": 0.489,
+      "prec": 0.327,
+      "support": 11.0,
+      "returned": 15.2,
+      "chance": 0.037,
+      "rank1": 0.736,
+      "med_rank": 3.5,
+      "ident": 0.807,
+      "d_margin": 0.485,
+      "prune_recall": 0.617,
+      "bytes_probe": 984120,
+      "bytes_full": 3983184,
+      "per_transform": {
+        "warp": 0.572,
+        "crop": 0.424,
+        "photo": 0.765,
+        "codec": 0.413,
+        "codec_hard": 0.064,
+        "tempo": 0.693
+      },
+      "weights": {
+        "c1": 0.0,
+        "c2": 0.599,
+        "c3": 0.401
+      }
+    },
+    {
+      "store": "drone",
+      "media": 20,
+      "windows": 3440,
+      "minutes": 33.3,
+      "queries": 144,
+      "yield_": 0.302,
+      "prec": 0.232,
+      "support": 11.0,
+      "returned": 11.7,
+      "chance": 0.012,
+      "rank1": 0.472,
+      "med_rank": 3.0,
+      "ident": 0.765,
+      "d_margin": 0.527,
+      "prune_recall": 0.55,
+      "bytes_probe": 2904584,
+      "bytes_full": 11324480,
+      "per_transform": {
+        "warp": 0.261,
+        "crop": 0.087,
+        "photo": 0.72,
+        "codec": 0.068,
+        "codec_hard": 0.0,
+        "tempo": 0.678
+      },
+      "weights": {
+        "c1": 0.007,
+        "c2": 0.852,
+        "c3": 0.141
+      }
+    }
+  ]
+}

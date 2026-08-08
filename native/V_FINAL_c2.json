@@ -1,0 +1,152 @@
+{
+  "when": "2026-08-08 06:36",
+  "encoder": "facebook/dinov3-vitl16-pretrain-lvd1689m",
+  "res": [
+    256,
+    320,
+    384
+  ],
+  "wmode": "pos",
+  "scales": [
+    2.0,
+    4.0,
+    8.0
+  ],
+  "ctx_mult": 3.0,
+  "true_frac": 1.0,
+  "qspan": 8.0,
+  "rows": [
+    {
+      "store": "sim",
+      "media": 150,
+      "windows": 6006,
+      "minutes": 63.5,
+      "queries": 240,
+      "yield_": 0.713,
+      "prec": 0.594,
+      "yield_half": 0.519,
+      "prec_half": 0.53,
+      "support_half": 16.3,
+      "support": 11.0,
+      "returned": 14.3,
+      "chance": 0.007,
+      "rank1": 0.971,
+      "med_rank": 4.5,
+      "ident": 0.907,
+      "d_margin": 0.736,
+      "prune_recall": 0.992,
+      "bytes_probe": 6349482,
+      "bytes_full": 24600576,
+      "per_transform": {
+        "warp": 0.773,
+        "crop": 0.509,
+        "photo": 0.895,
+        "codec": 0.852,
+        "codec_hard": 0.541,
+        "tempo": 0.709
+      },
+      "weights": {
+        "c2": 1.0
+      }
+    },
+    {
+      "store": "bridge",
+      "media": 60,
+      "windows": 6120,
+      "minutes": 60.0,
+      "queries": 240,
+      "yield_": 0.693,
+      "prec": 0.732,
+      "yield_half": 0.503,
+      "prec_half": 0.752,
+      "support_half": 16.7,
+      "support": 11.0,
+      "returned": 11.5,
+      "chance": 0.007,
+      "rank1": 0.988,
+      "med_rank": 3.5,
+      "ident": 0.852,
+      "d_margin": 0.589,
+      "prune_recall": 0.925,
+      "bytes_probe": 6636885,
+      "bytes_full": 25067520,
+      "per_transform": {
+        "warp": 0.689,
+        "crop": 0.62,
+        "photo": 0.843,
+        "codec": 0.725,
+        "codec_hard": 0.611,
+        "tempo": 0.67
+      },
+      "weights": {
+        "c2": 1.0
+      }
+    },
+    {
+      "store": "car",
+      "media": 22,
+      "windows": 1194,
+      "minutes": 12.3,
+      "queries": 240,
+      "yield_": 0.803,
+      "prec": 0.881,
+      "yield_half": 0.612,
+      "prec_half": 0.955,
+      "support_half": 15.9,
+      "support": 11.0,
+      "returned": 10.2,
+      "chance": 0.034,
+      "rank1": 1.0,
+      "med_rank": 4.0,
+      "ident": 0.93,
+      "d_margin": 0.657,
+      "prune_recall": 0.867,
+      "bytes_probe": 1279317,
+      "bytes_full": 4890624,
+      "per_transform": {
+        "warp": 0.884,
+        "crop": 0.766,
+        "photo": 0.923,
+        "codec": 0.784,
+        "codec_hard": 0.657,
+        "tempo": 0.807
+      },
+      "weights": {
+        "c2": 1.0
+      }
+    },
+    {
+      "store": "drone",
+      "media": 29,
+      "windows": 4923,
+      "minutes": 47.7,
+      "queries": 240,
+      "yield_": 0.796,
+      "prec": 0.82,
+      "yield_half": 0.607,
+      "prec_half": 0.892,
+      "support_half": 16.8,
+      "support": 11.0,
+      "returned": 11.4,
+      "chance": 0.009,
+      "rank1": 0.979,
+      "med_rank": 4.5,
+      "ident": 0.939,
+      "d_margin": 0.757,
+      "prune_recall": 0.967,
+      "bytes_probe": 5141845,
+      "bytes_full": 20164608,
+      "per_transform": {
+        "warp": 0.786,
+        "crop": 0.655,
+        "photo": 0.905,
+        "codec": 0.857,
+        "codec_hard": 0.723,
+        "tempo": 0.852
+      },
+      "weights": {
+        "c2": 1.0
+      }
+    }
+  ]
+}

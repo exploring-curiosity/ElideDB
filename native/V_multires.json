@@ -1,0 +1,84 @@
+{
+  "when": "2026-08-06 20:15",
+  "encoder": "facebook/dinov3-convnext-tiny-pretrain-lvd1689m",
+  "res": [
+    168,
+    224,
+    320
+  ],
+  "wmode": "pos",
+  "scales": [
+    2.0,
+    4.0,
+    8.0
+  ],
+  "ctx_mult": 3.0,
+  "true_frac": 1.0,
+  "qspan": 8.0,
+  "rows": [
+    {
+      "store": "sim",
+      "media": 60,
+      "windows": 2466,
+      "minutes": 26.0,
+      "queries": 144,
+      "yield_": 0.437,
+      "prec": 0.289,
+      "support": 11.0,
+      "returned": 16.1,
+      "chance": 0.01,
+      "rank1": 0.653,
+      "med_rank": 4.0,
+      "ident": 0.86,
+      "d_margin": 0.515,
+      "prune_recall": 0.967,
+      "bytes_probe": 7272740,
+      "bytes_full": 11797344,
+      "per_transform": {
+        "warp": 0.508,
+        "crop": 0.341,
+        "photo": 0.795,
+        "codec": 0.39,
+        "codec_hard": 0.049,
+        "tempo": 0.538
+      },
+      "weights": {
+        "c1": 0.134,
+        "c2": 0.406,
+        "c3": 0.459
+      }
+    },
+    {
+      "store": "car",
+      "media": 22,
+      "windows": 1194,
+      "minutes": 12.3,
+      "queries": 144,
+      "yield_": 0.564,
+      "prec": 0.388,
+      "support": 11.0,
+      "returned": 15.3,
+      "chance": 0.019,
+      "rank1": 0.708,
+      "med_rank": 4.0,
+      "ident": 0.86,
+      "d_margin": 0.477,
+      "prune_recall": 0.883,
+      "bytes_probe": 2519792,
+      "bytes_full": 3983184,
+      "per_transform": {
+        "warp": 0.587,
+        "crop": 0.542,
+        "photo": 0.822,
+        "codec": 0.53,
+        "codec_hard": 0.178,
+        "tempo": 0.727
+      },
+      "weights": {
+        "c1": 0.106,
+        "c2": 0.434,
+        "c3": 0.459
+      }
+    }
+  ]
+}

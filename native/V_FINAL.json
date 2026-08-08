@@ -1,0 +1,158 @@
+{
+  "when": "2026-08-07 02:16",
+  "encoder": "facebook/dinov3-vitl16-pretrain-lvd1689m",
+  "res": [
+    320
+  ],
+  "wmode": "pos",
+  "scales": [
+    2.0,
+    4.0,
+    8.0
+  ],
+  "ctx_mult": 3.0,
+  "true_frac": 1.0,
+  "qspan": 8.0,
+  "rows": [
+    {
+      "store": "sim",
+      "media": 150,
+      "windows": 6006,
+      "minutes": 63.5,
+      "queries": 240,
+      "yield_": 0.597,
+      "prec": 0.387,
+      "yield_half": 0.442,
+      "prec_half": 0.291,
+      "support_half": 16.3,
+      "support": 11.0,
+      "returned": 17.0,
+      "chance": 0.004,
+      "rank1": 0.854,
+      "med_rank": 5.0,
+      "ident": 0.848,
+      "d_margin": 0.623,
+      "prune_recall": 0.967,
+      "bytes_probe": 16910000,
+      "bytes_full": 33593560,
+      "per_transform": {
+        "warp": 0.577,
+        "crop": 0.389,
+        "photo": 0.802,
+        "codec": 0.659,
+        "codec_hard": 0.489,
+        "tempo": 0.668
+      },
+      "weights": {
+        "c1": 0.131,
+        "c2": 0.466,
+        "c3": 0.404
+      }
+    },
+    {
+      "store": "bridge",
+      "media": 60,
+      "windows": 6120,
+      "minutes": 60.0,
+      "queries": 240,
+      "yield_": 0.583,
+      "prec": 0.379,
+      "yield_half": 0.448,
+      "prec_half": 0.297,
+      "support_half": 16.7,
+      "support": 11.0,
+      "returned": 17.0,
+      "chance": 0.004,
+      "rank1": 0.792,
+      "med_rank": 5.0,
+      "ident": 0.843,
+      "d_margin": 0.486,
+      "prune_recall": 1.0,
+      "bytes_probe": 28135878,
+      "bytes_full": 43394880,
+      "per_transform": {
+        "warp": 0.582,
+        "crop": 0.536,
+        "photo": 0.807,
+        "codec": 0.636,
+        "codec_hard": 0.409,
+        "tempo": 0.525
+      },
+      "weights": {
+        "c1": 0.119,
+        "c2": 0.362,
+        "c3": 0.519
+      }
+    },
+    {
+      "store": "car",
+      "media": 22,
+      "windows": 1194,
+      "minutes": 12.3,
+      "queries": 240,
+      "yield_": 0.774,
+      "prec": 0.537,
+      "yield_half": 0.683,
+      "prec_half": 0.512,
+      "support_half": 15.9,
+      "support": 11.0,
+      "returned": 16.2,
+      "chance": 0.017,
+      "rank1": 0.883,
+      "med_rank": 5.0,
+      "ident": 0.936,
+      "d_margin": 0.541,
+      "prune_recall": 0.95,
+      "bytes_probe": 3522288,
+      "bytes_full": 5100768,
+      "per_transform": {
+        "warp": 0.857,
+        "crop": 0.825,
+        "photo": 0.936,
+        "codec": 0.693,
+        "codec_hard": 0.484,
+        "tempo": 0.85
+      },
+      "weights": {
+        "c1": 0.086,
+        "c2": 0.52,
+        "c3": 0.394
+      }
+    },
+    {
+      "store": "drone",
+      "media": 29,
+      "windows": 4923,
+      "minutes": 47.7,
+      "queries": 240,
+      "yield_": 0.702,
+      "prec": 0.604,
+      "yield_half": 0.597,
+      "prec_half": 0.638,
+      "support_half": 16.8,
+      "support": 11.0,
+      "returned": 12.5,
+      "chance": 0.007,
+      "rank1": 0.879,
+      "med_rank": 4.5,
+      "ident": 0.982,
+      "d_margin": 0.786,
+      "prune_recall": 0.958,
+      "bytes_probe": 10412082,
+      "bytes_full": 20597832,
+      "per_transform": {
+        "warp": 0.777,
+        "crop": 0.711,
+        "photo": 0.977,
+        "codec": 0.605,
+        "codec_hard": 0.232,
+        "tempo": 0.909
+      },
+      "weights": {
+        "c1": 0.021,
+        "c2": 0.904,
+        "c3": 0.075
+      }
+    }
+  ]
+}
