@@ -2,13 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "desk",
-      "runtimeExecutable": "./myenv/bin/python",
-      "runtimeArgs": [
-        "-c",
-        "import sys; sys.path.insert(0, 'python'); sys.argv = ['desk']; from elidedb.desk import main; main()"
-      ],
-      "port": 8787
+      "name": "vdesk",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["native/vdesk.py", "--port", "8788"],
+      "port": 8788
     }
   ]
 }

@@ -86,3 +86,8 @@ scratch_*/
 
 # MuJoCo model library: cloned, not ours
 mujoco_menagerie/
+
+# ---- Desk QbE derived media (thumbnails, preview clips, query uploads) --
+# regenerated on demand from the sources; stores/ is already ignored but
+# this is here so the intent survives a change to that line.
+stores/_deskcache/

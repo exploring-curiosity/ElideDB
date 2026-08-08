@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ElideDB Desk — QbE</title>
+<style>
+  /* Same instrument as the lake console: monospace-forward, paper and
+     graphite, one working accent. */
+  :root {
+    --ground:#f3f2ee; --panel:#fcfbf9; --panel-2:#eceae4; --rail:#eae8e2;
+    --ink:#191d21; --muted:#565e66; --faint:#8a9098;
+    --line:#d8d5cd; --hairline:#e5e2da;
+    --accent:#0f6f63; --accent-ink:#0b5c52; --accent-soft:rgba(15,111,99,.12);
+    --signal:#b4500f; --code-bg:#efede7;
+    --shadow:0 14px 40px rgba(24,28,32,.14);
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --ground:#131518; --panel:#1a1d21; --panel-2:#22262b; --rail:#0e1013;
+    --ink:#e7e9ea; --muted:#9aa3ab; --faint:#697077;
+    --line:#2c3238; --hairline:#24292e;
+    --accent:#3fb9a5; --accent-ink:#5accb9; --accent-soft:rgba(63,185,165,.14);
+    --signal:#e8763d; --code-bg:#101317;
+    --shadow:0 18px 48px rgba(0,0,0,.55);
+  }}
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; }
+  body { display:flex; background:var(--ground); color:var(--ink);
+         font:13px/1.55 ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+         overflow:hidden; -webkit-font-smoothing:antialiased; }
+  .tnum { font-variant-numeric:tabular-nums; }
+  .lbl { font-size:9.5px; letter-spacing:.16em; text-transform:uppercase;
+         color:var(--faint); font-weight:600; }
+  button { font:inherit; }
+
+  aside { width:250px; flex:none; background:var(--rail);
+          border-right:1px solid var(--line); display:flex;
+          flex-direction:column; }
+  .brand { padding:18px 16px 14px; border-bottom:1px solid var(--line); }
+  .brand b { letter-spacing:.22em; font-size:13px; font-weight:700; }
+  .brand b i { font-style:normal; color:var(--accent); }
+  .brand .sub { color:var(--faint); font-size:10px; margin-top:3px; }
+  .rail-h { padding:14px 16px 6px; }
+  .stores { flex:1; overflow-y:auto; padding:4px 10px 10px; }
+  .store-card { padding:10px 12px; border-radius:6px; cursor:pointer;
+                border:1px solid transparent; margin-bottom:5px; }
+  .store-card:hover { background:var(--panel); }
+  .store-card.on { background:var(--panel); border-color:var(--line);
+                   box-shadow:inset 3px 0 0 var(--accent); }
+  .store-card .n { font-weight:700; font-size:12.5px; }
+  .store-card .m { color:var(--faint); font-size:10.5px; margin-top:3px; }
+  .railfoot { padding:12px 16px; color:var(--faint); font-size:10px;
+              border-top:1px solid var(--line); line-height:1.7; }
+
+  .main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .topbar { display:flex; align-items:center; gap:16px; padding:0 20px;
+            border-bottom:1px solid var(--line); min-height:52px; }
+  .topbar h1 { font-size:14px; margin:0; font-weight:700; }
+  nav#tabs { display:flex; gap:2px; align-self:stretch; }
+  nav#tabs button { border:0; background:transparent; color:var(--muted);
+    cursor:pointer; font:600 10.5px/1 ui-monospace,Menlo,monospace;
+    letter-spacing:.14em; padding:0 14px; border-bottom:2px solid transparent;
+    text-transform:uppercase; }
+  nav#tabs button.on { color:var(--ink); border-bottom-color:var(--accent); }
+  .pill { margin-left:auto; font-size:10px; letter-spacing:.1em;
+          padding:4px 10px; border-radius:999px; border:1px solid var(--line);
+          color:var(--muted); text-transform:uppercase; }
+  .pill.ok { color:var(--accent-ink); border-color:var(--accent);
+             background:var(--accent-soft); }
+  .pill.warn { color:var(--signal); border-color:var(--signal); }
+
+  .cols { flex:1; display:flex; min-height:0; }
+  .left { width:46%; min-width:380px; border-right:1px solid var(--line);
+          display:flex; flex-direction:column; min-height:0; }
+  .right { flex:1; display:flex; flex-direction:column; min-height:0; }
+  .sec { padding:14px 18px; border-bottom:1px solid var(--hairline); }
+  .scroll { overflow-y:auto; flex:1; min-height:0; }
+
+  /* media list */
+  .media-row { display:flex; align-items:center; gap:10px; padding:7px 18px;
+               cursor:pointer; border-bottom:1px solid var(--hairline); }
+  .media-row:hover { background:var(--panel); }
+  .media-row.on { background:var(--accent-soft); }
+  .media-row .id { flex:1; font-size:11.5px; overflow:hidden;
+                   text-overflow:ellipsis; white-space:nowrap; }
+  .media-row .d { color:var(--faint); font-size:10.5px; }
+  .spark { display:block; height:16px; width:110px; flex:none; }
+
+  /* strip + span selector */
+  .strip { position:relative; display:flex; gap:1px; user-select:none;
+           cursor:crosshair; background:var(--panel-2); border-radius:4px;
+           overflow:hidden; }
+  .strip img { flex:1; min-width:0; height:64px; object-fit:cover;
+               display:block; background:var(--panel-2); }
+  .band { position:absolute; top:0; bottom:0; background:var(--accent-soft);
+          border-left:2px solid var(--accent); border-right:2px solid var(--accent);
+          pointer-events:none; }
+  .ticks { display:flex; justify-content:space-between; color:var(--faint);
+           font-size:9.5px; margin-top:3px; }
+
+  .btn { border:1px solid var(--line); background:var(--panel);
+         color:var(--ink); padding:7px 14px; border-radius:5px;
+         cursor:pointer; font-size:11.5px; }
+  .btn:hover { border-color:var(--accent); }
+  .btn.primary { background:var(--accent); border-color:var(--accent);
+                 color:#fff; font-weight:700; letter-spacing:.06em; }
+  .btn.primary:disabled { opacity:.45; cursor:not-allowed; }
+  .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  select, input[type=number] { font:inherit; background:var(--panel);
+      color:var(--ink); border:1px solid var(--line); border-radius:5px;
+      padding:5px 8px; }
+  label.chk { display:flex; align-items:center; gap:6px; font-size:11px;
+              color:var(--muted); }
+
+  video { width:100%; border-radius:5px; background:#000; display:block; }
+
+  .drop { border:1.5px dashed var(--line); border-radius:8px; padding:34px;
+          text-align:center; color:var(--muted); cursor:pointer; }
+  .drop.hot { border-color:var(--accent); background:var(--accent-soft); }
+
+  /* stats */
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(122px,1fr));
+           gap:1px; background:var(--line); border:1px solid var(--line);
+           border-radius:6px; overflow:hidden; }
+  .stat { background:var(--panel); padding:9px 11px; }
+  .stat .v { font-size:15px; font-weight:700; margin-top:2px; }
+  .stat .v small { font-size:10px; font-weight:400; color:var(--faint); }
+
+  /* results */
+  .hit { display:flex; gap:11px; padding:10px 18px; cursor:pointer;
+         border-bottom:1px solid var(--hairline); align-items:flex-start; }
+  .hit:hover { background:var(--panel); }
+  .hit img { width:132px; height:74px; object-fit:cover; border-radius:4px;
+             flex:none; background:var(--panel-2); }
+  .hit .meta { flex:1; min-width:0; }
+  .hit .m1 { font-size:11.5px; overflow:hidden; text-overflow:ellipsis;
+             white-space:nowrap; }
+  .hit .m2 { color:var(--faint); font-size:10.5px; margin-top:2px; }
+  .hit .sc { font-weight:700; color:var(--accent-ink); font-size:12px;
+             text-align:right; flex:none; width:88px; }
+  .hit .sc .bar { height:3px; background:var(--panel-2); border-radius:2px;
+                  margin-top:5px; overflow:hidden; }
+  .hit .sc .bar i { display:block; height:100%; background:var(--accent); }
+  .hit .sc .mg { font-weight:400; font-size:9.5px; color:var(--faint);
+                 margin-top:3px; }
+  .hit .exp { margin-top:8px; }
+  .empty { padding:30px 18px; color:var(--faint); font-size:11.5px;
+           line-height:1.8; }
+  .err { color:var(--signal); font-size:11.5px; padding:12px 18px;
+         white-space:pre-wrap; }
+  code { background:var(--code-bg); padding:1px 5px; border-radius:3px;
+         font-size:11px; }
+</style>
+</head>
+<body>
+
+<aside>
+  <div class="brand">
+    <b>ELIDE<i>DB</i></b>
+    <div class="sub">query by example · vision native</div>
+  </div>
+  <div class="rail-h lbl">Stores</div>
+  <div class="stores" id="stores"></div>
+  <div class="railfoot" id="foot"></div>
+</aside>
+
+<div class="main">
+  <div class="topbar">
+    <h1>Query by example</h1>
+    <nav id="tabs">
+      <button data-tab="store" class="on">From the store</button>
+      <button data-tab="upload">Upload a video</button>
+    </nav>
+    <span class="pill" id="status">checking…</span>
+  </div>
+
+  <div class="cols">
+    <div class="left">
+      <!-- ---------------- pick from store ---------------- -->
+      <div id="pane-store" style="display:flex;flex-direction:column;min-height:0;flex:1">
+        <div class="sec"><span class="lbl">1 · pick a media</span></div>
+        <div class="scroll" id="medialist"></div>
+      </div>
+
+      <!-- ---------------- upload ---------------- -->
+      <div id="pane-upload" style="display:none;flex-direction:column;min-height:0;flex:1">
+        <div class="sec">
+          <span class="lbl">1 · a video from outside the store</span>
+          <div class="drop" id="drop" style="margin-top:10px">
+            drop a video here, or click to choose<br>
+            <span style="font-size:10.5px">
+              it is decoded and searched, never ingested
+            </span>
+          </div>
+          <input type="file" id="file" accept="video/*" style="display:none">
+          <div id="upinfo" style="margin-top:10px;color:var(--faint);
+               font-size:11px"></div>
+        </div>
+      </div>
+
+      <!-- ---------------- span selector (shared) ---------------- -->
+      <div class="sec" id="picker" style="display:none">
+        <span class="lbl">2 · drag out the example</span>
+        <div style="position:relative;margin-top:9px">
+          <div class="strip" id="strip"></div>
+          <div class="band" id="band" style="display:none"></div>
+        </div>
+        <div class="ticks"><span id="tick0">0s</span><span id="tick1"></span></div>
+        <div class="row" style="margin-top:11px">
+          <span class="tnum" id="spanlbl" style="font-size:11.5px"></span>
+          <select id="preset">
+            <option value="0">drag to set</option>
+            <option value="2">2 s</option>
+            <option value="4">4 s</option>
+            <option value="8" selected>8 s</option>
+            <option value="16">16 s</option>
+          </select>
+          <span id="storepick"></span>
+          <span class="lbl">show</span>
+          <select id="show">
+            <option value="25">top 25</option>
+            <option value="50" selected>top 50</option>
+            <option value="0">all that clear the cut</option>
+          </select>
+        </div>
+        <div class="row" style="margin-top:9px">
+          <button class="btn primary" id="go" disabled>Search</button>
+          <!-- disabled for uploads: an outside file has no row in the
+               store, so there is no own moment to exclude, and a control
+               that changes nothing is a lie about what ran. -->
+          <label class="chk" id="excl-wrap"><input type="checkbox" id="excl"
+            checked> exclude the example's own moment</label>
+          <label class="chk"><input type="checkbox" id="abst" checked>
+            abstain</label>
+        </div>
+        <div style="margin-top:11px" id="preview"></div>
+      </div>
+    </div>
+
+    <!-- ---------------- results ---------------- -->
+    <div class="right">
+      <div class="sec"><span class="lbl">results</span>
+        <div id="statwrap" style="margin-top:10px"></div>
+      </div>
+      <div class="scroll" id="hits">
+        <div class="empty">
+          Pick a media on the left, drag out a few seconds, and press
+          Search.<br><br>
+          The example is decoded live through the same byte-range cut the
+          write path used, so what you hand the system is exactly what it
+          saw at ingest. Nothing is pre-baked.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const fmtB = b => b >= 1e9 ? (b/1e9).toFixed(2)+' GB'
+              : b >= 1e6 ? (b/1e6).toFixed(1)+' MB'
+              : b >= 1e3 ? (b/1e3).toFixed(1)+' kB' : b+' B';
+
+let S = { stores:[], store:null, media:[], sel:null, dur:0,
+          t0:0, t1:8, upload:null, tab:'store' };
+
+// ------------------------------------------------------------- status
+async function status(){
+  try {
+    const s = await (await fetch('/api/status')).json();
+    const el = $('#status');
+    if (s.model === 'ready') {
+      el.className = 'pill ok';
+      el.textContent = 'encoder ready' + (s.load_s ? ' · '+s.load_s+'s' : '');
+    } else if (s.model === 'error') {
+      el.className = 'pill warn'; el.textContent = 'encoder failed';
+      el.title = s.error || '';
+    } else {
+      el.className = 'pill'; el.textContent = 'loading encoder…';
+      setTimeout(status, 1500);
+    }
+    $('#foot').innerHTML =
+      s.encoder.split('/').pop() + '<br>pool ' + s.pool +
+      ' · res ' + s.res.join('/') + '<br>channels ' + s.channels.join(',');
+    gate();
+  } catch(e){ setTimeout(status, 2000); }
+}
+
+// ------------------------------------------------------------- stores
+async function loadStores(){
+  S.stores = await (await fetch('/api/stores')).json();
+  $('#stores').innerHTML = S.stores.map(s => `
+    <div class="store-card" data-k="${s.key}">
+      <div class="n">${s.corpus}</div>
+      <div class="m tnum">${s.media} media · ${s.windows} windows<br>
+        ${s.minutes} min · ${fmtB(s.store_bytes)} index</div>
+    </div>`).join('');
+  document.querySelectorAll('.store-card').forEach(c =>
+    c.onclick = () => pickStore(c.dataset.k));
+  $('#storepick').innerHTML =
+    '<span class="lbl" style="margin-right:6px">search in</span>' +
+    '<select id="tgt">' + S.stores.map(s =>
+      `<option value="${s.key}">${s.corpus}</option>`).join('') + '</select>';
+  if (S.stores.length) pickStore(S.stores[0].key);
+}
+
+async function pickStore(k){
+  S.store = k;
+  document.querySelectorAll('.store-card').forEach(c =>
+    c.classList.toggle('on', c.dataset.k === k));
+  const t = $('#tgt'); if (t) t.value = k;
+  S.media = await (await fetch('/api/media?store='+encodeURIComponent(k))).json();
+  $('#medialist').innerHTML = S.media.map((m,i) => `
+    <div class="media-row" data-i="${i}">
+      <div class="id">${m.id}</div>
+      <svg class="spark" viewBox="0 0 110 16" preserveAspectRatio="none">
+        <polyline fill="none" stroke="var(--accent)" stroke-width="1"
+          points="${m.spark.map((v,j)=>
+            (j*110/Math.max(m.spark.length-1,1)).toFixed(1)+','+
+            (15-v*14).toFixed(1)).join(' ')}"/>
+      </svg>
+      <div class="d tnum">${m.dur}s${m.capped
+        ? `<span title="the store indexed ${m.dur}s of a ${m.file_dur}s file"
+             style="color:var(--signal)"> ◂</span>` : ''}</div>
+    </div>`).join('');
+  document.querySelectorAll('.media-row').forEach(r =>
+    r.onclick = () => pickMedia(+r.dataset.i));
+}
+
+// ------------------------------------------------------- span picking
+function pickMedia(i){
+  document.querySelectorAll('.media-row').forEach((r,j) =>
+    r.classList.toggle('on', j === i));
+  const m = S.media[i];
+  S.sel = m.id; S.upload = null; S.dur = m.dur; S.capped = m;
+  openPicker();
+}
+
+function openPicker(){
+  $('#picker').style.display = 'block';
+  const c = S.capped;
+  $('#tick1').innerHTML = S.dur.toFixed(1)+'s'
+    + (c && c.capped ? ` <span style="color:var(--signal)">indexed`
+        + ` (file is ${c.file_dur}s)</span>` : '');
+  const n = 10, strip = $('#strip');
+  const q = t => S.upload
+    ? `/api/frame?upload=${encodeURIComponent(S.upload)}&t=${t}&w=200`
+    : `/api/frame?store=${encodeURIComponent(S.store)}&media=${encodeURIComponent(S.sel)}&t=${t}&w=200`;
+  strip.innerHTML = Array.from({length:n}, (_,j) =>
+    `<img src="${q((S.dur*(j+0.5)/n).toFixed(2))}">`).join('');
+  const len = +$('#preset').value || 8;
+  setSpan(Math.max(0, Math.min(S.dur/2 - len/2, S.dur-len)), len);
+}
+
+function setSpan(t0, len){
+  len = Math.min(len, S.dur);
+  t0 = Math.max(0, Math.min(t0, S.dur - len));
+  S.t0 = t0; S.t1 = t0 + len;
+  const b = $('#band'), st = $('#strip');
+  b.style.display = 'block';
+  b.style.left  = (t0/S.dur*100) + '%';
+  b.style.width = (len/S.dur*100) + '%';
+  $('#spanlbl').textContent =
+    `${t0.toFixed(1)}s → ${(t0+len).toFixed(1)}s  (${len.toFixed(1)}s)`;
+  $('#preview').innerHTML = '';
+  gate();
+}
+
+(function dragSelect(){
+  const strip = $('#strip');
+  let a = null;
+  const at = e => {
+    const r = strip.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (e.clientX - r.left)/r.width)) * S.dur;
+  };
+  strip.addEventListener('mousedown', e => { a = at(e); e.preventDefault(); });
+  window.addEventListener('mousemove', e => {
+    if (a === null) return;
+    const b = at(e);
+    if (Math.abs(b-a) > 0.4) setSpan(Math.min(a,b), Math.abs(b-a));
+  });
+  window.addEventListener('mouseup', e => {
+    if (a === null) return;
+    const b = at(e);
+    // a click, not a drag: centre the preset length on the click
+    if (Math.abs(b-a) <= 0.4) {
+      const len = +$('#preset').value || 8;
+      setSpan(a - len/2, len);
+    }
+    a = null;
+  });
+})();
+
+$('#preset').onchange = () => {
+  const len = +$('#preset').value;
+  if (len) setSpan(S.t0 + (S.t1-S.t0)/2 - len/2, len);
+};
+
+// ------------------------------------------------------------- upload
+$('#drop').onclick = () => $('#file').click();
+$('#file').onchange = e => e.target.files[0] && upload(e.target.files[0]);
+['dragover','dragenter'].forEach(k => $('#drop').addEventListener(k, e => {
+  e.preventDefault(); $('#drop').classList.add('hot'); }));
+['dragleave','drop'].forEach(k => $('#drop').addEventListener(k, e => {
+  e.preventDefault(); $('#drop').classList.remove('hot'); }));
+$('#drop').addEventListener('drop', e => {
+  const f = e.dataTransfer.files[0]; if (f) upload(f); });
+
+async function upload(f){
+  $('#upinfo').textContent = 'uploading ' + f.name + ' …';
+  try {
+    const r = await fetch('/api/upload?name='+encodeURIComponent(f.name),
+                          {method:'POST', body:f});
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    S.upload = j.upload_id; S.sel = null; S.dur = j.dur;
+    $('#upinfo').innerHTML =
+      `<b>${j.name}</b> · ${j.dur}s · ${j.width}×${j.height} · ${fmtB(j.bytes)}
+       <br>held as a query only — not written to any store`;
+    openPicker();
+  } catch(e){ $('#upinfo').innerHTML =
+    '<span style="color:var(--signal)">'+e.message+'</span>'; }
+}
+
+// ------------------------------------------------------------- search
+function gate(){
+  const ok = (S.sel || S.upload) && $('#status').textContent.includes('ready');
+  $('#go').disabled = !ok;
+  const w = $('#excl-wrap');
+  if (w) {
+    const na = !!S.upload;
+    $('#excl').disabled = na;
+    w.style.opacity = na ? .35 : 1;
+    w.title = na ? 'an uploaded file has no row in the store to exclude' : '';
+  }
+}
+
+$('#go').onclick = async () => {
+  const tgt = $('#tgt') ? $('#tgt').value : S.store;
+  $('#go').disabled = true;
+  $('#hits').innerHTML = '<div class="empty">encoding the example and '
+    + 'searching…<br>the encoder runs three resolutions over every frame '
+    + 'of the span, so this is seconds, not milliseconds.</div>';
+  $('#statwrap').innerHTML = '';
+  try {
+    const body = {store: tgt, t0: S.t0, t1: S.t1,
+                  exclude_self: $('#excl').checked,
+                  abstain: $('#abst').checked};
+    if (S.upload) body.upload_id = S.upload; else body.media = S.sel;
+    const r = await fetch('/api/qbe',
+      {method:'POST', headers:{'Content-Type':'application/json'},
+       body: JSON.stringify(body)});
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    render(j, tgt);
+  } catch(e){
+    $('#hits').innerHTML = '<div class="err">'+e.message+'</div>';
+  }
+  gate();
+};
+
+function render(j, tgt){
+  const s = j.stats;
+  const elide = s.elided === null ? '—' : (s.elided*100).toFixed(4)+'%';
+  $('#statwrap').innerHTML = `
+    <div class="stats tnum">
+      <div class="stat"><div class="lbl">returned</div>
+        <div class="v">${s.returned}<small> spans</small></div></div>
+      <div class="stat"><div class="lbl">scanned</div>
+        <div class="v">${(s.store_scanned*100).toFixed(1)}%<small>
+          of ${s.store_rows}</small></div></div>
+      <div class="stat"><div class="lbl">bytes read</div>
+        <div class="v">${fmtB(s.bytes_read)}<small>
+          of ${fmtB(s.corpus_bytes)}</small></div></div>
+      <div class="stat"><div class="lbl">elided</div>
+        <div class="v">${elide}</div></div>
+      <div class="stat"><div class="lbl">encode</div>
+        <div class="v">${(s.encode_ms/1000).toFixed(1)}s</div></div>
+      <div class="stat"><div class="lbl">search</div>
+        <div class="v">${s.search_ms.toFixed(0)}<small>ms</small></div></div>
+    </div>
+    <div style="margin-top:8px;color:var(--faint);font-size:10.5px"
+         class="tnum">
+      cut ${s.threshold} · weights ${Object.entries(s.weights)
+        .map(([k,v])=>k+' '+v).join('  ')} ·
+      ${j.query.sub_windows} sub-windows from ${j.query.frames} frames
+      ${s.excluded_self ? ' · the example\'s own moment excluded' : ''}
+      <br>scores are CSLS (hubness subtracted from both sides) so they
+      have no fixed zero — the bar is the margin over the cut
+    </div>`;
+
+  if (!j.hits.length){
+    $('#hits').innerHTML = `<div class="empty">
+      <b>Nothing cleared the bar.</b><br><br>
+      That is an answer, not a failure. The cut is read off this query's
+      own score distribution, so when no window in the store resembles the
+      example more than the example resembles itself, the system returns
+      nothing rather than padding a list to k.<br><br>
+      Untick <i>abstain</i> to see the ranking underneath.</div>`;
+    return;
+  }
+  const frameURL = (media, t, w) =>
+    '/api/frame?store=' + encodeURIComponent(tgt) +
+    '&media=' + encodeURIComponent(media) +
+    '&t=' + t.toFixed(2) + '&w=' + w;
+
+  // The BENCHMARK caps results at k = ceil(1.5 x support). A product has
+  // no support to read, so the only thing bounding the list here is the
+  // abstention cut — and it can pass a lot. Truncating silently would
+  // hide that, so the full count stays on screen and this only limits
+  // how many rows are DRAWN.
+  const cap = +$('#show').value || j.hits.length;
+  const shown = j.hits.slice(0, cap);
+  const more = j.hits.length - shown.length;
+  // CSLS subtracts hubness from both sides, so the score has no fixed
+  // zero and is routinely negative. A bare "-0.067" reads as failure
+  // when it is in fact well clear of a cut at -0.258, so each row also
+  // shows its margin over that cut. The number itself is untouched -
+  // rescaling it to a comforting 0..1 would invent a confidence the
+  // system never computed.
+  const span = Math.max(j.hits[0].score - s.threshold, 1e-6);
+
+  $('#hits').innerHTML = (more > 0 ? `<div class="empty"
+      style="padding:9px 18px;border-bottom:1px solid var(--hairline)">
+      showing the top ${shown.length} of ${j.hits.length} spans that cleared
+      the cut &mdash; ranking is untouched, this only limits what is drawn
+    </div>` : '') + shown.map((h,i) => `
+    <div class="hit" data-i="${i}">
+      <!-- eager on purpose. loading="lazy" inside this scroll container
+           never fires for rows below the fold, so 33 of 50 thumbnails
+           stayed blank forever; a frame costs ~43 ms server-side, so
+           the whole page is cheaper than the bug. -->
+      <img src="${frameURL(h.media, (h.t0+h.t1)/2, 264)}">
+      <div class="meta">
+        <div class="m1">${h.media}</div>
+        <div class="m2 tnum">${h.t0.toFixed(1)}s &rarr; ${h.t1.toFixed(1)}s
+          &middot; ${(h.t1-h.t0).toFixed(1)}s</div>
+        <div class="exp"></div>
+      </div>
+      <div class="sc tnum">${h.score.toFixed(3)}
+        <div class="bar"><i style="width:${
+          (100*(h.score - s.threshold)/span).toFixed(1)}%"></i></div>
+        <div class="mg" title="margin over the abstention cut">+${
+          (h.score - s.threshold).toFixed(3)}</div>
+      </div>
+    </div>`).join('');
+  document.querySelectorAll('.hit').forEach(el => el.onclick = () => {
+    const h = shown[+el.dataset.i], box = el.querySelector('.exp');
+    if (box.innerHTML) { box.innerHTML=''; return; }
+    box.innerHTML = `<video controls autoplay muted loop
+      src="/api/clip?store=${encodeURIComponent(tgt)}&media=${
+        encodeURIComponent(h.media)}&t0=${h.t0}&t1=${h.t1}"></video>
+      <div style="color:var(--faint);font-size:10px;margin-top:3px">
+        sampled at the store's own rate — what the encoder saw</div>`;
+  });
+}
+
+// preview the chosen example on demand
+$('#picker').addEventListener('dblclick', () => {
+  const q = S.upload
+    ? `upload=${encodeURIComponent(S.upload)}`
+    : `store=${encodeURIComponent(S.store)}&media=${encodeURIComponent(S.sel)}`;
+  $('#preview').innerHTML =
+    `<video controls autoplay muted loop src="/api/clip?${q}&t0=${S.t0}&t1=${S.t1}"></video>`;
+});
+
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#tabs button').forEach(x =>
+    x.classList.toggle('on', x === b));
+  S.tab = b.dataset.tab;
+  $('#pane-store').style.display  = S.tab==='store'  ? 'flex' : 'none';
+  $('#pane-upload').style.display = S.tab==='upload' ? 'flex' : 'none';
+  $('#picker').style.display = 'none';
+  S.sel = null; S.upload = null; gate();
+});
+
+loadStores(); status();
+</script>
+</body>
+</html>
