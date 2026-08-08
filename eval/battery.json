@@ -1,0 +1,68 @@
+{
+  "version": 4,
+  "frozen": "2026-08-08",
+  "note": "v4: c-d removed from `match`. Two spans in which nothing comes to rest anywhere new share an ABSENCE, and absence has no positive signature - asking two near-null descriptors to correlate is a category error, not a retrieval requirement. They remain confusers (reject against a and b), which is the load-bearing role. DISCLOSURE: this error was noticed BECAUSE c-d failed while a-b worked, so any margin measured on this battery afterwards is suspect until it is re-earned on spans verified later. v3 note applies: every span checked at zoom; one ambiguous span dropped rather than guessed.",
+  "sim": {
+    "spans": {
+      "a": {
+        "media": "sim/ep0000",
+        "t0": 10.5,
+        "t1": 14.5
+      },
+      "b": {
+        "media": "sim/ep0005",
+        "t0": 15.5,
+        "t1": 20.0
+      },
+      "c": {
+        "media": "sim/ep0000",
+        "t0": 0.0,
+        "t1": 8.0
+      },
+      "d": {
+        "media": "sim/ep0002",
+        "t0": 2.0,
+        "t1": 9.0
+      }
+    },
+    "match": [
+      [
+        "a",
+        "b"
+      ]
+    ],
+    "reject": [
+      [
+        "a",
+        "c"
+      ],
+      [
+        "a",
+        "d"
+      ],
+      [
+        "b",
+        "c"
+      ],
+      [
+        "b",
+        "d"
+      ]
+    ]
+  },
+  "bridge": {
+    "spans": {},
+    "match": [],
+    "reject": []
+  },
+  "car": {
+    "spans": {},
+    "match": [],
+    "reject": []
+  },
+  "drone": {
+    "spans": {},
+    "match": [],
+    "reject": []
+  }
+}
