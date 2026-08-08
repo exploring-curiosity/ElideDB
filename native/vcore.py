@@ -77,6 +77,7 @@ import vsrc                                              # noqa: E402
 # text-aligned encoder stays disqualified however well it scores.
 _ENC = {"ct": "convnext-tiny", "cs": "convnext-small",
         "cb": "convnext-base", "cl": "convnext-large",
+        "vits": "vits16", "vitsp": "vits16plus",
         "vitb": "vitb16", "vitl": "vitl16", "vithp": "vith16plus"}
 # The DEFAULT must be the validated configuration. It was "ct" while
 # every measured run set SDX_ENC=vitl explicitly - so anyone running the

@@ -114,6 +114,56 @@ E4  vjudge.py: scores ANY system against the pool. Strict + per-axis
     unjudged never counted as wrong. Verdicts accumulate across builds.
 E5  Baseline row: the current system judged first — the honest zero.
 
+## 3b. W0 — experimentation config (speed before anything else)
+
+User directive 2026-08-08: fast iteration, no more multi-hour loops.
+Of the two options (distill the frozen teacher first, or use a smaller
+frozen model), the second is faster BY A TRAINING RUN: distilling ViT-L
+into an FDNN student is itself days of work, a small frozen sibling
+costs zero. So:
+
+    experimentation encoder   DINOv3 ViT-S/16 (frozen)   SDX_ENC=vits
+    resolution                single 320                 SDX_RES=320
+    measured                  vits 97.6 fps vs vitl 12.5 fps  (7.8x);
+                              8 s query encodes in ~0.4 s; write path
+                              becomes decode-bound
+
+FDNN distillation stays in Phase D (last) as COMPRESSION of whatever
+stack the eval validates. Headline numbers, when they exist, get
+re-measured on the final stack; experimentation numbers are labelled as
+such.
+
+## 3c. The psychological frame (how human retrieval says to build this)
+
+- GIST + VERBATIM in parallel (fuzzy-trace theory): people keep both,
+  retrieve gist-first. The old system stored ONLY verbatim - which is
+  exactly why the orange towel matched the orange towel. c2 is the
+  verbatim trace; the world-model state is the gist.
+- COMPLEMENTARY LEARNING SYSTEMS (hippocampus/neocortex): episodes
+  written once, pattern-separated (the store's rows); regularities
+  extracted slowly across episodes (the predictor). "Stacking" exists in
+  the slow system as a regularity with no name.
+- ENCODING SPECIFICITY (Tulving): a cue retrieves what was encoded by
+  the same process - one encoder for write and query, already honored,
+  now load-bearing. Retrieval is PATTERN COMPLETION: a fragment brings
+  back the whole episode span.
+- STRUCTURE-MAPPING (Gentner): surface similarity dominates retrieval
+  UNLESS encoding is relational. Cylinder-on-block and block-on-cylinder
+  share no surface, only the relation and the transition (two stable
+  things -> one stable composite). Hence: state keeps parts and
+  arrangement (spatial grid), and TRANSITIONS are the primary key for
+  action-like queries.
+- EVENT SEGMENTATION (Zacks): humans segment where their predictive
+  model errs, and remember event units, not fixed windows. That is the
+  surprise trace, with human evidence behind it.
+
+The pipeline this dictates: cue -> gist match (state bands) -> episode
+retrieval -> verbatim rerank. THE FIRST JUDGED TARGET is the user's own
+example: a stacking query must return the OTHER stacking episodes
+(different objects, colors, positions) and must NOT return unstacking
+(same surface, opposite goal) or same-scene hovering. Seeded in
+eval/battery.json (sim: q_stack_a/b, c_hover_a, c_unstack_a/b).
+
 ## 4. Phase W — the world-model memory layer (the core build)
 
 W1  MODEL. Perception stays frozen DINOv3 patch features. On top, a
