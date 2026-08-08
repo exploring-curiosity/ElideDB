@@ -70,9 +70,7 @@ ARM_NAME = _os.environ.get("SDX_ARM", "panda")
 if ARM_NAME != "panda":
     import sim_arms                                        # noqa: E402
     import sim_stack as _ss                                # noqa: E402
-    _inc = sim_arms.stripped_model(ARM_NAME)
-    _ss.SCENE = _ss.SCENE.replace('<include file="panda.xml"/>',
-                                  f'<include file="{_inc}"/>')
+    _ss.SCENE = sim_arms.scene_patch(ARM_NAME, _ss.SCENE)
     _ss.PANDA_DIR = sim_arms.MEN / sim_arms.ARMS[ARM_NAME]["dir"]
     build_scene = _ss.build_scene
     Arm = (lambda m, d: sim_arms.GenericArm(m, d, ARM_NAME))
@@ -165,6 +163,7 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
     # place/stack failed 'achieved a zone short' at 1.5x fixed budgets).
     cgain = getattr(arm, "carry_gain", None) or CARRY_GAIN
     tscale = CARRY_GAIN / cgain
+    ptol = getattr(arm, "place_tol", 1.0)
     mujoco.mj_forward(m, d)
     r = mujoco.Renderer(m, RES[0], RES[1])
     rec = sorted(int(c) for c in rng.choice(4, NCAMS, replace=False))
@@ -308,6 +307,13 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
             # the block on the base's edge and torque it over - the
             # measured topple mode of this pilot's failed stacks
             ox, oy = bp_[0] - hp[0], bp_[1] - hp[1]
+            # a LOST block (slipped out in transit) makes this offset
+            # compensation chase a block lying on the table - one
+            # vx300s run drove the hand to y=-0.44 and swept another
+            # block off the table. No grip has a 12cm offset: abort,
+            # let the event fail honestly.
+            if np.hypot(ox, oy) > 0.12:
+                break
             xy = float(np.hypot(bp_[0] - tx_, bp_[1] - ty_))
             # after contact, FREEZE the z command +1mm: descending
             # through the hold made the integrator wind up and press
@@ -319,7 +325,8 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
                 # fine phase for the last 15mm: a base kissed at 3mm/step
                 # while 8mm off-centre is how cylinder towers toppled
                 near = float(d.xpos[bid[i]][2]) - slot_z < 0.015
-                rate, lim = (0.0015, 0.005) if near else (0.003, 0.010)
+                rate, lim = ((0.0015, 0.005 * ptol) if near
+                             else (0.003, 0.010 * ptol))
                 z = hp[2] - rate if xy < lim else hp[2]
             arm.step_ik(np.array([tx_ - ox, ty_ - oy, z]), gain=cgain)
             mujoco.mj_step(m, d)
@@ -332,7 +339,8 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
             # the landed test only counts ABOVE the target: a held
             # block dangling at hover already sits below a 1-story
             # slot_z, and that false break released 5cm off-target
-            if (hit or d.xpos[bid[i]][2] <= slot_z + 0.003) and xy < 0.015:
+            if (hit or d.xpos[bid[i]][2] <= slot_z + 0.003) \
+                    and xy < 0.015 * ptol:
                 if contact_at is None:
                     contact_at = st
                     z_hold = float(d.xpos[arm.hand][2]) + 0.001

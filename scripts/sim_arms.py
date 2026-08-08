@@ -53,11 +53,19 @@ ARMS = {
         home={"joint1": 0, "joint2": -0.55, "joint3": 0, "joint4": 0.9,
               "joint5": 0, "joint6": 1.45, "joint7": 0}),
     "vx300s": dict(
-        straddle=0.8, dir="trossen_vx300s", xml="vx300s.xml", ee="gripper_link",
+        straddle=0.8, base_z=0.10, base_x=0.06, cmd_lead=0.15,
+        carry_gain=1.5, place_tol=1.6,
+        root_body="base_link",
+        base_bodies=("base_link", "shoulder_link"),
+        dir="trossen_vx300s", xml="vx300s.xml", ee="gripper_link",
         fingers=("left_finger_link", "right_finger_link"),
         grip_act="gripper",
-        home={"waist": 0, "shoulder": -0.5, "elbow": 0.6,
-              "forearm_roll": 0, "wrist_angle": 1.45, "wrist_rotate": 0}),
+        # home sits in the FAR-REACH posture basin (shoulder forward,
+        # elbow negative): kinematic IK reaches every zone exactly, but
+        # greedy DLS from the old elbow-positive home ran wrist_angle
+        # into its 2.23 limit and stalled 15cm short of the far zones.
+        home={"waist": 0, "shoulder": 0.13, "elbow": -0.31,
+              "forearm_roll": 0, "wrist_angle": 1.73, "wrist_rotate": 0}),
     "z1": dict(
         straddle=0.8, dir="unitree_z1", xml="z1_gripper.xml", ee="link06",
         fingers=("gripperMover", "link06"), grip_act="motorGripper",
@@ -68,14 +76,54 @@ ARMS = {
 
 def stripped_model(name):
     """Vendor XML minus <keyframe> blocks, written beside the original
-    so relative asset paths keep resolving."""
+    so relative asset paths keep resolving. Arms with base_z get their
+    root body raised: the scene's table top (z=0.2) was placed for the
+    Panda's tall base, and the vx300s home had its shoulder link
+    EMBEDDED 12mm in the tabletop - the waist servo commanded -0.53
+    moved 0.02 because the arm was physically wedged. Short arms are
+    mounted on a pedestal exactly like real bench setups."""
     a = ARMS[name]
     src = MEN / a["dir"] / a["xml"]
     dst = MEN / a["dir"] / f"_elide_{a['xml']}"
     txt = src.read_text()
     txt = re.sub(r"<keyframe>.*?</keyframe>", "", txt, flags=re.S)
+    bz = a.get("base_z", 0.0)
+    bx = a.get("base_x", 0.0)
+    if bz or bx:
+        root = a["root_body"]
+        pat = rf'(<body name="{root}")(?![^>]*\bpos=)'
+        txt2, n = re.subn(pat, rf'\1 pos="{bx} 0 {bz}"', txt, count=1)
+        assert n == 1, f"{name}: could not move root body {root}"
+        txt = txt2
     dst.write_text(txt)
     return dst.name
+
+
+def scene_patch(name, scene_txt):
+    """Swap the Panda include for this arm and, when the arm is mounted
+    on a pedestal (base_z), draw the pedestal so the film shows a
+    mounted arm rather than one floating above the floor."""
+    inc = stripped_model(name)
+    out = scene_txt.replace('<include file="panda.xml"/>',
+                            f'<include file="{inc}"/>')
+    bz = ARMS[name].get("base_z", 0.0)
+    if bz:
+        bx = ARMS[name].get("base_x", 0.0)
+        ped = (f'<geom name="pedestal" type="cylinder" '
+               f'size="0.07 {bz / 2:.3f}" pos="{bx} 0 {bz / 2:.3f}" '
+               f'rgba="0.30 0.30 0.33 1"/>\n    ')
+        out = out.replace('<geom name="floor"', ped + '<geom name="floor"', 1)
+    # the table's near edge (x=0.05) cuts 12mm into this arm's base
+    # column - a HORIZONTAL interpenetration no pedestal height fixes.
+    # qfrc_constraint exactly cancelled the waist servo and the arm
+    # could not rotate at all. A real bench cuts the table around the
+    # mount, so table x base-column collisions are excluded; every
+    # WORKING link keeps full collision.
+    bb = ARMS[name].get("base_bodies", ())
+    if bb:
+        exc = "".join(f'<exclude body1="table" body2="{b}"/>' for b in bb)
+        out = out.replace("</mujoco>", f"<contact>{exc}</contact>\n</mujoco>")
+    return out
 
 
 class GenericArm:
@@ -131,6 +179,19 @@ class GenericArm:
         # every far-zone place landed a zone short). 1.5 kills the
         # swing; smooth beats fast while holding, per embodiment.
         self.carry_gain = ARMS[name].get("carry_gain")
+        # how far the integrated command may LEAD the measured joints.
+        # 0.05 is the Panda's anti-windup clamp; the vx300s wrist_angle
+        # servo is kp=8 and 0.05 rad of lead is only 0.4Nm against
+        # ~0.7Nm of gravity on the gripper - the wrist drooped and
+        # every z=0.40 target settled 60mm low. Weak-servo arms get a
+        # wider lead so the integral action can actually cancel sag.
+        self.cmd_lead = ARMS[name].get("cmd_lead", 0.05)
+        # release-loop tolerance scale. The corpus gates (5/10/15mm)
+        # encode the Panda's 1-2mm tracking; the vx300s hobby servos
+        # track 10-20mm and the fine descent gate never opened - stacks
+        # timed out and dropped on the base's edge. Tolerances scale
+        # with the arm's measured tracking class, not per task.
+        self.place_tol = ARMS[name].get("place_tol", 1.0)
 
     def gripper(self, open_):
         self.d.ctrl[self.grip] = self.grip_open if open_ else self.grip_close
@@ -229,7 +290,7 @@ class GenericArm:
         if float(np.max(np.abs(d.qvel[self.dof]))) > 3.0:
             self.q_cmd = qm.copy()
         q = self.q_cmd + gain * dq * m.opt.timestep * 20
-        q = np.clip(q, qm - 0.05, qm + 0.05)
+        q = np.clip(q, qm - self.cmd_lead, qm + self.cmd_lead)
         lo = m.jnt_range[self.jnt, 0]
         hi = m.jnt_range[self.jnt, 1]
         limited = m.jnt_limited[self.jnt].astype(bool)
@@ -259,10 +320,8 @@ def smoke(name, record=True):
     import sim_stack
 
     rng = np.random.default_rng(0)
-    inc = stripped_model(name)
     old_scene, old_dir = sim_stack.SCENE, sim_stack.PANDA_DIR
-    sim_stack.SCENE = sim_stack.SCENE.replace(
-        '<include file="panda.xml"/>', f'<include file="{inc}"/>')
+    sim_stack.SCENE = scene_patch(name, sim_stack.SCENE)
     sim_stack.PANDA_DIR = MEN / ARMS[name]["dir"]
     try:
         path, meta, _ = sim_stack.build_scene(rng, 2)
