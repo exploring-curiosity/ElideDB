@@ -47,7 +47,8 @@ ARMS = {
         home={"joint1": 0, "joint2": -0.4, "joint3": 0, "joint4": -2.2,
               "joint5": 0, "joint6": 1.9, "joint7": 0.785}),
     "xarm7": dict(
-        straddle=1.0, dir="ufactory_xarm7", xml="xarm7.xml", ee="link7",
+        straddle=1.0, carry_gain=1.5, dir="ufactory_xarm7", xml="xarm7.xml",
+        ee="link7",
         fingers=("left_finger", "right_finger"), grip_act="gripper",
         home={"joint1": 0, "joint2": -0.55, "joint3": 0, "joint4": 0.9,
               "joint5": 0, "joint6": 1.45, "joint7": 0}),
@@ -123,6 +124,13 @@ class GenericArm:
         # closed to 0.056 on a 0.050 block ONLY at ~1.0) and foul the
         # table beyond ~1.2.
         self.straddle = ARMS[name].get("straddle", 0.4)
+        # loaded-transit gain. The xArm's pinch lets the block swing on
+        # the 164mm hand->tip lever when the wrist tilts under fast
+        # transit (measured +-50mm hand-to-block xy swing at gain 3.0;
+        # the release loop then chased the swing into the table and
+        # every far-zone place landed a zone short). 1.5 kills the
+        # swing; smooth beats fast while holding, per embodiment.
+        self.carry_gain = ARMS[name].get("carry_gain")
 
     def gripper(self, open_):
         self.d.ctrl[self.grip] = self.grip_open if open_ else self.grip_close
@@ -186,6 +194,14 @@ class GenericArm:
         self.d.ctrl[self.grip] = self.grip_close
 
     def step_ik(self, target, gain=4.0):
+        """Faithful port of sim_stack.Arm.step_ik - the first port
+        dropped the x20 command integration and stepped physics
+        internally, which made every arm move at 1/20 the Panda's task
+        speed. The corpus descent loop leads the hand by only 3.5mm per
+        step, so at 1/20 speed the 2.5s descent timed out 35mm above
+        the grasp depth and the close fired in FREE AIR - the measured
+        xarm7 0/6, misdiagnosed twice (grip direction, straddle depth)
+        before instrumentation showed no contact at all."""
         m, d = self.m, self.d
         err_p = target - d.xpos[self.ee]
         rq = np.zeros(3)
@@ -194,23 +210,34 @@ class GenericArm:
         rel = np.zeros(4)
         mujoco.mju_mulQuat(rel, self.down_quat, neg)
         mujoco.mju_quat2Vel(rq, rel, 1.0)
-        err = np.concatenate([err_p, 0.15 * rq])
+        # 0.30 vs the Panda's 0.15: the xArm's block hung 60-100mm
+        # behind the hand after far transits (wrist tilt x 164mm
+        # tip lever + grip pivot), and far-zone places timed out on an
+        # unreachable compensated target. Holding the wrist down twice
+        # as hard halves the tilt; position residual stays <5mm at all
+        # six zones (measured by the reach sweep).
+        err = np.concatenate([err_p, 0.30 * rq])
         jacp = np.zeros((3, m.nv))
         jacr = np.zeros((3, m.nv))
         mujoco.mj_jacBody(m, d, jacp, jacr, self.ee)
         J = np.vstack([jacp, jacr])[:, self.dof]
         JT = J.T
         dq = JT @ np.linalg.solve(J @ JT + 1e-4 * np.eye(6), err)
-        self.q_cmd = self.q_cmd + np.clip(gain * dq * m.opt.timestep,
-                                          -0.05, 0.05)
+        qm = np.array([d.qpos[a] for a in self.qadr])
+        # collision + windup clamp can lock into bang-bang thrash;
+        # re-baseline on measured state to break the limit cycle
+        if float(np.max(np.abs(d.qvel[self.dof]))) > 3.0:
+            self.q_cmd = qm.copy()
+        q = self.q_cmd + gain * dq * m.opt.timestep * 20
+        q = np.clip(q, qm - 0.05, qm + 0.05)
         lo = m.jnt_range[self.jnt, 0]
         hi = m.jnt_range[self.jnt, 1]
         limited = m.jnt_limited[self.jnt].astype(bool)
-        self.q_cmd[limited] = np.clip(self.q_cmd[limited],
-                                      lo[limited], hi[limited])
-        for a, v in zip(self.act, self.q_cmd):
+        q[limited] = np.clip(q[limited], lo[limited] + 0.02,
+                             hi[limited] - 0.02)
+        self.q_cmd = q
+        for a, v in zip(self.act, q):
             self.d.ctrl[a] = v
-        mujoco.mj_step(m, d)
         return float(np.linalg.norm(err_p))
 
     def touching(self, geom_id):
@@ -257,8 +284,7 @@ def smoke(name, record=True):
         for i in range(n):
             if target is not None:
                 r = arm.step_ik(np.asarray(target, float), gain)
-            else:
-                mujoco.mj_step(m, d)
+            mujoco.mj_step(m, d)
             if ren and i % int(1 / (10 * m.opt.timestep)) == 0:
                 ren.update_scene(d, camera="cam0")
                 frames.append(ren.render().copy())

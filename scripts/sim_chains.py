@@ -158,6 +158,13 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
     d = mujoco.MjData(m)
     arm = Arm(m, d)
     arm.to_home()
+    # per-embodiment loaded-transit gain (see GenericArm.carry_gain).
+    # Loaded move_to timeouts are budgeted for CARRY_GAIN; a gentler
+    # gain needs proportionally more time or the hand never ARRIVES and
+    # the release drops the block mid-transit (measured: every xarm7
+    # place/stack failed 'achieved a zone short' at 1.5x fixed budgets).
+    cgain = getattr(arm, "carry_gain", None) or CARRY_GAIN
+    tscale = CARRY_GAIN / cgain
     mujoco.mj_forward(m, d)
     r = mujoco.Renderer(m, RES[0], RES[1])
     rec = sorted(int(c) for c in rng.choice(4, NCAMS, replace=False))
@@ -237,8 +244,30 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
                     frames()
                 if hp[2] <= zt + 0.003 and xy < 0.005:
                     break
-            arm.gripper(False)
-            sim(0.3)
+            if hasattr(arm, "grip_ramp") and meta[i]["shape"] == "cylinder":
+                # RAMPED close for CYLINDERS only: small pads slamming shut EJECT a
+                # cylinder (measured on xarm7: spread shot past the
+                # diameter to near-closed, touch False, 0/3 attempts;
+                # closed over 0.35s the same cylinder grasps in 1-2).
+                # Boxes are the OPPOSITE: the slow close nudged them
+                # into corner grips ~60mm askew and the release loop
+                # never converged (6/6 -> 3/6 on the same seeds), so
+                # they keep the instant snap. The Panda's long
+                # parallel pads cage everything - instant always.
+                # arm ctrl stays FROZEN during the ramp (like the
+                # instant path's sim(0.3)): holding via step_ik let the
+                # arm sag onto the block while the pads closed and box
+                # grips came out 67mm askew.
+                nn = int(0.35 / dt)
+                for st2 in range(nn):
+                    arm.grip_ramp(1.0 - (st2 + 1) / nn)
+                    mujoco.mj_step(m, d)
+                    if st2 % spf == 0:
+                        frames()
+                sim(0.15)
+            else:
+                arm.gripper(False)
+                sim(0.3)
             # carried = the block GAINED height with the lift; the old
             # absolute-z check called a block still sitting on its
             # tower "carried". Threshold sits well under the lift
@@ -246,8 +275,8 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
             # 70mm bar failed the entire pilot.
             z0 = float(d.xpos[bid[i]][2])
             cur = d.xpos[arm.hand].copy()
-            move_to([cur[0], cur[1], cur[2] + 0.14], timeout=1.6,
-                    gain=CARRY_GAIN)
+            move_to([cur[0], cur[1], cur[2] + 0.14], timeout=1.6 * tscale,
+                    gain=cgain)
             if float(d.xpos[bid[i]][2]) > z0 + 0.05:
                 return True
         return False
@@ -258,8 +287,13 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
                            + 0.6 * meta[i]["half_h"] + 0.03))
         cur = d.xpos[arm.hand].copy()
         move_to([(cur[0] + tx_) / 2, (cur[1] + ty_) / 2, cz],
-                timeout=1.5, gain=CARRY_GAIN)
-        move_to([tx_, ty_, cz], tol=0.007, timeout=2.2, gain=CARRY_GAIN)
+                timeout=1.5 * tscale, gain=cgain)
+        move_to([tx_, ty_, cz], tol=0.007, timeout=2.2 * tscale, gain=cgain)
+        if _os.environ.get("SDX_DBGPLACE"):
+            _hp, _bp = d.xpos[arm.hand], d.xpos[bid[i]]
+            print(f"    [dbg] arrive hand=({_hp[0]:.3f},{_hp[1]:.3f},"
+                  f"{_hp[2]:.3f}) blk=({_bp[0]:.3f},{_bp[1]:.3f},"
+                  f"{_bp[2]:.3f}) tgt=({tx_:.2f},{ty_:.2f})")
         gid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, f"gblk{i}")
         n = int(3.0 / dt)
         contact_at = None
@@ -287,7 +321,7 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
                 near = float(d.xpos[bid[i]][2]) - slot_z < 0.015
                 rate, lim = (0.0015, 0.005) if near else (0.003, 0.010)
                 z = hp[2] - rate if xy < lim else hp[2]
-            arm.step_ik(np.array([tx_ - ox, ty_ - oy, z]), gain=CARRY_GAIN)
+            arm.step_ik(np.array([tx_ - ox, ty_ - oy, z]), gain=cgain)
             mujoco.mj_step(m, d)
             if st % spf == 0:
                 frames()
@@ -304,6 +338,11 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
                     z_hold = float(d.xpos[arm.hand][2]) + 0.001
                 if st - contact_at > int(0.2 / dt):
                     break
+        if _os.environ.get("SDX_DBGPLACE"):
+            _hp, _bp = d.xpos[arm.hand], d.xpos[bid[i]]
+            print(f"    [dbg] release contact_at={contact_at} "
+                  f"hand=({_hp[0]:.3f},{_hp[1]:.3f},{_hp[2]:.3f}) "
+                  f"blk=({_bp[0]:.3f},{_bp[1]:.3f},{_bp[2]:.3f})")
         # RAMP the fingers open while the arm holds still: snap-open at
         # 255 flicked top stories off (29% of v1 blocks placed then
         # toppled)
@@ -314,7 +353,7 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
                 arm.grip_ramp((st + 1) / n)
             else:
                 d.ctrl[arm.grip] = 255.0 * (st + 1) / n
-            arm.step_ik(hold, gain=CARRY_GAIN)
+            arm.step_ik(hold, gain=cgain)
             mujoco.mj_step(m, d)
             if st % spf == 0:
                 frames()
