@@ -67,9 +67,15 @@ ARMS = {
         home={"waist": 0, "shoulder": 0.13, "elbow": -0.31,
               "forearm_roll": 0, "wrist_angle": 1.73, "wrist_rotate": 0}),
     "z1": dict(
-        straddle=0.8, dir="unitree_z1", xml="z1_gripper.xml", ee="link06",
+        straddle=0.8, lock_joints=("joint6",), ori_axis_only=True,
+        joint_attrs={"jointGripper": 'damping="5" armature="0.05"'},
+        dir="unitree_z1", xml="z1_gripper.xml", ee="link06",
         fingers=("gripperMover", "link06"), grip_act="motorGripper",
-        home={"joint1": 0, "joint2": 1.1, "joint3": -0.9,
+        # home = the mid-zone IK solution posture: the old shallower
+        # home left greedy DLS in a local minimum 130-190mm short of
+        # the far zones (no joint at a limit; the exact solution sits
+        # one basin over at deeper joint2/joint3).
+        home={"joint1": 0, "joint2": 1.61, "joint3": -1.39,
               "joint4": 0.35, "joint5": 0, "joint6": 0}),
 }
 
@@ -87,6 +93,15 @@ def stripped_model(name):
     dst = MEN / a["dir"] / f"_elide_{a['xml']}"
     txt = src.read_text()
     txt = re.sub(r"<keyframe>.*?</keyframe>", "", txt, flags=re.S)
+    # numerical-stability attributes for vendor joints: the z1 jaw is
+    # a kp~1000 servo on 0.0003 kgm^2 - resonance faster than the 2ms
+    # timestep, measured 22 rad/s limit cycle that shook the wrist and
+    # tripped the thrash re-baseline 60% of steps. Armature is the
+    # standard cure for stiff-servo instability at coarse timesteps.
+    for jname, attrs in a.get("joint_attrs", {}).items():
+        pat = rf'(<joint name="{jname}" )'
+        txt, n = re.subn(pat, rf'\1{attrs} ', txt, count=1)
+        assert n == 1, f"{name}: joint {jname} not found for joint_attrs"
     bz = a.get("base_z", 0.0)
     bx = a.get("base_x", 0.0)
     if bz or bx:
@@ -142,10 +157,23 @@ class GenericArm:
         # arm actuators = every actuator except the gripper, via the
         # joint it drives; ordered by qpos address = kinematic order
         pairs = []
+        # lock_joints: held at home, excluded from IK. The z1's wrist
+        # roll (joint6) is REDUNDANT with the waist for a down-pointing
+        # claw; its orientation-error component flips sign near the
+        # wrap and the kp=1000 servo limit-cycled at 20 rad/s - which
+        # also tripped the qvel>3 thrash re-baseline EVERY step and
+        # killed the integral action for the whole arm.
+        locked = set(cfg.get("lock_joints", ()))
+        self.locked = []
         for a in range(m.nu):
             if a == self.grip:
                 continue
             j = m.actuator_trnid[a, 0]
+            jn_name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, j)
+            if jn_name in locked:
+                self.locked.append((a, m.jnt_qposadr[j],
+                                    float(cfg["home"].get(jn_name, 0.0))))
+                continue
             pairs.append((m.jnt_qposadr[j], a, j))
         pairs.sort()
         self.act = [a for _, a, _ in pairs]
@@ -156,6 +184,8 @@ class GenericArm:
               for i, j in enumerate(self.jnt)}
         self.home = np.zeros(len(self.jnt))
         for k, v in cfg["home"].items():
+            if k in locked:
+                continue
             assert k in jn, f"{name}: home names joint {k} not driven"
             self.home[jn[k]] = v
         fb = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, n)
@@ -192,6 +222,11 @@ class GenericArm:
         # timed out and dropped on the base's edge. Tolerances scale
         # with the arm's measured tracking class, not per task.
         self.place_tol = ARMS[name].get("place_tol", 1.0)
+        # with a locked roll the arm is 5-DoF; demanding full 3D
+        # orientation makes DLS trade position for a roll error the
+        # arm cannot produce (z1 stalled 130-190mm short, high). Axis-
+        # only holds the TOOL AXIS down and leaves roll free.
+        self.ori_axis_only = bool(ARMS[name].get("ori_axis_only"))
 
     def gripper(self, open_):
         self.d.ctrl[self.grip] = self.grip_open if open_ else self.grip_close
@@ -241,10 +276,17 @@ class GenericArm:
         for a, q, v in zip(self.act, self.qadr, self.home):
             self.d.qpos[q] = v
             self.d.ctrl[a] = v
+        for a, q, v in getattr(self, "locked", ()):
+            self.d.qpos[q] = v
+            self.d.ctrl[a] = v
         self.q_cmd = self.home.copy()
         self.d.ctrl[self.grip] = self.grip_open
         mujoco.mj_forward(self.m, self.d)
         self.down_quat = self.d.xquat[self.ee].copy()
+        # body-frame axis that points straight DOWN at home (for the
+        # axis-only orientation objective)
+        R0 = self.d.xmat[self.ee].reshape(3, 3)
+        self.tool_axis = R0.T @ np.array([0.0, 0.0, -1.0])
         tip_z = min(self.d.geom_xpos[g][2] for g in self.finger_geoms)
         self.tip_off = float(self.d.xpos[self.ee][2] - tip_z) + 0.010
 
@@ -265,12 +307,16 @@ class GenericArm:
         before instrumentation showed no contact at all."""
         m, d = self.m, self.d
         err_p = target - d.xpos[self.ee]
-        rq = np.zeros(3)
-        neg = np.zeros(4)
-        mujoco.mju_negQuat(neg, d.xquat[self.ee])
-        rel = np.zeros(4)
-        mujoco.mju_mulQuat(rel, self.down_quat, neg)
-        mujoco.mju_quat2Vel(rq, rel, 1.0)
+        if self.ori_axis_only:
+            w_cur = d.xmat[self.ee].reshape(3, 3) @ self.tool_axis
+            rq = np.cross(w_cur, np.array([0.0, 0.0, -1.0]))
+        else:
+            rq = np.zeros(3)
+            neg = np.zeros(4)
+            mujoco.mju_negQuat(neg, d.xquat[self.ee])
+            rel = np.zeros(4)
+            mujoco.mju_mulQuat(rel, self.down_quat, neg)
+            mujoco.mju_quat2Vel(rq, rel, 1.0)
         # 0.30 vs the Panda's 0.15: the xArm's block hung 60-100mm
         # behind the hand after far transits (wrist tilt x 164mm
         # tip lever + grip pivot), and far-zone places timed out on an
