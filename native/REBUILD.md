@@ -133,7 +133,20 @@ stack the eval validates. Headline numbers, when they exist, get
 re-measured on the final stack; experimentation numbers are labelled as
 such.
 
-## 3c. The psychological frame (how human retrieval says to build this)
+## 3c. The psychological frame — A GUIDING LIGHT, NOT AN ARCHITECTURE
+
+User correction 2026-08-08: psychology guides intuition and nothing
+else. No component exists because a brain region does. The architecture
+question is exactly two things: EXTRACT as much structured data from
+raw frames as possible, and COMPARE it with operators richer than one
+flat cosine. The notes below stay only as intuition for why those two
+things matter.
+
+FURTHER ENFORCEMENT, same day: the no-labels/no-verbs/no-domain-info
+rules apply to EVAL ARTIFACTS too. battery v1 carried intent sentences
+and kind tags - a breach. battery v2 is spans + structural relations
+only (match pairs / reject pairs, neutral ids, established by looking).
+Judging is BINARY (match / not); the three-axis verdict idea is dead.
 
 - GIST + VERBATIM in parallel (fuzzy-trace theory): people keep both,
   retrieve gist-first. The old system stored ONLY verbatim - which is
