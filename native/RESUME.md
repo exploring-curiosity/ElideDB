@@ -85,7 +85,44 @@ at a scratch root, and never against stores/vision.
     status:  /private/tmp/claude-501/status.sh
     tracker: /private/tmp/claude-501/STATUS.tsv   stage / status / eta / actual
 
-## Next question: crop
+## crop: ATTACKED AND FAILED — 2026-08-08, and the reason matters
+
+R-MAC was the standard answer and it is now measured dead.
+
+    probe, held-out clips, margin = self - mean_cross
+      gem 0.494   rmac2 0.477   rmac3 0.478   <- uniform grid, WORSE
+      true R-MAC (overlapping, L=1..3)  0.532  <- +0.038, 6/6 transforms
+      (crop +0.043, warp +0.028, photo/codec < 0.007 - the signature of
+       a genuinely SPATIAL fix, which is what made it convincing)
+
+    store A/B, 16 q, identical media, gem -> rmac3
+      yield  0.803 -> 0.764  -0.039     crop  0.734 -> 0.674  -0.060
+      prec   0.846 -> 0.819  -0.027     warp  0.854 -> 0.818  -0.036
+
+The proxy predicted +0.043 on crop and delivered -0.060. THE PROXY WAS
+MEASURING THE WRONG COMPETITION, and this is the transferable part:
+
+    pool    HARD neg   EASY neg
+    gem     0.620      0.001
+    rmac3   0.627      0.001
+
+HARD = the best-matching other window in the SAME media, which is what
+the ranker must actually beat. EASY = windows of other media, which is
+what the probe's cross term sampled. Easy negatives sit at ~0.001 for
+both poolings, so that term cannot separate two descriptors that both
+separate media perfectly - the probe's margin was almost entirely its
+self term, which R-MAC really does improve. Ranking is decided at ~0.62
+among same-media windows, and the probe never sampled that regime.
+
+RULE: a cheap screen must sample negatives at the operating point where
+ranking is decided. A screen whose negatives sit near zero similarity
+will rank descriptors by self-consistency, and self-consistency is not
+retrieval. (Same shape as the 80-episode pool that lied by 10x.)
+
+Not claimed: that a corrected screen would have caught this. That is one
+data point, and one data point does not validate a screen.
+
+## Original reasoning, kept for the record
 
 `crop` is the weakest transform left (0.693-0.807). The descriptor
 GeM-pools the WHOLE frame into one vector, so removing a third of the

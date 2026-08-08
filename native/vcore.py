@@ -256,24 +256,53 @@ def _patches(r, torch):
     return h[:, 1 + nreg:]
 
 
-def _rmac(P, torch, grid):
-    """R-MAC: pool each region, L2-norm it, SUM the regions.
+def _rmac(P, torch, L):
+    """R-MAC as published (Tolias, Sicre & Jegou, ICLR 2016): square
+    regions at L scales with ~40% overlap, each pooled, L2-normed, and
+    SUMMED.
 
-    Aimed at `crop`, now the weakest transform (0.693-0.807). The current
-    descriptor GeM-pools the whole frame into one vector, so removing a
-    third of the field of view shifts every frame vector and rank pooling
-    faithfully preserves that shift - nothing in the descriptor is
-    spatially local.
-    
-    Regions are summed AFTER individual normalisation, not concatenated.
-    Concatenation would be worse than the status quo under a crop, since
-    content slides between cells and every component changes. Summing
-    normalised region descriptors means the regions that survive a crop
-    still contribute the same vectors they did before it - which is the
-    property Tolias et al. built R-MAC on.
-    
-    The grid is fixed in advance, so there is no parameter fitted on any
-    corpus.
+    Aimed at `crop` and `warp`, the two weakest transforms. The GeM
+    descriptor pools the WHOLE frame into one vector, so removing a
+    third of the field of view shifts every frame vector, and rank
+    pooling faithfully preserves that shift. Nothing in it is spatially
+    local, so nothing in it can survive a recomposition.
+
+    Two details are load-bearing, and the first version of this function
+    got the second one wrong.
+
+    SUMMED, not concatenated. Under a crop, content slides between
+    cells; with concatenation every component then changes, which is
+    worse than the status quo. Summing individually-normalised region
+    descriptors means the regions that DO survive a crop keep
+    contributing the vectors they contributed before it. That is the
+    property R-MAC is built on.
+
+    OVERLAPPING, at several scales. The first version pooled a uniform
+    non-overlapping grid, and it was measured WORSE than plain GeM -
+    margin 0.477 (2x2) and 0.478 (3x3) against GeM's 0.494 - because a
+    non-overlapping grid has hard seams, and a crop slides content
+    straight across them. Restoring the published construction (region
+    side 2/(l+1) of the frame, strided to ~40% overlap) reversed the
+    sign: 0.532. On held-out clips over the whole battery it then won
+    6/6 transforms, crop +0.043 and warp +0.028 - the two spatially
+    local transforms - and moved photo/codec by less than 0.007, which
+    is the signature a spatial fix should have.
+
+    No constant here is fitted on any corpus: the region size, the
+    number of regions per scale and the overlap are the paper's, and L
+    is the digit in the pool name.
+
+    REJECTED ANYWAY. Correct implementation, real held-out gain on the
+    proxy, and it still LOST the store A/B - on every metric, including
+    the transform it exists to fix:
+
+        16 q, identical media, A/B scale   gem -> rmac3
+        yield  0.803 -> 0.764  -0.039      crop  0.734 -> 0.674  -0.060
+        prec   0.846 -> 0.819  -0.027      warp  0.854 -> 0.818  -0.036
+
+    So POOL stays `gem` and this function is kept only as the corrected
+    implementation of a measured dead end. Do not re-run it on the
+    strength of the proxy number; the proxy is the thing that was wrong.
     """
     B, N, D = P.shape
     side = int(round(float(N) ** 0.5))
@@ -281,14 +310,21 @@ def _rmac(P, torch, grid):
         return None
     G = P.reshape(B, side, side, D)
     out = None
-    for gy in range(grid):
-        for gx in range(grid):
-            y0, y1 = gy * side // grid, max((gy + 1) * side // grid, gy * side // grid + 1)
-            x0, x1 = gx * side // grid, max((gx + 1) * side // grid, gx * side // grid + 1)
-            R = G[:, y0:y1, x0:x1, :].reshape(B, -1, D)
-            g = R.float().clamp(min=1e-6).pow(GEM_P).mean(1).pow(1.0 / GEM_P)
-            g = g / g.norm(dim=-1, keepdim=True).clamp(min=1e-8)
-            out = g if out is None else out + g
+    for l in range(1, L + 1):
+        rs = int(round(2.0 * side / (l + 1)))        # region side
+        if rs < 1:
+            continue
+        n = l + 1                                    # regions per axis
+        step = max((side - rs) / (n - 1), 0.0) if n > 1 else 0.0
+        starts = sorted({min(int(round(i * step)), side - rs)
+                         for i in range(n)})
+        for y0 in starts:
+            for x0 in starts:
+                R = G[:, y0:y0 + rs, x0:x0 + rs, :].reshape(B, -1, D)
+                g = (R.float().clamp(min=1e-6).pow(GEM_P)
+                     .mean(1).pow(1.0 / GEM_P))
+                g = g / g.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+                out = g if out is None else out + g
     return out
 
 
