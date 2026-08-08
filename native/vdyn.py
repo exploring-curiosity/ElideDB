@@ -134,11 +134,26 @@ def project(x, basis):
     return (np.asarray(x, np.float64) - mu) @ V.T
 
 
-def dyn_sim(Pq, Pc, cvar, topk=48, eps=1e-6):
-    """Compare a query SET against a candidate SET in the subspace the
-    query itself selects. No fixed axes: `keep` is recomputed per query.
+def dyn_sim(Pq, Pc, cvar, topk=48, eps=1e-6, Aq=None):
+    """Compare in the subspace the query itself selects.
+
+    MEASURED NULL, and why: using the clip's own FRAMES as the query set
+    made var_query a temporal variance, so the ratio selected directions
+    that are constant through the clip and vary across the corpus -
+    which is 'which scene is this', exactly what the plain mean already
+    encodes. Every k scored within 0.01 of fixed-mean. It is also
+    structurally unable to find an action direction, because a direction
+    encoding an action varies WITHIN the clip by definition and the
+    criterion suppresses it.
+
+    The invariance that matters is not time, it is NUISANCE. When `Aq`
+    is given - the query re-encoded under a few self-generated disguises
+    - the denominator becomes variance under disguise, and the surviving
+    directions are the ones that identify this clip while ignoring how
+    it was filmed. Those disguises come from PROBE primitives, disjoint
+    from the ones the battery scores with, so this cannot fit its test.
     """
-    qv = Pq.var(0) + eps
+    qv = (Aq.var(0) if Aq is not None else Pq.var(0)) + eps
     info = cvar / qv                       # corpus spread / query tightness
     keep = np.argsort(-info)[:topk]
     w = np.sqrt(info[keep])

@@ -253,7 +253,30 @@ def _hue(a, shift):
 
 # ------------------------------------------------------------- sampling
 
-def battery(n_combo=44, seed=0):
+# DISJOINT HALVES. The system may disguise a query itself to discover
+# which directions survive a disguise - but if it used the same
+# primitives the battery scores with, the measurement would be fitting
+# to its own test. PROBE is what the system may use at query time; EVAL
+# is what it is scored on, and the two share no primitive.
+PROBE_PRIMS = ("rot", "zoom", "tx", "ty", "shear", "bright", "gamma",
+               "hue", "blur", "downup", "vignette", "tphase")
+EVAL_PRIMS = tuple(k for k in PRIMS if k not in PROBE_PRIMS)
+
+
+def probe_set(n=6, seed=1):
+    """A few self-disguises for query-time use. PROBE primitives only."""
+    rs = np.random.RandomState(seed)
+    out = []
+    for _ in range(n):
+        p = identity_params()
+        for k in rs.choice(PROBE_PRIMS, 2, replace=False):
+            sp = PRIMS[k]
+            p[k] = float(rs.uniform(sp["lo"], sp["hi"]))
+        out.append(p)
+    return out
+
+
+def battery(n_combo=44, seed=0, prims=None):
     """A named set of parameter dicts. Graded singles + compositions.
 
     Singles at three strengths give the severity axis a clean read; the
@@ -261,9 +284,10 @@ def battery(n_combo=44, seed=0):
     actually happens to footage rather than one textbook axis at a time.
     """
     rs = np.random.RandomState(seed)
+    use = prims or tuple(PRIMS)
     out = [("identity", identity_params())]
     # graded singles - every primitive, three strengths
-    for k, s in PRIMS.items():
+    for k, s in ((k, PRIMS[k]) for k in use):
         base = s.get("mid", 0.0 if s["lo"] < 0 else s["lo"])
         for lvl, frac in (("lo", 0.34), ("md", 0.67), ("hi", 1.0)):
             p = identity_params()
@@ -279,7 +303,7 @@ def battery(n_combo=44, seed=0):
                 p[k] = base + (far - base) * frac
             out.append((f"{k}.{lvl}", p))
     # compositions
-    keys = list(PRIMS)
+    keys = list(use)
     for i in range(n_combo):
         p = identity_params()
         m = rs.randint(2, 5)
