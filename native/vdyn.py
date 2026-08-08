@@ -57,7 +57,7 @@ sys.path.insert(0, str(ROOT / "native"))
 import vaug                                               # noqa: E402
 import vcore                                              # noqa: E402
 import vsrc                                               # noqa: E402
-from vtrans import CLIPS, GRID, encode, spearman          # noqa: E402
+from vtrans import CLIPS, GRID, encode, spearman, distractors  # noqa: E402
 
 CACHE = Path("/private/tmp/claude-501/vdyn")
 PCA_DIM = 192      # corpus basis width; a capacity choice, not an axis
@@ -166,77 +166,115 @@ def fixed_sim(Pq, Pc):
     return float(_l2(Pq.mean(0)) @ _l2(Pc.mean(0)))
 
 
+def sym_dyn(a, b, P, A, cvar, topk):
+    """Symmetric: each side proposes its own subspace, scores agree."""
+    return 0.5 * (dyn_sim(P[a], P[b], cvar, topk, Aq=A[a])
+                  + dyn_sim(P[b], P[a], cvar, topk, Aq=A[b]))
+
+
 def main():
-    B = vaug.battery()
+    B = vaug.battery(prims=vaug.EVAL_PRIMS)      # scored with EVAL only
+    probes = vaug.probe_set(3)                   # system disguises: PROBE only
     names = [n for n, _ in B]
     pmap = dict(B)
     sev = {n: vaug.severity(p) for n, p in B}
     from tqdm import tqdm
     vcore.feature_dim()
-    print(f"{len(CLIPS)} clips x {len(B)} transforms; latent only, "
-          f"no descriptors\n")
+    D = distractors()
+    print(f"{len(CLIPS)} clips x {len(B)} EVAL disguises "
+          f"+ {len(D)} undisguised distractors")
+    print(f"query-time self-disguises: {len(probes)} (PROBE primitives, "
+          f"disjoint from EVAL)\n")
 
-    L = {}
-    bar = tqdm(total=len(CLIPS) * len(B), unit="clip", desc="latent")
+    items, L, A = [], {}, {}
+    tot = len(CLIPS) * len(B) * (1 + len(probes)) + len(D)
+    bar = tqdm(total=tot, unit="enc", desc="encode")
     for corpus, mid, t0, t1 in CLIPS:
         for n, p in B:
-            L[(corpus, n)] = latent(corpus, mid, t0, t1, n, p)
-            bar.update(1)
+            k = (corpus, n)
+            items.append(k)
+            L[k] = latent(corpus, mid, t0, t1, n, p); bar.update(1)
+            av = []
+            for qi, q in enumerate(probes):
+                comp = dict(p)
+                for pk, pv in q.items():
+                    base = vaug.identity_params()[pk]
+                    if pv != base:
+                        comp[pk] = pv
+                av.append(latent(corpus, mid, t0, t1, f"{n}~p{qi}", comp))
+                bar.update(1)
+            A[k] = av
+    for j, (corpus, mid, a, b) in enumerate(D):
+        k = (f"dist{j}", "identity")
+        items.append(k)
+        L[k] = latent(corpus, mid, a, b, "identity",
+                      vaug.identity_params()); bar.update(1)
+        A[k] = [L[k]]
     bar.close()
 
-    keys = [(c, n) for c, _, _, _ in CLIPS for n in names]
     for wi, which in enumerate(("g", "c")):
-        t = time.time()
         basis = corpus_basis(which)
         cvar = basis[2]
-        P = {k: project(L[k][wi], basis) for k in keys}
+        P = {k: project(L[k][wi], basis) for k in items}
+        AP = {k: np.concatenate([project(x[wi], basis) for x in A[k]])
+              for k in items}
         label = "global latent" if which == "g" else "5x5 grid latent"
-        print(f"\n=== {label}  (basis {PCA_DIM}d fitted on the recording, "
-              f"{time.time()-t:.0f}s) ===")
-        print(f"  {'method':<14}{'AUC':>7}{'P@1':>7}{'sev-rho':>9}"
+        print(f"\n=== {label} ===")
+        print(f"  {'method':<20}{'AUC':>7}{'P@1':>7}{'sev-rho':>9}"
               f"{'struct-rho':>12}")
-        methods = {"fixed (mean)": None}
-        for tk in (24, 48, 96, 192):
-            methods[f"dynamic k={tk}"] = tk
-        for mname, tk in methods.items():
-            S = np.zeros((len(keys), len(keys)))
-            for i, ka in enumerate(keys):
-                for j, kb in enumerate(keys):
-                    if j < i:
-                        continue
-                    v = (fixed_sim(P[ka], P[kb]) if tk is None
-                         else dyn_sim(P[ka], P[kb], cvar, tk))
-                    S[i, j] = S[j, i] = v
-            same = np.array([[a[0] == b[0] for b in keys] for a in keys])
-            off = ~np.eye(len(keys), dtype=bool)
-            pos, neg = S[same & off], S[(~same) & off]
+        methods = [("fixed (mean)", None, False)]
+        for tk in (24, 48, 96):
+            methods.append((f"temporal-var k={tk}", tk, False))
+            methods.append((f"nuisance-var k={tk}", tk, True))
+        for mname, tk, use_a in methods:
+            S = np.zeros((len(items), len(items)))
+            for i2, ka in enumerate(items):
+                for j2 in range(i2, len(items)):
+                    kb = items[j2]
+                    if tk is None:
+                        v = fixed_sim(P[ka], P[kb])
+                    elif use_a:
+                        v = sym_dyn(ka, kb, P, AP, cvar, tk)
+                    else:
+                        v = 0.5 * (dyn_sim(P[ka], P[kb], cvar, tk)
+                                   + dyn_sim(P[kb], P[ka], cvar, tk))
+                    S[i2, j2] = S[j2, i2] = v
+            same = np.array([[a[0] == b[0] for b in items] for a in items])
+            off = ~np.eye(len(items), dtype=bool)
+            qi = [i2 for i2, k in enumerate(items)
+                  if not k[0].startswith("dist")]
+            pos = S[np.ix_(qi, range(len(items)))][
+                same[np.ix_(qi, range(len(items)))]
+                & off[np.ix_(qi, range(len(items)))]]
+            neg = S[np.ix_(qi, range(len(items)))][
+                (~same[np.ix_(qi, range(len(items)))])
+                & off[np.ix_(qi, range(len(items)))]]
             auc = float((pos[:, None] > neg[None, :]).mean()
                         + 0.5 * (pos[:, None] == neg[None, :]).mean())
             p1 = float(np.mean([
-                keys[int(np.argmax(np.where(off[i], S[i], -np.inf)))][0]
-                == keys[i][0] for i in range(len(keys))]))
+                items[int(np.argmax(np.where(off[i2], S[i2], -np.inf)))][0]
+                == items[i2][0] for i2 in qi]))
             sr, st = [], []
-            for c, _, _, _ in CLIPS:
-                ii = [i for i, k in enumerate(keys) if k[0] == c]
-                i0 = [i for i in ii if keys[i][1] == "identity"][0]
-                sr.append(spearman([S[i0, i] for i in ii if i != i0],
-                                   [-sev[keys[i][1]] for i in ii if i != i0]))
+            for corpus, _, _, _ in CLIPS:
+                ii = [i2 for i2, k in enumerate(items) if k[0] == corpus]
+                i0 = [i2 for i2 in ii if items[i2][1] == "identity"][0]
+                sr.append(spearman([S[i0, i2] for i2 in ii if i2 != i0],
+                                   [-sev[items[i2][1]] for i2 in ii
+                                    if i2 != i0]))
                 fs, td = [], []
-                for a in ii:
-                    for b in ii:
-                        if a < b:
-                            fs.append(S[a, b])
-                            td.append(-vaug.tdist(pmap[keys[a][1]],
-                                                  pmap[keys[b][1]]))
+                for a2 in ii:
+                    for b2 in ii:
+                        if a2 < b2:
+                            fs.append(S[a2, b2])
+                            td.append(-vaug.tdist(pmap[items[a2][1]],
+                                                  pmap[items[b2][1]]))
                 st.append(spearman(fs, td))
-            print(f"  {mname:<14}{auc:7.3f}{p1:7.3f}{np.mean(sr):9.3f}"
+            print(f"  {mname:<20}{auc:7.3f}{p1:7.3f}{np.mean(sr):9.3f}"
                   f"{np.mean(st):12.3f}")
 
-    print("\nAUC/P@1 = a disguised clip finds its own siblings first")
-    print("sev-rho = similarity falls as the disguise gets heavier")
-    print("str-rho = similarity mirrors transform-space distance")
-    print("\nthe subspace is recomputed for every query; no axis is named "
-          "anywhere in this file")
+    print("\nAUC/P@1 vs a pool that now includes 60 undisguised real clips")
+    print("nuisance-var = subspace from the query's OWN disguises (PROBE),")
+    print("scored on disguises it has never seen (EVAL). No axis is named.")
 
 
 if __name__ == "__main__":
