@@ -222,7 +222,7 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
             n = int(2.5 / dt)
             for st in range(n):
                 bp = d.xpos[bid[i]]
-                zt = bp[2] + arm.tip_off - meta[i]["half_h"] * 0.4
+                zt = bp[2] + arm.tip_off - meta[i]["half_h"] * getattr(arm, "straddle", 0.4)
                 hp = d.xpos[arm.hand]
                 xy = float(np.hypot(hp[0] - bp[0], hp[1] - bp[1]))
                 # capture offset becomes GRIP offset: whatever xy error

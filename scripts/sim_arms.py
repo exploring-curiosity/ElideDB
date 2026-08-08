@@ -42,23 +42,23 @@ MEN = ROOT / "mujoco_menagerie"
 
 ARMS = {
     "panda": dict(
-        dir="franka_emika_panda", xml="panda.xml", ee="hand",
+        straddle=0.4, dir="franka_emika_panda", xml="panda.xml", ee="hand",
         fingers=("left_finger", "right_finger"), grip_act="actuator8",
         home={"joint1": 0, "joint2": -0.4, "joint3": 0, "joint4": -2.2,
               "joint5": 0, "joint6": 1.9, "joint7": 0.785}),
     "xarm7": dict(
-        dir="ufactory_xarm7", xml="xarm7.xml", ee="link7",
+        straddle=1.0, dir="ufactory_xarm7", xml="xarm7.xml", ee="link7",
         fingers=("left_finger", "right_finger"), grip_act="gripper",
         home={"joint1": 0, "joint2": -0.55, "joint3": 0, "joint4": 0.9,
               "joint5": 0, "joint6": 1.45, "joint7": 0}),
     "vx300s": dict(
-        dir="trossen_vx300s", xml="vx300s.xml", ee="gripper_link",
+        straddle=0.8, dir="trossen_vx300s", xml="vx300s.xml", ee="gripper_link",
         fingers=("left_finger_link", "right_finger_link"),
         grip_act="gripper",
         home={"waist": 0, "shoulder": -0.5, "elbow": 0.6,
               "forearm_roll": 0, "wrist_angle": 1.45, "wrist_rotate": 0}),
     "z1": dict(
-        dir="unitree_z1", xml="z1_gripper.xml", ee="link06",
+        straddle=0.8, dir="unitree_z1", xml="z1_gripper.xml", ee="link06",
         fingers=("gripperMover", "link06"), grip_act="motorGripper",
         home={"joint1": 0, "joint2": 1.1, "joint3": -0.9,
               "joint4": 0.35, "joint5": 0, "joint6": 0}),
@@ -117,6 +117,12 @@ class GenericArm:
         self.grip_open, self.grip_close = self._measure_grip()
         self.to_home()
         self.hand = self.ee                   # sim_chains compatibility
+        # how deep the tips straddle a block, in units of its half
+        # height. 0.4 suits the Panda's long pads; the xArm's shorter
+        # linkage fingers grip the top edge at 0.4 (measured: spread
+        # closed to 0.056 on a 0.050 block ONLY at ~1.0) and foul the
+        # table beyond ~1.2.
+        self.straddle = ARMS[name].get("straddle", 0.4)
 
     def gripper(self, open_):
         self.d.ctrl[self.grip] = self.grip_open if open_ else self.grip_close
