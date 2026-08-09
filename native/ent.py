@@ -148,14 +148,48 @@ def _vel(tr):
 
 
 def settled_scenes(F, cadence=10, halfwin=15):
-    """The scene as a PIECEWISE-CONSTANT series: a settled snapshot
-    every `cadence` frames, each the pixel median of its neighbourhood.
-    A resting entity IS scene (persistence without co-variation - the
-    atomic definition); it enters the story via scene CHANGES."""
+    """The scene as a PIECEWISE-CONSTANT series. A resting entity IS
+    scene (persistence without co-variation); it enters the story via
+    scene CHANGES. v2: the pieces of a piecewise-constant scene are
+    the QUIET spans between motion, so snapshots anchor to local
+    minima of global change energy - a fixed cadence straddles events
+    and smears one physical change across several diffs (measured:
+    every window saturated at 4+ sites and every fact flattened)."""
     T = len(F)
-    ts = list(range(0, T, cadence))
-    snaps = [np.median(F[max(0, t - halfwin):min(T, t + halfwin):3]
-                       .astype(np.float32), 0) for t in ts]
+    Ff = F[::2].astype(np.float32)
+    energy = np.abs(np.diff(Ff, axis=0)).sum((1, 2, 3))
+    energy = np.interp(np.arange(T), np.arange(len(energy)) * 2, energy)
+    k = np.ones(7) / 7
+    e = np.convolve(energy, k, mode="same")
+    thr = np.percentile(e, 40)
+    quiet = e <= thr
+    # quiet runs -> one snapshot at each run's midpoint, median taken
+    # INSIDE the run so it never straddles adjacent motion
+    runs, s = [], None
+    for t in range(T):
+        if quiet[t] and s is None:
+            s = t
+        elif not quiet[t] and s is not None:
+            if t - s >= 5:
+                runs.append((s, t))
+            s = None
+    if s is not None and T - s >= 5:
+        runs.append((s, T))
+    if not runs:
+        runs = [(t, min(t + cadence, T))
+                for t in range(0, T, cadence)]
+    if runs[0][0] > 8:
+        runs.insert(0, (0, min(8, T)))
+    if T - runs[-1][1] > 8:
+        runs.append((T - 8, T))
+    ts, snaps = [], []
+    for s0, s1 in runs:
+        mid = (s0 + s1) // 2
+        hw = min(halfwin, max((s1 - s0) // 2, 2))
+        ts.append(mid)
+        snaps.append(np.median(
+            F[max(s0, mid - hw):min(s1, mid + hw + 1):2]
+            .astype(np.float32), 0))
     return np.array(ts), snaps
 
 
@@ -182,14 +216,23 @@ def scene_changes(ts, snaps):
             if area < MIN_AREA_FRAC * W * H:
                 continue
             mm = lab[sl] == j + 1
+            # CORE colour, not region mean: the fringe of a change
+            # region is shadow/blend and washes the colour until
+            # everything matches everything (measured: colour
+            # anchoring selected at chance). Median over the
+            # top-quartile-changed pixels is the thing itself.
+            mag = np.abs(a[sl] - b[sl]).sum(-1)
+            core = mm & (mag >= np.percentile(mag[mm], 75))
+            if core.sum() < 3:
+                core = mm
             sites.append(dict(
                 t0=int(ts[i - 1]), t1=int(ts[i]),
                 cx=0.5 * (xs.start + xs.stop),
                 cy=0.5 * (ys.start + ys.stop),
                 w=float(xs.stop - xs.start),
                 h=float(ys.stop - ys.start),
-                pre_rgb=a[sl][mm].mean(0).astype(np.float32),
-                post_rgb=b[sl][mm].mean(0).astype(np.float32)))
+                pre_rgb=np.median(a[sl][core], 0).astype(np.float32),
+                post_rgb=np.median(b[sl][core], 0).astype(np.float32)))
     return sites
 
 
@@ -345,19 +388,30 @@ def roles(tracks, T, n_change_windows=40):
                             max(tr.cy) - min(tr.cy))
             if span < 1.2 * ext:
                 residue_ids.add(tr.tid)
-    return agent_ids, residue_ids, stats
+    # INDEPENDENT (self-moving) entities: displaced substantially with
+    # almost no contact coupling - people in car footage, other
+    # vehicles, animals. Nothing requires an agent to act on them
+    # (PROBLEM.md L2); the empty coupling profile is itself structure.
+    self_ids = set()
+    for i, tr in enumerate(tracks):
+        if tr.tid in agent_ids or tr.tid in residue_ids:
+            continue
+        if len(tr.contact) and float(np.mean(tr.contact)) < 0.15:
+            self_ids.add(tr.tid)
+    return agent_ids, residue_ids, self_ids, stats
 
 
 def build_one(ep, out):
     rows = []
     for cam in sorted(ep.glob("cam*.mp4")):
         tracks, sites, T = link(cam)
-        agent_ids, residue_ids, stats = roles(tracks, T)
+        agent_ids, residue_ids, self_ids, stats = roles(tracks, T)
         for s in sites:
             rows.append(dict(view=cam.stem, role="site", **s))
         for tr, (pres, mov, ext) in zip(tracks, stats):
             rows.append(dict(
                 view=cam.stem, tid=tr.tid,
+                selfmove=tr.tid in self_ids,
                 role=("agent" if tr.tid in agent_ids else
                       "residue" if tr.tid in residue_ids else "entity"),
                 presence=pres, moving=mov, extent=ext,

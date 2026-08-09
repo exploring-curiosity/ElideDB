@@ -43,149 +43,143 @@ def _l2(v):
     return v / max(float(np.linalg.norm(v)), 1e-8)
 
 
-NDIM = 14
+NDIM = 12
 
 
 def moment(rows, view, a, b):
-    """L5 v2: the episode structure of window [a,b) in one view, as
-    GRADED relational facts (the v1 8-bit skeleton tied massively and
-    added noise to the graph - measured).
+    """L5 v3: the moment from SITE PAIRS + the agent's path.
 
-    All facts are relational (PROBLEM.md #5): the mover's own extent
-    is the length unit; time is in thirds of its own in-window life;
-    'other entity' is any different-looking episodic evidence, never a
-    named thing. Returns dict(vec, patient_rgb, agent_rgb) or None.
+    Measured basis: under the piecewise scene a manipulated entity has
+    NO separate moving track - at rest it is scene, in motion it is
+    fused with the agent's blob. Its identity is carried by the
+    vanish/appear sites (core-colour 1.000 correct) and its motion by
+    the agent's path between them (agent coverage 0.985). So the
+    moment is built from the two near-perfect layers and needs no
+    patient track at all.
+
+    Independent entities (PROBLEM.md L2): a site with NO agent visit,
+    or a self-moving track, is something that moved on its own -
+    represented, not filtered.
+
+    Facts (all relational, extent/size-normalized, graded):
+      vanish-side: exists, agent-was-there
+      appear-side: exists, agent-was-there
+      pair: colour-linked vanish->appear, displacement in site units,
+            time between them relative to window
+      agent dwell near the involved sites
+      appear-site adjacency to OTHER settled evidence (arrived next
+      to something vs onto empty ground)
+      independent motion present (site sans agent, or self-track)
     """
     vr = [r for r in rows if r["view"] == view]
-    ents = [r for r in vr if r["role"] == "entity"]
     agents = [r for r in vr if r["role"] == "agent"]
+    selfs = [r for r in vr if r["role"] == "entity"
+             and r.get("selfmove", False)]
     sites_all = [s for s in vr if s["role"] == "site"]
-    sites = [s for s in sites_all
-             if s["t0"] <= b + 10 and s["t1"] >= a - 10]
+    ws = [s for s in sites_all
+          if s["t0"] <= b + 15 and s["t1"] >= a - 15]
 
     agent_rgb = None
     if agents:
         biggest = max(agents, key=lambda r: r["extent"])
         agent_rgb = np.median(np.asarray(biggest["rgb"]), 0)
 
-    # mover selection: among displaced episodic tracks, PREFER one
-    # whose colour matches a settled-scene change in the window - the
-    # sites are the near-perfect evidence (0.999 gate) and agent
-    # shards never match them. Max displacement is only the
-    # tiebreak/fallback, not the selector (the v2 mistake: with ~100
-    # junk tracks/view, max displacement often picks an agent shard).
-    cands = []
-    for r in ents:
-        m = (r["t"] >= a) & (r["t"] <= b)
-        if m.sum() < 3:
-            continue
-        ext_c = max(r["extent"], 4.0)
-        d = np.hypot(r["cx"][m].max() - r["cx"][m].min(),
-                     r["cy"][m].max() - r["cy"][m].min()) / ext_c
-        if d <= 0.35:
-            continue
-        crgb = np.median(np.asarray(r["rgb"])[m], 0)
-        anchored = any(
-            min(np.abs(s["pre_rgb"] - crgb).sum(),
-                np.abs(s["post_rgb"] - crgb).sum()) < 200
-            for s in sites)
-        cands.append((anchored, d, r, m))
-    best, mv = None, None
-    if cands:
-        cands.sort(key=lambda c: (c[0], c[1]), reverse=True)
-        anchored, best, r0, m0 = cands[0]
-        mv = (r0, m0)
+    if not ws and not selfs:
+        return None
 
-    if mv is None or best is None or best <= 0.35:
-        nv = len(sites)
-        if nv == 0:
-            return None
-        vec = np.zeros(NDIM, np.float32)
-        vec[10] = vec[11] = min(nv, 3) / 3.0
-        return dict(vec=vec, patient_rgb=None, agent_rgb=agent_rgb)
-
-    r, m = mv
-    ext = max(r["extent"], 4.0)
-    tt = r["t"][m]
-    cx, cy = r["cx"][m], r["cy"][m]
-    con = r["contact"][m]
-    n = len(tt)
-    mrgb = np.median(np.asarray(r["rgb"])[m], 0)
-
-    # ordered life in thirds: motion profile and contact profile.
-    # grasp = free->contact->contact; release = contact->..->free;
-    # push = brief contact mid. The ORDER is the signature.
-    thirds = np.array_split(np.arange(n), 3)
-    step = np.hypot(np.diff(cx), np.diff(cy))
-    moving = step > 0.05 * ext
-    mo = [float(moving[ix[ix < len(moving)]].mean())
-          if len(ix) and (ix < len(moving)).any() else 0.0
-          for ix in thirds]
-    co = [float(con[ix].mean()) if len(ix) else 0.0 for ix in thirds]
-
-    # distance to the nearest agent at the window's endpoints, in own
-    # extents: held ends near zero, released/pushed ends far
-    def d_agent(t_ref, x, y):
-        bestd = 6.0
+    def agent_at(t_ref, x, y, size):
+        """Graded: was any agent at (x,y) around t_ref?"""
+        best = 0.0
         for ag in agents:
             i = int(np.clip(np.searchsorted(ag["t"], t_ref), 0,
                             len(ag["t"]) - 1))
-            if abs(int(ag["t"][i]) - int(t_ref)) > 5:
+            for jj in (max(0, i - 3), i, min(len(ag["t"]) - 1, i + 3)):
+                d = np.hypot(ag["cx"][jj] - x, ag["cy"][jj] - y)
+                rad = size + max(ag["w"][jj], ag["h"][jj])
+                best = max(best, float(np.exp(-d / max(rad, 8.0))))
+        return best
+
+    # pair sites by core colour: a vanish (pre-side thing) matched to
+    # an appear (post-side thing) of the same look, vanish first
+    best_pair, pair = None, None
+    for sv in ws:
+        for sa in ws:
+            if sa is sv or sa["t0"] < sv["t0"]:
                 continue
-            bestd = min(bestd, float(np.hypot(ag["cx"][i] - x,
-                                              ag["cy"][i] - y)) / ext)
-        return min(bestd, 6.0) / 6.0
-    da0 = d_agent(tt[0], cx[0], cy[0])
-    da1 = d_agent(tt[-1], cx[-1], cy[-1])
+            dcol = np.abs(sv["pre_rgb"] - sa["post_rgb"]).sum()
+            if dcol > 200:
+                continue
+            score = np.exp(-dcol / 120.0)
+            if best_pair is None or score > best_pair:
+                best_pair, pair = score, (sv, sa)
 
-    # site-anchored chain: a vanish site is colour-matched near the
-    # start, an appear site colour-matched near the end
-    has_v = has_a = 0.0
-    for s in sites:
-        rad = 3 * ext + max(s["w"], s["h"])
-        if np.abs(s["pre_rgb"] - mrgb).sum() < 200 and \
-                np.hypot(s["cx"] - cx[0], s["cy"] - cy[0]) < rad:
-            has_v = 1.0
-        if np.abs(s["post_rgb"] - mrgb).sum() < 200 and \
-                np.hypot(s["cx"] - cx[-1], s["cy"] - cy[-1]) < rad:
-            has_a = 1.0
+    # the involved sites: the pair if found, else the strongest
+    # single site (largest core change region)
+    if pair is not None:
+        sv, sa = pair
+        prgb = 0.5 * (sv["pre_rgb"] + sa["post_rgb"])
+    elif ws:
+        sv = max(ws, key=lambda s: s["w"] * s["h"])
+        sa = None
+        prgb = sv["pre_rgb"]
+    else:
+        sv = sa = None
+        prgb = None
 
-    # other-entity adjacency at the endpoints: evidence registry from
-    # every OTHER track's last known position and settled sites up to
-    # the window end. Generic pairwise relation - departed from next
-    # to something / arrived next to something.
-    pts = []
-    for r2 in ents:
-        if r2["tid"] == r["tid"]:
-            continue
-        mm2 = r2["t"] <= b
-        if mm2.any():
-            i2 = int(np.where(mm2)[0][-1])
-            pts.append((float(r2["cx"][i2]), float(r2["cy"][i2]),
-                        np.median(np.asarray(r2["rgb"]), 0)))
-    for s in sites_all:
-        if s["t1"] <= b:
-            pts.append((s["cx"], s["cy"], s["post_rgb"]))
+    size_v = max(sv["w"], sv["h"]) if sv is not None else 1.0
+    ag_v = agent_at(0.5 * (sv["t0"] + sv["t1"]), sv["cx"], sv["cy"],
+                    size_v) if sv is not None else 0.0
+    ag_a = 0.0
+    pair_disp = dt_pair = 0.0
+    if sa is not None:
+        size_a = max(sa["w"], sa["h"])
+        ag_a = agent_at(0.5 * (sa["t0"] + sa["t1"]), sa["cx"],
+                        sa["cy"], size_a)
+        unit = 0.5 * (size_v + size_a)
+        pair_disp = min(float(np.hypot(sa["cx"] - sv["cx"],
+                                       sa["cy"] - sv["cy"])) / unit,
+                        10.0) / 10.0
+        dt_pair = min(max(sa["t0"] - sv["t1"], 0)
+                      / max(b - a, 1), 1.5) / 1.5
 
-    def near_other(x, y):
-        bestd = 6.0
-        for px, py, prgb in pts:
-            if np.abs(prgb - mrgb).sum() < 120:
-                continue        # same-looking = likely its own history
-            bestd = min(bestd, float(np.hypot(px - x, py - y)) / ext)
-        return 1.0 - min(bestd, 6.0) / 6.0      # closeness, not dist
-    no0 = near_other(cx[0], cy[0])
-    no1 = near_other(cx[-1], cy[-1])
+    # appear-site adjacency to OTHER settled evidence (different look):
+    # arrived next to something, vs onto empty ground
+    near_other = 0.0
+    ref = sa if sa is not None else None
+    if ref is not None:
+        for s2 in sites_all:
+            if s2 is ref or s2["t1"] > b + 15:
+                continue
+            if np.abs(s2["post_rgb"] - prgb).sum() < 120:
+                continue
+            unit = max(ref["w"], ref["h"])
+            d = np.hypot(s2["cx"] - ref["cx"], s2["cy"] - ref["cy"])
+            near_other = max(near_other,
+                             float(np.exp(-d / max(1.5 * unit, 8.0))))
+
+    # independent motion: a window site with NO agent visit, or a
+    # self-moving track alive in the window
+    indep = 0.0
+    for s in ws:
+        av = agent_at(0.5 * (s["t0"] + s["t1"]), s["cx"], s["cy"],
+                      max(s["w"], s["h"]))
+        indep = max(indep, 1.0 - av)
+    self_alive = any(((r["t"] >= a) & (r["t"] <= b)).sum() >= 3
+                     for r in selfs)
 
     vec = np.array([
-        1.0, min(best, 8.0) / 8.0,
-        mo[0], mo[1], mo[2],
-        co[0], co[1], co[2],
-        da0, da1,
-        has_v, has_a,
-        no0, no1,
+        float(sv is not None),
+        float(sa is not None),
+        float(pair is not None),
+        pair_disp, dt_pair,
+        ag_v, ag_a,
+        max(ag_v, ag_a),
+        near_other,
+        indep,
+        float(self_alive),
+        min(len(ws), 4) / 4.0,
     ], np.float32)
-    return dict(vec=vec, patient_rgb=mrgb, agent_rgb=agent_rgb)
+    return dict(vec=vec, patient_rgb=prgb, agent_rgb=agent_rgb)
 
 
 # ---------------- benchmark on the sim ruler ----------------

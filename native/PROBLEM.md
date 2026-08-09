@@ -87,8 +87,15 @@ Write path, per recording, label-free, self-calibrating:
   capture can be arranged so the manipulated entity stays visible —
   removes occlusion, the hardest sub-problem, for V1.)
 - **L2 roles by statistics** — per-recording persistence/co-variation
-  profile per track → scene / recurring agent / episodic entities.
-  Figure-ground is COMPUTED, never asserted.
+  profile per track → scene / recurring agent(s) / episodic entities /
+  **independent (self-moving) entities**. Figure-ground is COMPUTED,
+  never asserted. NOTHING REQUIRES AN AGENT TO EXIST (owner, 2026-08-10):
+  people in car footage, other vehicles, animals move without anything
+  acting on them. An independent entity is a mover whose motion is not
+  contact-coupled — its empty coupling profile is informative structure
+  in its own right, not a missing field. Agent-relative facts must
+  degrade to "no coupling" gracefully, never error or filter the
+  entity out.
 - **L3 entity records** — see §4. NOT descriptions.
 - **L4 interactions** — pairwise co-variation between tracks: contact
   form/break, common-fate spans, topology events (split/merge,
