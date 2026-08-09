@@ -2404,3 +2404,17 @@ The recurring-agent role needs NO hardwire: presence x motion
 statistics identify the arm with 0.985-1.000 event coverage across
 all versions. Junk-track count stays high (127/view); the principled
 filter is L5 assembly (site-anchored chains), not more L1 tuning.
+
+L1 gate AT SCALE (sim_chains, 1764 events): recall 1.000,
+colour-correct 0.999, agent coverage 0.935, frag 8.35. The entity
+layer holds on the ruler corpora.
+
+L4-L7 FIRST PASS (moments.py, honest): structure-only correspondence
+scores AP 0.288 / P@1 0.322 on the ruler - far below the delta
+baseline (0.546). The cause is visible in P@1: the V1 structure
+vector is 8 quantized facts, so thousands of events tie. The
+structure facts are right but too coarse to rank alone; this is a
+skeleton, not a scorer. Fusion test (does structure ADD to deltas?)
+in flight; either way the next work is depth in the moment graph
+(per-entity chains, multiple entities, temporal profile of the
+interaction), not abandonment.
