@@ -1633,3 +1633,33 @@ functional defect found by USING the QbE path: learned absolute positions
 leaked into states and every query matched episode-START spans; round 2
 retrains with NoPE (causal mask only) — a memory must be time-shift
 invariant.
+
+## 2026-08-09 — World-model rounds 2-5: the honest ladder after de-contamination
+
+Random-retrieval prior for the 882-event mix is 0.341 — every number below
+should be read against it as well as against frozen features.
+
+| round | change | QbE P@10 | cross xarm7/vx300s | battery sev/struct |
+|---|---|---|---|---|
+| 1 | learned abs. positions | 0.533 (LEAKAGE) | 0.469/0.455 (LEAKAGE) | 0.486/0.292 |
+| 2 | NoPE (honest baseline) | 0.352 | 0.373/0.359 | 0.385/0.256 |
+| 3 | + horizons 0.1/0.5/1.5s | 0.361 | 0.364/0.363 | 0.407/0.257 |
+| 4 | + grid input & targets | 0.359 | 0.388/0.340 | **0.507**/0.334 |
+| 5 | + predicted-delta (read-time) | 0.359 | 0.382/0.349 | — |
+| — | frozen fixed-mean | **0.416** | **0.389/0.384** | 0.499/**0.423** |
+| — | random prior / pixel floor | 0.341 | 0.341 | 0.553/0.390 (floor) |
+
+Verdict: with position leakage removed, no predictor-state variant beats the
+frozen-feature mean on same-primitive retrieval; round 4's grid input put ONE
+metric (battery sev-rho 0.507) past frozen and lifted the battery trend
+monotonically, so spatial targets are the right direction at the wrong
+granularity. Each null has a mechanism: h1 prediction is a copy task; global
+pooling erases the arm; single-episode prediction never rewards cross-episode
+motion abstraction; the delta head inherits the same coarse grid.
+
+Next step recorded, not started: the true DINO-WM shape — per-PATCH token
+prediction with factorized spatio-temporal attention, where the state must
+model object-level motion rather than a 5x5 blur of it. The QbE SYSTEM
+around the model (trajectory store, sequence search, Desk toggle, gates with
+baselines) is built, functional, and model-agnostic: any better predictor
+drops in behind vwm.states() with zero read-path changes.
