@@ -2352,3 +2352,32 @@ and rising ~0.02 per +450 events; 0.80 is within reach of one more
 growth batch. 5-class yield is at 0.668 and would need the place<->
 stack tower relation, which four localization attempts and the
 clean-scene channel all failed to supply.
+
+## 2026-08-09 — growth batch 2 (400 mixed-arm eps): gain continues, decelerating
+
+Corpus 2660 -> 4902 events (849 episodes, +180 panda +120 xarm7 +100
+vx300s). READ THE HOLDOUT ROW ONLY: batch 2 is noisier (mean events ok
+0.74 vs panda's 0.97) and mixed-embodiment, so the FULL-corpus average
+changes its own query mix and is not comparable across compositions.
+sim_eval_bal is the fixed reference set and is comparable throughout.
+
+| holdout (fixed query set) | events in store | AP | yield/prec | 3-motion |
+|---|---|---|---|---|
+| baseline (any size) | - | 0.396 | 0.499/0.332 | 0.610/0.406 |
+| diffusion | 1352 | 0.546 | 0.643/0.428 | 0.688/0.459 |
+| diffusion | 2660 | 0.597 | 0.696/0.463 | 0.722/0.481 |
+| diffusion | 4902 | **0.619** | **0.713/0.475** | **0.737/0.491** |
+
+The baseline is flat at 0.498-0.500 across a 3.6x corpus range - it
+cannot use data. Diffusion gains +0.053 then +0.017 per step, so the
+curve is real but DECELERATING and heading for roughly 0.73-0.75 on
+this benchmark, not 0.80. Same shape on the in-corpus scaling sweep
+(diffusion 0.482 at 862 events -> 0.552 at 4902, baseline 0.514 flat).
+
+HONEST POSITION ON 0.80: growth alone will not reach it. What is left
+is the specific capability every attack tonight failed to supply - the
+table-vs-tower relation behind the 21% place<->stack and pick<->unstack
+confusion. Four localizers, a zoom channel and 640px arm-free clean
+scenes all failed, and the reason is now well understood: the arm is
+never out of frame and dwells exactly where the object is, so no
+generic "what changed" statistic isolates the object.
