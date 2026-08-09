@@ -1780,3 +1780,35 @@ cross-view InfoNCE head (vwm_head.py) - two cameras filmed the same
 moment, so agreement across views is free physical supervision; temporal
 jitter positives add phase robustness; trained on the seed-disjoint
 self-generated corpus only.
+
+## 2026-08-09 — The supervised ceiling settles where 0.9 lives
+
+An eval-only probe (labels, 5-fold by episode - an instrument, never
+shippable) bounds what ANY scorer could do on the current features:
+
+| class | ceiling AP | ceiling y/p | unsupervised y/p |
+|---|---|---|---|
+| pick | 0.917 | 0.934/0.906 | — |
+| stack | 0.636 | 0.713/0.611 | — |
+| place | 0.613 | 0.679/0.597 | — |
+| unstack | 0.162 | 0.374/0.204 | — |
+| push | 0.094 | 0.362/0.141 | — |
+| ALL | 0.733 | **0.789/0.722** | 0.539/0.431 |
+
+Three consequences:
+1. 0.9/0.9 corpus-wide is NOT reachable on these features under this
+   grading - even with labels the ceiling is 0.79/0.72. The blockers are
+   the composite/rare classes (unstack IS pick+place on film; push n=25).
+2. For PICK the target IS in the features (0.934/0.906 supervised) - the
+   0.9 goal is realistic there, and the unsupervised-to-supervised gap
+   (AP 0.44 -> 0.73) is the extractable-without-labels prize.
+3. The cross-view head round: +0.02 AP on pick, minority classes dropped -
+   window-level InfoNCE sharpens majority structure. Sixth attack on the
+   ~0.52 oracle ceiling; the ceiling didn't move because the ceiling was
+   never scoring - it is features + grading.
+
+Decision fork recorded for the owner: (a) richer upstream features +
+class-balanced generation (more unstack/push episodes - self-generated,
+allowed) raises the ceiling itself; (b) sub-event units change what
+"same experience" means for composites; (c) accept per-class targets
+(pick to 0.9 first). These are product-semantics choices, not tuning.
