@@ -2023,3 +2023,25 @@ tracks (position/height per compact moving/foreground region, generic
 detection, no names) as the state record, with the patch grid demoted to
 an appearance descriptor per object. That is the tracks-first design the
 project already holds, now with its quantitative justification.
+
+## 2026-08-09 — Whole-problem gate + the no-training granularity candidates
+
+Course correction (owner): a sim-trained encoder passes the sim ladder and
+fails the product - it cannot generalize to unseen data, which is the
+entire point. REQUIREMENTS restated as the gate for any repair:
+ 1. works on arbitrary unseen data (nothing fitted to any corpus, sim
+    included; general substrate + per-recording self-calibration only)
+ 2. no labels / domain info / fixed axes anywhere in write/read/train
+ 3. preserves state at the granularity events happen (the measured A2
+    failure)
+ 4. sim ground truth grades, never trains
+Two-sided acceptance: raise block-state R^2 on the sim extraction ladder
+AND hold the real-corpora disguise battery.
+
+The corrected reading of the ladder: the GENERAL encoder's STRIDE failed,
+not its generality - 640px frames were downscaled to 320, making a 30px
+block a single 16px patch, and patch features are translation-robust
+within themselves. Candidates that fix granularity with ZERO training and
+ZERO domain knowledge (general by construction): tiled native-scale
+encoding, earlier-layer taps (less invariance, more position), finer-
+stride general backbones. Ladder run in flight.
