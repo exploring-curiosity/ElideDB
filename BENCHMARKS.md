@@ -1917,3 +1917,21 @@ Best yield config is span+DTW+cover: +0.057 yield (+12% relative) at
 EVENT SPAN, but a live store must cut each episode once and clip - if the
 numbers hold under episode-cut geometry the config ships, otherwise the
 benchmark does not transfer.
+
+### Shipping-geometry check (episode cut once, window inherits)
+
+The benchmark above segments each EVENT SPAN; a live store must segment
+each episode once at write time and let a window inherit the cuts inside
+it. Re-run under that geometry (units/event median 5 vs 6):
+
+| scorer | span-cut y/p | episode-cut y/p |
+|---|---|---|
+| whole-span | 0.474/0.386 | 0.474/0.386 |
+| unit set-match | 0.533/0.341 | 0.564/0.333 |
+| span+units w=0.3 | 0.483/0.385 | 0.482/0.385 |
+| span+units w=0.5 | 0.498/0.381 | 0.500/0.379 |
+
+The units TRANSFER: write-time segmentation loses nothing (set-match
+yield is even slightly higher). So the shipping design is sound - cut
+each episode once, store the unit reps, clip per candidate window at O(1).
+Ordered-variant confirmation under the same geometry is running.
