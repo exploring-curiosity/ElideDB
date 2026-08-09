@@ -112,16 +112,26 @@ def stages(z):
     PG = (rs2.randn(G.shape[1] * G.shape[2] * G.shape[3], 4096)
           / 64).astype(np.float32)
     grid = _l2(G.reshape(T, -1) @ PG)
+    # REFERENCED stages: subtract the per-recording per-cell median
+    # (parameter-free self-calibration). This is the extraction repair:
+    # block state was never absent, it was drowned by the static
+    # background in every unreferenced readout (0.18 -> 0.47 R^2).
+    Gl = _l2(G)
+    med = np.median(Gl, 0)
+    D = Gl - med
+    refgrid = _l2(D.reshape(T, -1) @ PG)
+    refrows = _l2(D.mean(2).reshape(T, -1))
     return {"S0_pixels": _l2(thumb), "S1_grid4096": grid,
             "S2_c5x5": _l2(c5), "S3_r20": _l2(r20), "S4_g384": g,
-            "S5_rp768": rp}
+            "S5_rp768": rp, "S6_refgrid": refgrid, "S7_refrows": refrows}
 
 
 def probe():
     from sklearn.linear_model import Ridge
     eps = sorted(CACHE.glob("ep*.npz"))
     X = {k: [] for k in ("S0_pixels", "S1_grid4096", "S2_c5x5",
-                         "S3_r20", "S4_g384", "S5_rp768")}
+                         "S3_r20", "S4_g384", "S5_rp768",
+                         "S6_refgrid", "S7_refrows")}
     Y, ep_id = {}, []
     from tqdm import tqdm
     for f in tqdm(eps, unit="ep", desc="stages"):

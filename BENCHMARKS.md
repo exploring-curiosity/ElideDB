@@ -2045,3 +2045,166 @@ within themselves. Candidates that fix granularity with ZERO training and
 ZERO domain knowledge (general by construction): tiled native-scale
 encoding, earlier-layer taps (less invariance, more position), finer-
 stride general backbones. Ladder run in flight.
+
+Ladder result (20 eps, 5fps, 2513 frames, ridge R^2 — compare WITHIN run;
+this run is lower-powered than the 40-ep ladder, hand_z 0.66->0.41):
+
+| stage | nearblk_z | tower_top_z | grip | hand_z | hand_y |
+|---|---|---|---|---|---|
+| whole@320 L12 (ship) | 0.045 | 0.041 | 0.033 | 0.410 | 0.118 |
+| whole@320 L6 | -0.000 | -0.003 | 0.006 | 0.207 | 0.061 |
+| tiled native L12 | 0.061 | 0.060 | 0.039 | 0.452 | 0.197 |
+| tiled native L6 | 0.004 | 0.003 | 0.004 | 0.174 | 0.119 |
+
+Verdicts: early-layer taps strictly worse (L6 loses even hand_z 2x) —
+less invariance is NOT more readable position. Native-scale tiling
+(~2x patch granularity: a 30px block goes from ~1 patch to ~2) lifts
+every target by a small consistent margin (hand_y +67% rel) but block
+state stays absent-tier — 2x granularity is not a categorical fix.
+Next zero-training candidates: (a) MLP readout on cached tiled feats
+(nonlinearity + granularity jointly), (b) DINOv3 ConvNeXt-Tiny
+stride-8 stage (finer stride from a general model already shipped in
+the identity cut).
+
+Follow-ups (same 20-ep protocol):
+
+MLP readout (256 hidden, standardized targets) — the joint
+nonlinearity+granularity test:
+| stage | nearblk_z | tower_top_z | grip | hand_z |
+|---|---|---|---|---|
+| whole@320 MLP | 0.127 | 0.132 | -0.005 | 0.864 |
+| tiled native MLP | 0.096 | -0.006 | -0.062 | 0.843 |
+Readout at full power (hand_z 0.864 = the 40-ep reference despite half
+the data); block state still absent; tiling adds NOTHING nonlinearly —
+the small ridge lift was dimensional noise. GRANULARITY HYPOTHESIS DEAD:
+2x patch resolution changes nothing under either readout.
+
+ConvNeXt-Tiny stages (stride 16/8/4, per-cell l2 + JL): control never
+validated — hand_z 0.090 at s16 vs ViT 0.410 on identical frames. Raw
+conv spatial maps lose linear readability under JL for reasons
+independent of stride (suspect common-component domination). Stride-8
+door strictly untested but moot: the mechanism it targeted is dead
+above. No more cycles here.
+
+## 2026-08-09 — EXTRACTION REPAIR FOUND: per-recording background referencing
+
+Referenced/temporal ladder, full 40-ep probe (9515 frames, ridge R^2):
+
+| stage | nearblk_z | tower_top_z | grip | hand_z | hand_y |
+|---|---|---|---|---|---|
+| grid JL4096 (ctrl) | 0.181 | 0.180 | 0.057 | 0.684 | 0.571 |
+| bg-subtracted JL4096 | 0.415 | 0.410 | 0.192 | 0.800 | 0.600 |
+| foreground-mass 400 | 0.021 | 0.014 | 0.021 | 0.526 | 0.380 |
+| referenced row profile | 0.469 | 0.464 | 0.230 | 0.827 | 0.518 |
+| EMA 0.5/2/8s stack | 0.132 | 0.134 | 0.042 | 0.546 | 0.462 |
+
+Block state was NEVER absent from the frozen features - it was drowned
+by the static background in every unreferenced readout. Subtracting the
+per-recording per-cell median (parameter-free self-calibration: no
+training, no labels, generic on any data) lifts block quantities 2.6x
+into clearly-present territory, grip 4x, hand_z to 0.827. Direction of
+deviation carries it (mass-only is dead); temporal EMA is not the door.
+This dissolves the granularity mechanism story: sub-patch objects ARE
+encoded, as small deviations from the background cell feature.
+
+Why retrieval behaved as it did: segment deltas r[t2]-r[t1] cancel the
+background implicitly - change-matching worked, state-matching never
+existed. The repair: referenced ENDPOINT STATES join the span
+representation (state, not just change). Two-sided gate: (1) this
+ladder PASSED; (2) retrieval A/B on the extended ruler + real-corpora
+battery must hold.
+
+Retrieval transfer of the repair, full extended ruler (1352 events;
+sim_chains 882 + sim_eval_bal 470, all dual-view v3 cached):
+
+| arm | AP | oracle y/p | fixed y/p |
+|---|---|---|---|
+| del alone (ship) | 0.397 | 0.474/0.388 | 0.524/0.349 |
+| st (ref endpoint states) | 0.367 | 0.449/0.370 | 0.512/0.341 |
+| sd (ref state diff) | 0.349 | 0.445/0.352 | 0.489/0.326 |
+| z-fusion uniform | 0.385 | 0.445/0.381 | 0.522/0.348 |
+| self-agree fusion | 0.389 | 0.454/0.384 | 0.524/0.349 |
+| ORACLE channel pick (eval) | 0.417 | 0.438/0.408 | 0.552/0.367 |
+
+Referenced states carry real standalone signal (0.367 AP from two
+frames!) but re-rank what deltas already rank: even a PERFECT per-query
+channel selector gains +0.020 AP. Naive concat null; states-only
+actively hurts unstack (0.35->0.13). Diagnosis: cosine is variance-
+weighted and the state vector is hand-dominated (hand_z 0.83 in the
+same vector) - presence (ridge 0.47) != retrievability (cosine). The
+del-alone 0.397 IS the recorded unsup-vs-supervised gap endpoint
+(0.397 vs 0.736 on the same features): the gap is METRIC, not features.
+Next attack: store-side PCA-whitening w/ eigenvalue floor (corpus
+stats, label-free, same legal class as CSLS/hub correction) to undo
+variance-weighting. Run in flight.
+
+Whitening attack: NEGATIVE at every floor and rep. del 0.397 ->
+0.345/0.290/0.319 (e=1.0/0.1/0.01); st 0.367 -> 0.351/0.322/0.292;
+concat likewise. The high-variance directions cosine favors DO carry
+the readable class signal; the state signal is a specific low-dim
+subspace that variance statistics cannot locate. (Whitened arms trade
+precision for spread: oracle yield up to 0.62 at prec 0.30 - not
+useful.) Last label-free attack in flight: cross-view CCA - the
+corpus's free supervision is that one event is seen by two cameras;
+canonical dirs = view-invariant content. Closed-form, event-vector
+level (distinct from the nulled InfoNCE encoder head).
+
+CCA attack: FIRST POSITIVE after 5 metric nulls/negatives.
+
+| arm | AP | fixed y/p |
+|---|---|---|
+| del raw (ship) | 0.397 | 0.524/0.349 |
+| st raw | 0.367 | 0.512/0.341 |
+| st cca k=64 r=1.0 | 0.407 | 0.555/0.370 |
+| del cca k=64 r=1.0 | 0.404 | 0.539/0.359 |
+
+Cross-view CCA on the referenced-state channel: +0.040 AP over st raw,
+now ABOVE the whole delta machinery. place (the end-state class) gains
+most (0.25->0.31). Trends coherent with a small real subspace: k=64 >
+k=256, r=1.0 > 0.1. The corpus's free supervision (same event, two
+cameras) locates class-relevant directions that raw cosine buries and
+variance statistics (whitening) could not find. Pending before ship:
+del+st-cca fusion, k/r sweep, and SPLIT-HALF holdout (fit on half the
+episodes, benchmark inside the other half) - in flight.
+
+CCA k/r sweep + fusion + holdout (event-fit): k=16 wins (subspace is
+~16-dim). st cca16 0.433; fuse 0.5del+stcca16 AP 0.447 fixed
+0.588/0.392 (ship 0.397/0.524/0.349); holdout fusion 0.432/0.438 -
+generalizes across episodes. BUT the label-free fit CONTROL FAILED:
+CCA fitted on stride-window pairs (correspondence-only supervision)
+scores 0.350 < raw 0.367. The event-fit gain was carried by
+event-SHAPED span boundaries, not multi-view correspondence alone -
+shipping it would have been a hidden-label violation (the
+contamination pattern, caught by the control this time). Legal route
+in flight: fit on UNIT-ALIGNED spans from the shipped unsupervised
+segmentation (vwm_kin.dp_cuts) - event-shaped by construction, no
+labels anywhere.
+
+Unit-aligned fit (dp_cuts spans, 9871 pairs): ALSO FAILS - 0.334 <
+stride 0.350 < raw 0.367 < event-fit 0.433. The shipped segmentation
+is not event-shaped enough to substitute for truth boundaries.
+
+## 2026-08-09 — THE SIMILARITY LOOKUP, TRIANGULATED (session verdict)
+
+The atoms, each measured on the 1352-event ruler:
+ 1. EXTRACTION: repaired. Per-recording background referencing lifts
+    block-state R^2 0.18->0.47 (hand 0.83, grip 0.23); the granularity
+    story died 3 ways first (tiling ridge+MLP, layers, stride).
+ 2. REPRESENTATION: referenced endpoint states carry standalone
+    retrieval signal (0.367 AP from two frames vs deltas' 0.397).
+ 3. METRIC: a ~16-dim subspace of referenced-state space is worth
+    +0.050 AP / +0.064 yield / +0.043 prec fused with deltas (0.447 /
+    0.588/0.392 vs ship 0.397 / 0.524/0.349) - PROVEN to exist and
+    holdout-stable (0.432/0.438 on unseen episodes).
+ 4. FIT SUPERVISION: the obstruction. Every label-free source fails
+    to locate the subspace: variance (whitening, negative), cross-view
+    correspondence + stride spans (0.350), + dp_cuts spans (0.334).
+    Only truth-event-aligned spans work. The differentiator is SPAN
+    QUALITY: segmentation is the binding constraint.
+
+NEW GATE for segmentation work (label-free, per store): fit CCA on the
+candidate segmentation's spans; the segmentation is good enough when
+the event-fit gain is recovered. Segmentation now has a retrieval-
+denominated acceptance test instead of an aesthetic one. Second
+sanctioned route: Desk verdicts accumulate the span supervision
+directly (post-query retraining is the allowed offline tier).
