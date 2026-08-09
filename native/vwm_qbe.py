@@ -1,12 +1,16 @@
-"""QbE over predictor-state trajectories. The world-model read path.
+"""QbE over latent trajectories. The world-model read path.
 
-The stored representation of a clip IS the predictor's state
-trajectory (vwm.states) - no channels, no named axes, nothing frozen
-into a summary at write time. A query runs through the SAME operator:
-frames -> frozen latents -> states; similarity is sequence matching
-(v1: cosine of mean state over sliding windows of the query's own
-length, cumsum-exact, every window scored - elision comes later, the
-claim comes first).
+WHAT IS STORED per clip: the projected-grid latent trajectory (the raw
+spatial record) plus the predictor's state trajectory - nothing is
+summarised at write time. WHAT SCORES a window: ORDERED SPATIAL CHANGE
+- the window's grid-delta thirds, concat of l2(cp[t2]-cp[t1]) over
+three consecutive segments. Measured on the 882-event sim truthset
+against every alternative (9-way sweep, BENCHMARKS 2026-08-09): 0.565
+P@10 vs 0.416 for pooled appearance and 0.36 for every predictor-state
+pool - what separates experiences is the SEQUENCE OF CHANGES the world
+undergoes, the delta-appearance result at the event scale. The
+predictor's states still ride along (surprise, future reps); the
+scoring representation is whichever wins the sweep.
 
     python native/vwm_qbe.py --media sim/ep0003 --t0 4 --t1 12
 """
@@ -63,26 +67,32 @@ class WMIndex:
             mid = f"{corpus}/{ep}"
             sp = sdir / f"{pref}_{ep}.npz"
             if sp.exists():
-                self.traj[mid] = np.load(sp)["h"].astype(np.float32)
-            else:
-                import vwm
-                z = np.load(npz)
-                gi = vwm.build_input(z["g"].astype(np.float32),
-                                     z["c"].astype(np.float32))
-                h, _ = model().states(gi)
-                np.savez(sp, h=h.astype(np.float16))
-                self.traj[mid] = h.astype(np.float32)
+                z2 = np.load(sp)
+                if "cp" in z2:
+                    self.traj[mid] = (z2["h"].astype(np.float32),
+                                      z2["cp"].astype(np.float32))
+                    continue
+            import vwm
+            z = np.load(npz)
+            c = z["c"].astype(np.float32)
+            cp = c @ vwm.rproj()
+            cp /= np.maximum(
+                np.linalg.norm(cp, axis=-1, keepdims=True), 1e-8)
+            gi = vwm.build_input(z["g"].astype(np.float32), c)
+            h, _ = model().states(gi)
+            np.savez(sp, h=h.astype(np.float16),
+                     cp=cp.astype(np.float16))
+            self.traj[mid] = (h, cp)
 
-    def _mu(self):
-        """The store's mean state - the shared component every sim
-        frame carries (same table, same scene). Uncentered, every
-        mean-state cosine saturated at ~0.999 and episode-start spans
-        (the maximally generic moment) topped every query. Centering
-        by the store's own mean is label-free and store-derived."""
-        if not hasattr(self, "_mu_"):
-            self._mu_ = np.mean([h.mean(0) for h in self.traj.values()],
-                                axis=0)
-        return self._mu_
+    @staticmethod
+    def d3rds(cp, s, e):
+        """Ordered spatial change of window [s,e): grid-delta thirds.
+        Deltas cancel the shared scene, so no centering is needed."""
+        t1 = s + (e - s) // 3
+        t2 = s + 2 * (e - s) // 3
+        return np.concatenate([_l2(cp[t1] - cp[s]),
+                               _l2(cp[t2] - cp[t1]),
+                               _l2(cp[e - 1] - cp[t2])])
 
     def search(self, hq, k=10, exclude=None, query_fps=None):
         """hq: (Tq, D) query states. Returns [(mid, t0, t1, score)].
@@ -91,20 +101,16 @@ class WMIndex:
         window is matched in SECONDS, not frames."""
         qf = float(query_fps or FPS)
         secs = max(0.4, len(hq) / qf)
-        Lq = max(4, int(round(secs * FPS)))
-        mu = self._mu()
-        v = _l2(np.asarray(hq, np.float32).mean(0) - mu)
+        Lq = max(6, int(round(secs * FPS)))
+        v = _l2(self.d3rds(np.asarray(hq, np.float32), 0, len(hq)))
         stride = max(2, Lq // 4)
         cands = []
-        for mid, h in self.traj.items():
-            T = len(h)
+        for mid, (h, cp) in self.traj.items():
+            T = len(cp)
             if T < Lq:
                 continue
-            cs = np.cumsum(np.vstack([np.zeros((1, h.shape[1]),
-                                               np.float32), h]), 0)
             for s in range(0, T - Lq + 1, stride):
-                m = (cs[s + Lq] - cs[s]) / Lq
-                sc = float(v @ _l2(m - mu))
+                sc = float(v @ _l2(self.d3rds(cp, s, s + Lq)))
                 a, b = s / FPS, (s + Lq) / FPS
                 if exclude and mid == exclude[0] \
                         and not (b <= exclude[1] or a >= exclude[2]):
@@ -197,13 +203,25 @@ def query_states(F):
     return h, sur
 
 
+def query_grid(F):
+    """Frames -> projected-grid trajectory, the write-path operator."""
+    import vwm
+    G = _encode_grid(F)
+    T = len(G)
+    k = G.shape[1] // 5
+    c = G.reshape(T, 5, k, 5, k, -1).mean((2, 4)).reshape(T, -1)
+    cp = c @ vwm.rproj()
+    return cp / np.maximum(
+        np.linalg.norm(cp, axis=-1, keepdims=True), 1e-8)
+
+
 def search_frames(F, k=10, exclude=None, query_fps=None):
     """query_fps: the rate F was decoded at (vsrc.FPS for Desk cuts)."""
     if query_fps is None:
         import vsrc
         query_fps = vsrc.FPS
-    h, _ = query_states(F)
-    return index().search(h, k=k, exclude=exclude, query_fps=query_fps)
+    cp = query_grid(F)
+    return index().search(cp, k=k, exclude=exclude, query_fps=query_fps)
 
 
 def main():

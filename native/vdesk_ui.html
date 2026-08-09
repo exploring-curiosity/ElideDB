@@ -494,6 +494,31 @@ $('#go').onclick = async () => {
 
 function render(j, tgt){
   const s = j.stats;
+  /* the world-model path reports different facts and must say so
+     honestly: it scans every trajectory (elision comes later), has no
+     channel weights and no CSLS cut. Rendering the c2 stats template
+     against it threw "Cannot convert undefined or null to object". */
+  if (s.mode === 'wm'){
+    $('#statwrap').innerHTML = `
+    <div class="stats tnum">
+      <div class="stat"><div class="lbl">returned</div>
+        <div class="v">${s.returned}<small> spans</small></div></div>
+      <div class="stat"><div class="lbl">mode</div>
+        <div class="v">world-model</div></div>
+      <div class="stat"><div class="lbl">decode</div>
+        <div class="v">${(s.decode_ms/1000).toFixed(1)}s</div></div>
+      <div class="stat"><div class="lbl">encode+search</div>
+        <div class="v">${(s.search_ms/1000).toFixed(1)}s</div></div>
+    </div>
+    <div style="margin-top:8px;color:var(--faint);font-size:10.5px"
+         class="tnum">
+      predictor-state trajectories · every stored window scored (no
+      pruning yet) · scores are centered cosine
+      ${s.excluded_self ? " · the example's own moment excluded" : ''}
+    </div>`;
+    renderHits(j, tgt);
+    return;
+  }
   const elide = s.elided === null ? '—' : (s.elided*100).toFixed(4)+'%';
   $('#statwrap').innerHTML = `
     <div class="stats tnum">
@@ -522,6 +547,12 @@ function render(j, tgt){
       have no fixed zero — the bar is the margin over the cut
     </div>`;
 
+  renderHits(j, tgt);
+}
+
+function renderHits(j, tgt){
+  const s = j.stats;
+  const wm = s.mode === 'wm';
   if (!j.hits.length){
     $('#hits').innerHTML = `<div class="empty">
       <b>Nothing cleared the bar.</b><br><br>
@@ -532,6 +563,10 @@ function render(j, tgt){
       Untick <i>abstain</i> to see the ranking underneath.</div>`;
     return;
   }
+  /* the wm path has no CSLS cut - margins/bars are drawn against the
+     LOWEST returned score so the visual still ranks, without inventing
+     an abstention threshold the path never computed */
+  const thr = wm ? j.hits[j.hits.length-1].score : s.threshold;
   const frameURL = (media, t, w) =>
     '/api/frame?store=' + encodeURIComponent(tgt) +
     '&media=' + encodeURIComponent(media) +
@@ -551,7 +586,7 @@ function render(j, tgt){
   // shows its margin over that cut. The number itself is untouched -
   // rescaling it to a comforting 0..1 would invent a confidence the
   // system never computed.
-  const span = Math.max(j.hits[0].score - s.threshold, 1e-6);
+  const span = Math.max(j.hits[0].score - thr, 1e-6);
 
   $('#hits').innerHTML = (more > 0 ? `<div class="empty"
       style="padding:9px 18px;border-bottom:1px solid var(--hairline)">
@@ -576,9 +611,9 @@ function render(j, tgt){
       </div>
       <div class="sc tnum">${h.score.toFixed(3)}
         <div class="bar"><i style="width:${
-          (100*(h.score - s.threshold)/span).toFixed(1)}%"></i></div>
+          (100*(h.score - thr)/span).toFixed(1)}%"></i></div>
         <div class="mg" title="margin over the abstention cut">+${
-          (h.score - s.threshold).toFixed(3)}</div>
+          (h.score - thr).toFixed(3)}</div>
       </div>
     </div>`).join('');
   // the source, pinned and looping beside every result

@@ -241,8 +241,13 @@ def main():
             pred = 0.0
             for hz, p in zip(HORIZONS, ps2):
                 pn = torch.nn.functional.normalize(p[:, :-hz], dim=-1)
+                # TARGET IS THE CHANGE, not the future grid: predicting
+                # cp(t+h) rewards copying the standing scene (rounds
+                # 2-4); predicting cp(t+h)-cp(t) makes the state model
+                # exactly the signal that wins retrieval - ordered
+                # spatial change (d3rds 0.565 vs every pooled 0.36-0.42)
                 tn = torch.nn.functional.normalize(
-                    xb[:, hz:, D_G:], dim=-1)
+                    xb[:, hz:, D_G:] - xb[:, :-hz, D_G:], dim=-1)
                 pred = pred + (1.0 - (pn * tn).sum(-1).mean())
             pred = pred / len(HORIZONS)
             gau = sigreg(h)
@@ -259,7 +264,7 @@ def main():
                 for hz, p in zip(HORIZONS, ps2):
                     pn = torch.nn.functional.normalize(p[:, :-hz], dim=-1)
                     tn = torch.nn.functional.normalize(
-                        xb[:, hz:, D_G:], dim=-1)
+                        xb[:, hz:, D_G:] - xb[:, :-hz, D_G:], dim=-1)
                     v += float(1.0 - (pn * tn).sum(-1).mean())
                 vp += (v / len(HORIZONS)) * len(xb)
             vp /= max(1, len(Xva_t))
@@ -268,7 +273,7 @@ def main():
               f"val_pred {vp:.4f}")
     torch.save(model.state_dict(), OUT)
     manifest = dict(encoder="vits16@320", pos="none (NoPE)",
-                    input="g+RP(grid) 1920, targets RP(grid)",
+                    input="g+RP(grid) 1920, targets DELTA RP(grid)",
                     horizons=list(HORIZONS),
                     L=L, stride=STRIDE, d=D,
                     layers=LAYERS, heads=HEADS, ff=FF, lam=LAMBDA,
