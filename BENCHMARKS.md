@@ -2418,3 +2418,14 @@ skeleton, not a scorer. Fusion test (does structure ADD to deltas?)
 in flight; either way the next work is depth in the moment graph
 (per-entity chains, multiple entities, temporal profile of the
 interaction), not abandonment.
+
+Fusion probe: NEGATIVE at every weight (holdout 0.643 -> 0.586-0.603).
+The 8-dim structure only adds noise edges - consistent with the
+established law (weak channels hurt the graph). The verdict is
+precise, not discouraging: the entity EVIDENCE is near-perfect
+(colour-correct 0.999) but the moment graph extracts almost none of
+it (one mover, mean-RGB appearance, 8 quantized facts). The work is
+depth: per-entity site-anchored chains, temporal contact profiles,
+multi-entity graphs, crop fingerprints - then re-run this exact
+probe. The instrument stack for that loop is now complete: ent gate,
+ruler bench, fusion probe, holdout protocol.
