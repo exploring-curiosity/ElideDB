@@ -2381,3 +2381,26 @@ confusion. Four localizers, a zoom channel and 640px arm-free clean
 scenes all failed, and the reason is now well understood: the arm is
 never out of frame and dwells exactly where the object is, so no
 generic "what changed" statistic isolates the object.
+
+## 2026-08-10 — THE ENTITY LAYER (L1-L3 of PROBLEM.md), first gates
+
+ent.py: persistence linking + roles-by-statistics + piecewise scene.
+The architectural finding (caught by drawing tracks on frames): a
+resting entity is ABSORBED by any whole-recording background - and
+that is CORRECT per the atomic definition (persistence without
+co-variation = scene). The scene is PIECEWISE-CONSTANT; an episodic
+entity is a chain vanish-site -> moving-track -> appear-site, and the
+sites carry before/after appearance for free (the outcome layer).
+
+Grade on sim_probe (476 events, truth EVAL-ONLY), iteration arc:
+| version | event recall | colour-correct | frag | agent cov |
+|---|---|---|---|---|
+| v1 naive bg+link | 0.931 | 0.639 | 14.1 | 1.000 |
+| v2 chromaticity+stitch | 1.000 | 0.828 | 6.6 | 1.000 |
+| v3 bbox-gate+residue | 1.000 | 0.765 | 6.3 | 1.000 |
+| v4 piecewise scene+sites | 1.000 | **0.998** | 9.8 | 0.985 |
+
+The recurring-agent role needs NO hardwire: presence x motion
+statistics identify the arm with 0.985-1.000 event coverage across
+all versions. Junk-track count stays high (127/view); the principled
+filter is L5 assembly (site-anchored chains), not more L1 tuning.
