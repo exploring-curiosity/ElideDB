@@ -1732,3 +1732,25 @@ A corpus-wide 0.9 P@10 therefore requires either (a) all three atoms fixed
 AND the composite classes re-graded at sub-event level, or (b) accepting
 that the honest corpus-wide number lands below the per-class ceiling of its
 hardest class. Sweep 6 (running) isolates atoms 1+2.
+
+## 2026-08-09 — Atoms fixed one by one: 0.612 -> 0.723
+
+| step (each isolated, controls held) | P@10 | yield | prec |
+|---|---|---|---|
+| height-profile 3+5 (previous ship) | 0.612 | 0.562 | 0.374 |
+| + BOTH camera views, max-matching (atom 1) | 0.668 | 0.578 | 0.385 |
+| + 20-row height resolution (atom 2) | 0.676 | 0.577 | 0.385 |
+| + CSLS hubness correction (leak-to-majority) | 0.695 | 0.578 | 0.385 |
+| + third temporal scale (3+5+8) | **0.723** | **0.587** | **0.391** |
+
+Per primitive at ship: pick 0.87, place 0.61, stack 0.56, unstack 0.61,
+push 0.45. Lateral term measured NULL twice (push's remaining gap is not
+coarse column deltas). Shipped in vwm_qbe + Desk (verified live): 20-row
+profiles of every recorded view, 3+5+8 segment deltas, store-view max,
+probe-sample CSLS at query time.
+
+Toward 0.9, recorded next: (a) view-contrastive head - the dual-camera
+recordings supervise view invariance for FREE (same moment, two views,
+InfoNCE; no labels, self-generated data, allowed by every rule); train-
+corpus v3 encode queued. (b) sub-event matching for composite classes.
+(c) the semantic ceiling note stands: unstack IS pick+place on film.

@@ -1,18 +1,17 @@
 """QbE over latent trajectories. The world-model read path.
 
-WHAT IS STORED per clip: the HEIGHT-PROFILE trajectory (the 5x5 grid
-column-marginalized to rows x d - image rows ~ physical height for
-these cameras) plus the predictor's state trajectory - nothing is
-summarised at write time. WHAT SCORES a window: ordered HEIGHT-PROFILE
-CHANGE at two temporal scales (thirds + fifths of segment deltas).
-Measured on the 882-event sim truthset (sweeps 1-5, BENCHMARKS
-2026-08-09): 0.612 P@10 vs 0.416 pooled appearance, 0.565 full-grid
-deltas, ~0.36 every predictor-state pool. Three findings stack:
-changes beat appearances; WHERE-invariance beats resolution (finer
-grids LOST - they encode table position); HEIGHT is the location axis
-worth keeping (the column-marginal control scored below the row
-marginal). The predictor's states still ride along (surprise, future
-representations); the scorer is whichever wins the sweep.
+WHAT IS STORED per clip: the 20-row HEIGHT-PROFILE trajectory of
+EVERY recorded camera (image rows ~ physical height; the second view
+is raw data, and single-view retrieval measured a +0.53 same-camera
+bias). WHAT SCORES a window: ordered height-profile change at three
+temporal scales (3+5+8 segment deltas), max over the store's views,
+with a CSLS hubness correction (generic moments attract everything -
+the leak-to-majority mechanism, measured in the confusion matrix).
+The ladder, all on the 882-event truthset: pooled appearance 0.416 ->
+grid deltas 0.565 -> height-profile 0.612 -> both views 0.676 ->
++CSLS 0.695 -> three scales 0.723 P@10 (yield 0.587 prec 0.391).
+Controls at every step in BENCHMARKS. The predictor's states still
+ride along; the scorer is whichever wins the sweep.
 
     python native/vwm_qbe.py --media sim/ep0003 --t0 4 --t1 12
 """
@@ -54,43 +53,23 @@ class WMIndex:
 
     def __init__(self, root="data/sim_chains", corpus="sim"):
         self.corpus = corpus
-        self.traj = {}
-        # states cache is keyed by the MODEL: a retrained predictor
-        # must not read trajectories a previous one wrote
-        import hashlib
-        import vwm
-        tag = hashlib.sha1(vwm.OUT.read_bytes()).hexdigest()[:10]
-        sdir = ROOT / "data" / "cache" / f"vwm_states_{tag}"
-        sdir.mkdir(parents=True, exist_ok=True)
+        self.traj = {}          # mid -> list of per-view r20 series
         pref = "_".join((ROOT / root).resolve()
                         .relative_to(ROOT / "data").parts)
-        for npz in sorted(CACHE.glob(f"{pref}_ep*.npz")):
-            ep = npz.stem.split("_")[-1]
-            mid = f"{corpus}/{ep}"
-            sp = sdir / f"{pref}_{ep}_v2.npz"
-            if sp.exists():
-                z2 = np.load(sp)
-                self.traj[mid] = (z2["h"].astype(np.float32),
-                                  z2["r"].astype(np.float32))
-                continue
-            import vwm
-            z = np.load(npz)
-            c = z["c"].astype(np.float32)
-            # height profile: column-marginal of the 5x5 grid
-            r = c.reshape(len(c), 5, 5, 384).mean(2).reshape(len(c), -1)
-            gi = vwm.build_input(z["g"].astype(np.float32), c)
-            h, _ = model().states(gi)
-            np.savez(sp, h=h.astype(np.float16),
-                     r=r.astype(np.float16))
-            self.traj[mid] = (h, r)
+        import re as _re
+        for npz in sorted(CACHE.glob(f"{pref}_ep*_cam*_v3.npz")):
+            m = _re.search(r"(ep\d+)_cam", npz.stem)
+            mid = f"{corpus}/{m.group(1)}"
+            self.traj.setdefault(mid, []).append(
+                np.load(npz)["r20"].astype(np.float32))
 
     @staticmethod
     def dmulti(r, s, e):
         """Ordered height-profile change of window [s,e): segment
-        deltas at two temporal scales (3rds + 5ths). Deltas cancel the
+        deltas at three temporal scales (3+5+8). Deltas cancel the
         standing scene; the row marginal cancels WHERE on the table."""
         parts = []
-        for n in (3, 5):
+        for n in (3, 5, 8):
             cuts = [s + (e - s) * i // n for i in range(n + 1)]
             cuts[-1] = e - 1
             parts += [_l2(r[cuts[i + 1]] - r[cuts[i]])
@@ -107,18 +86,32 @@ class WMIndex:
         Lq = max(6, int(round(secs * FPS)))
         v = _l2(self.dmulti(np.asarray(hq, np.float32), 0, len(hq)))
         stride = max(2, Lq // 4)
-        cands = []
-        for mid, (h, r) in self.traj.items():
-            T = len(r)
+        cands, reps = [], []
+        for mid, views in self.traj.items():
+            T = min(len(r) for r in views)
             if T < Lq:
                 continue
             for s in range(0, T - Lq + 1, stride):
-                sc = float(v @ _l2(self.dmulti(r, s, s + Lq)))
                 a, b = s / FPS, (s + Lq) / FPS
                 if exclude and mid == exclude[0] \
                         and not (b <= exclude[1] or a >= exclude[2]):
                     continue
-                cands.append((mid, a, b, sc))
+                # max over the store's views of this moment
+                rs = [_l2(self.dmulti(r, s, s + Lq)) for r in views]
+                sc = max(float(v @ x) for x in rs)
+                cands.append([mid, a, b, sc])
+                reps.append(rs[0])
+        # CSLS: a window close to EVERYTHING is close to nothing in
+        # particular - the measured leak-to-majority mechanism. Hub =
+        # mean top-50 similarity to a 256-window probe sample.
+        if len(reps) > 300:
+            R = np.stack(reps)
+            rs2 = np.random.RandomState(0)
+            probe = R[rs2.choice(len(R), 256, replace=False)]
+            hub = np.sort(R @ probe.T, 1)[:, -50:].mean(1)
+            for c, hb in zip(cands, hub):
+                c[3] = 2 * c[3] - float(hb)
+        cands = [tuple(c) for c in cands]
         cands.sort(key=lambda r: -r[3])
         out = []
         for mid, a, b, sc in cands:      # greedy non-overlap collapse
@@ -207,12 +200,10 @@ def query_states(F):
 
 
 def query_grid(F):
-    """Frames -> height-profile trajectory, the write-path operator."""
+    """Frames -> 20-row height-profile trajectory, the identical
+    write-path operator (v3 cache stores r20 = grid.mean(cols))."""
     G = _encode_grid(F)
-    T = len(G)
-    k = G.shape[1] // 5
-    c = G.reshape(T, 5, k, 5, k, -1).mean((2, 4))
-    return c.mean(2).reshape(T, -1)          # (T, 5*384) row marginal
+    return G.mean(2).reshape(len(G), -1)     # (T, 20*384)
 
 
 def search_frames(F, k=10, exclude=None, query_fps=None):
