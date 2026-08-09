@@ -1847,3 +1847,32 @@ In flight: identical operator at 448px/28-grid - the direct test of
 0.9 is resolution/encoder investment + closing the unsup gap (0.397 vs
 0.736 AP); if it stays flat, the residual is scene/observation physics
 and the honest targets are per-class.
+
+## 2026-08-09 — Campaign terminal map (yield/prec toward 0.9)
+
+Resolution test: 448px ceiling 0.792/0.732 vs 320px 0.783/0.719 - real but
+SHALLOW (+0.01); no feasible resolution reaches 0.9. Cluster-assignment
+scoring (kmeans k=8..64): purity maxes 0.60, precision drops - the
+unsupervised structure of these features does not carve primitives.
+
+THE MAP after ~20 measured experiments:
+- Ceiling (supervised, any tested feature set/resolution): ~0.79/0.73
+  corpus-wide; pick alone 0.93/0.90.
+- Best unsupervised product configuration: 0.49/0.36 oracle-cut on the
+  extended ruler (both views, r20 profile, 3+5+8 deltas, CSLS).
+- What worked: camera views (+0.06), CSLS (+0.02), multi-scale time
+  (+0.03), class-balanced generation (rare-class ceilings 2-4x).
+- What nulled, each with mechanism: color/shape (already invariant),
+  row-depth alignment, lateral term, QE, energy-based sub-units, view-
+  contrastive head, delta-target predictor, cluster scoring, finer grids,
+  static context.
+
+REMAINING ROUTES, in order of expected value:
+1. Kinematic sub-event units (cut at change-direction reversals) +
+   sub-event grading - dissolves the composite-class ceiling, serves
+   product case 4 directly.
+2. A representation trained to agree across views AND time-jitter AND
+   photometric disguise at the SUB-UNIT level (the window-level head
+   sharpened the majority class; units change the positives).
+3. Recording-side: more/closer cameras raise every ceiling at zero
+   algorithmic cost - deployment guidance, not code.

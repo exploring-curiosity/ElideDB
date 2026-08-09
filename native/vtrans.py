@@ -101,8 +101,9 @@ def encode(F):
     for i in range(0, len(F), vcore.BATCH):
         chunk = [np.ascontiguousarray(x[..., :3])
                  for x in F[i:i + vcore.BATCH]]
+        _r = int(os.environ.get("SDX_RES", "320"))
         px = proc(images=chunk, return_tensors="pt",
-                  size={"height": 320, "width": 320})["pixel_values"]
+                  size={"height": _r, "width": _r})["pixel_values"]
         with torch.no_grad():
             r = m(pixel_values=px.to(dev, dtype))
         P = vcore._patches(r, torch).float().cpu().numpy()
