@@ -103,7 +103,8 @@ def event_table(root, states, frozen):
             if b - a < 3:
                 continue
             rows.append((e["prim"], str(ep),
-                         _l2(h[a:b].mean(0)), _l2(g[a:b].mean(0))))
+                         _l2(h[a:b].mean(0)), _l2(g[a:b].mean(0)),
+                         _l2(h[b - 1])))
     return rows
 
 
@@ -113,12 +114,14 @@ def p_at_10(rows, qrows=None):
     qrows = qrows if qrows is not None else rows
     H = np.stack([r[2] for r in rows])
     G = np.stack([r[3] for r in rows])
+    E = np.stack([r[4] for r in rows])
+    cols = {"state": (2, H), "frozen": (3, G), "endstate": (4, E)}
     out = {}
-    for col, M in (("state", H), ("frozen", G)):
-        Q = np.stack([r[col == "frozen" and 3 or 2] for r in qrows])
+    for col, (ci, M) in cols.items():
+        Q = np.stack([r[ci] for r in qrows])
         S = Q @ M.T
         ps = []
-        for i, (prim, epid, _, _) in enumerate(qrows):
+        for i, (prim, epid, *_) in enumerate(qrows):
             mask = np.array([r[1] != epid for r in rows])
             s = np.where(mask, S[i], -np.inf)
             top = np.argsort(-s)[:10]
@@ -183,7 +186,8 @@ def main():
         n_by[r[0]] += 1
     print(f"  events: {dict(n_by)}")
     r = p_at_10(rows)
-    print(f"  state {r['state']:.3f}   frozen {r['frozen']:.3f}")
+    print(f"  state {r['state']:.3f}   endstate {r['endstate']:.3f}   "
+          f"frozen {r['frozen']:.3f}")
 
     print("\n=== gate e: cross-embodiment A->B (train arms -> panda eval) ===")
     for root in roots_cross:
@@ -193,7 +197,8 @@ def main():
             continue
         r = p_at_10(rows, qrows)
         print(f"  {Path(root).name:8s} q={len(qrows)}  "
-              f"state {r['state']:.3f}   frozen {r['frozen']:.3f}")
+              f"state {r['state']:.3f}   endstate {r['endstate']:.3f}   "
+              f"frozen {r['frozen']:.3f}")
 
 
 if __name__ == "__main__":

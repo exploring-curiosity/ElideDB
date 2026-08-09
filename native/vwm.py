@@ -39,6 +39,13 @@ OUT = ROOT / "native" / "wm_v1.pt"
 L = 64            # window length (6.4s at 10fps)
 STRIDE = 16
 D_IN = 384        # vits16 global latent
+# prediction horizons in FRAMES (0.1/0.5/1.5s at 10fps). At horizon 1
+# alone the task was a COPY: val 1-cos hit 0.018 because the next
+# frame is nearly the current one, so the state could be a low-pass of
+# the frozen latent and retrieval gained nothing over frozen features
+# (measured: P@10 0.352 vs frozen 0.416 once position leakage was
+# removed). Longer horizons force the state to carry dynamics.
+HORIZONS = (1, 5, 15)
 D = 384
 LAYERS = 6
 HEADS = 6
@@ -68,7 +75,8 @@ class Predictor(nn.Module):
             D, HEADS, FF, dropout=0.0, batch_first=True,
             norm_first=True, activation="gelu")
         self.enc = nn.TransformerEncoder(layer, LAYERS)
-        self.out = nn.Linear(D, D_IN)
+        self.out = nn.ModuleList(
+            [nn.Linear(D, D_IN) for _ in HORIZONS])
 
     def forward(self, x):                      # (B, T, D_IN)
         T = x.shape[1]
@@ -76,7 +84,7 @@ class Predictor(nn.Module):
         mask = nn.Transformer.generate_square_subsequent_mask(
             T, device=x.device)
         h = self.enc(h, mask=mask, is_causal=True)
-        return h, self.out(h)                  # states, next-latent preds
+        return h, [o(h) for o in self.out]     # states, per-horizon preds
 
     @torch.no_grad()
     def states(self, g, device=None, chunk=512):
@@ -88,7 +96,7 @@ class Predictor(nn.Module):
         hs, ps = [], []
         for s in range(0, x.shape[1], chunk):
             xx = x[:, max(0, s - L):s + chunk]
-            h, p = self(xx)
+            h, p = self._fwd_h1(xx)
             off = s - max(0, s - L)
             hs.append(h[0, off:])
             ps.append(p[0, off:])
@@ -99,6 +107,11 @@ class Predictor(nn.Module):
         sur = torch.zeros(x.shape[1], device=dev)
         sur[1:] = 1.0 - (pn * tn).sum(-1)
         return h.cpu().numpy(), sur.cpu().numpy()
+
+    @torch.no_grad()
+    def _fwd_h1(self, xx):
+        h, ps = self(xx)
+        return h, ps[0]
 
 
 def sigreg(h, k=64, ts=(0.5, 1.0, 1.5, 2.0, 2.5)):
@@ -166,10 +179,13 @@ def main():
         for i in tqdm(range(0, len(idx), BS), unit="batch",
                       desc=f"epoch {ep}"):
             xb = torch.as_tensor(Xtr[idx[i:i + BS]], device=dev)
-            h, p = model(xb)
-            pn = torch.nn.functional.normalize(p[:, :-1], dim=-1)
-            tn = torch.nn.functional.normalize(xb[:, 1:], dim=-1)
-            pred = 1.0 - (pn * tn).sum(-1).mean()
+            h, ps2 = model(xb)
+            pred = 0.0
+            for hz, p in zip(HORIZONS, ps2):
+                pn = torch.nn.functional.normalize(p[:, :-hz], dim=-1)
+                tn = torch.nn.functional.normalize(xb[:, hz:], dim=-1)
+                pred = pred + (1.0 - (pn * tn).sum(-1).mean())
+            pred = pred / len(HORIZONS)
             gau = sigreg(h)
             loss = pred + LAMBDA * gau
             opt.zero_grad(); loss.backward(); opt.step(); sched.step()
@@ -179,16 +195,20 @@ def main():
             vp = 0.0
             for s in range(0, len(Xva_t), BS):
                 xb = Xva_t[s:s + BS]
-                _, p = model(xb)
-                pn = torch.nn.functional.normalize(p[:, :-1], dim=-1)
-                tn = torch.nn.functional.normalize(xb[:, 1:], dim=-1)
-                vp += float((1.0 - (pn * tn).sum(-1).mean())) * len(xb)
+                _, ps2 = model(xb)
+                v = 0.0
+                for hz, p in zip(HORIZONS, ps2):
+                    pn = torch.nn.functional.normalize(p[:, :-hz], dim=-1)
+                    tn = torch.nn.functional.normalize(xb[:, hz:], dim=-1)
+                    v += float(1.0 - (pn * tn).sum(-1).mean())
+                vp += (v / len(HORIZONS)) * len(xb)
             vp /= max(1, len(Xva_t))
         hist.append(dict(epoch=ep, pred=pl / nb, sig=gl / nb, val=vp))
         print(f"  epoch {ep}: pred {pl/nb:.4f}  sig {gl/nb:.4f}  "
               f"val_pred {vp:.4f}")
     torch.save(model.state_dict(), OUT)
     manifest = dict(encoder="vits16@320", pos="none (NoPE)",
+                    horizons=list(HORIZONS),
                     L=L, stride=STRIDE, d=D,
                     layers=LAYERS, heads=HEADS, ff=FF, lam=LAMBDA,
                     lr=LR, bs=BS, epochs=EPOCHS, seed=SEED,
