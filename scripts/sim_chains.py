@@ -205,11 +205,24 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
     frame_n = 0
     wall0 = time.time()
 
+    # SDX_TRACE=1: dump per-frame GROUND TRUTH alongside the film -
+    # hand xyz, per-block xyz+quat, gripper ctrl. The extraction-
+    # quality instrument: sim gives exact state for free, and the
+    # latent pipeline must be probed against it stage by stage, not
+    # judged only through end-to-end retrieval.
+    trace = ([] if _os.environ.get("SDX_TRACE") else None)
+
     def frames():
         nonlocal frame_n
         for cam, p in zip(cams, enc):
             r.update_scene(d, camera=cam)
             p.stdin.write(r.render().tobytes())
+        if trace is not None:
+            row = [d.time, *d.xpos[arm.hand],
+                   float(d.ctrl[arm.grip])]
+            for k in bid:
+                row += [*d.xpos[k], *d.xquat[k]]
+            trace.append(row)
         frame_n += 1
 
     def sim(seconds):
@@ -680,6 +693,9 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
                "seconds": round(frame_n / RFPS, 1),
                "wall_s": round(time.time() - wall0, 1)}
     (ep_dir / "meta.json").write_text(json.dumps(rec_out, indent=1))
+    if trace is not None:
+        np.save(ep_dir / "trace.npy",
+                np.asarray(trace, dtype=np.float32))
     log.append(rec_out)
     return rec_out
 

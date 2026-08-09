@@ -1952,3 +1952,29 @@ span+DTW w=0.5 strictly dominates the previous ship on all three numbers,
 so it is the default; cover buys +0.068 yield for -0.007 prec if a
 deployment wants recall. Live in vwm_qbe + Desk (verified: same top hits
 as the CLI, 3.7 s/query over the full store with no pruning yet).
+
+## 2026-08-09 — THE EXTRACTION LADDER: the measurement that was never taken
+
+Per-frame ground truth now dumps from the generator (SDX_TRACE: hand xyz,
+grip ctrl, per-block xyz+quat, aligned to frames). 40-episode probe corpus,
+ridge probes 5-fold by episode, R^2 per pipeline stage per quantity:
+
+| stage | hand_x | hand_y | hand_z | grip | tower_z | nearblk_z | h-b dist | blk_speed |
+|---|---|---|---|---|---|---|---|---|
+| S0 pixels 32x24 | 0.370 | 0.393 | 0.243 | -0.00 | -0.00 | -0.00 | 0.121 | -0.01 |
+| S1 grid 20x20 (JL4k) | 0.684 | 0.571 | 0.684 | 0.057 | 0.180 | 0.181 | 0.439 | 0.056 |
+| S2 c 5x5 | 0.690 | 0.568 | 0.663 | 0.053 | 0.169 | 0.170 | 0.425 | 0.053 |
+| S3 r20 row-marg | 0.537 | 0.308 | 0.668 | 0.055 | 0.154 | 0.159 | 0.448 | 0.058 |
+| S4 g global | 0.548 | 0.218 | 0.523 | 0.042 | 0.126 | 0.132 | 0.353 | 0.039 |
+| S5 rp768 (ship) | 0.575 | 0.333 | 0.663 | 0.051 | 0.161 | 0.165 | 0.454 | 0.058 |
+
+READING: the quantities that define the task - nearest-block HEIGHT
+(stack vs place), TOWER height (structure state), GRIPPER state (pick vs
+release) - are essentially ABSENT already at the FULL frozen grid (R^2
+0.18/0.18/0.06), before any pooling. Pooling losses are real but
+secondary (row-marginal kills hand_y 0.57->0.31). Velocities are absent
+from any single frame, as expected. This is why every matcher variant
+conserved the envelope: the latent never contained the state.
+
+Capacity check in flight (MLP + full-grid + frame-pair probes) to
+separate "encoder lacks it" from "probe could not read it".
