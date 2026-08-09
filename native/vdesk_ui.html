@@ -244,6 +244,12 @@
             checked> exclude the example's own moment</label>
           <label class="chk"><input type="checkbox" id="abst" checked>
             abstain</label>
+          <!-- world-model path: the stored representation is the
+               predictor's state trajectory, similarity is sequence
+               matching. sim store only until other corpora are
+               state-encoded. -->
+          <label class="chk" id="wm-wrap" style="display:none">
+            <input type="checkbox" id="wm"> world-model states</label>
         </div>
         <div style="margin-top:11px" id="preview"></div>
       </div>
@@ -332,6 +338,8 @@ async function pickStore(k){
   S.store = k;
   document.querySelectorAll('.store-card').forEach(c =>
     c.classList.toggle('on', c.dataset.k === k));
+  $('#wm-wrap').style.display = (k === 'sim') ? '' : 'none';
+  if (k !== 'sim') $('#wm').checked = false;
   const t = $('#tgt'); if (t) t.value = k;
   S.media = await (await fetch('/api/media?store='+encodeURIComponent(k))).json();
   $('#medialist').innerHTML = S.media.map((m,i) => `
@@ -469,7 +477,8 @@ $('#go').onclick = async () => {
   try {
     const body = {store: tgt, t0: S.t0, t1: S.t1,
                   exclude_self: $('#excl').checked,
-                  abstain: $('#abst').checked};
+                  abstain: $('#abst').checked,
+                  mode: ($('#wm').checked ? 'wm' : null)};
     if (S.upload) body.upload_id = S.upload; else body.media = S.sel;
     const r = await fetch('/api/qbe',
       {method:'POST', headers:{'Content-Type':'application/json'},

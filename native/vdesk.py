@@ -407,6 +407,33 @@ def api_qbe(body):
     if len(F) < 8:
         raise ValueError("decoded fewer than 8 frames from that span")
 
+    if body.get("mode") == "wm":
+        # WORLD-MODEL PATH: the representation is the predictor's state
+        # trajectory; similarity is sequence matching over stored
+        # trajectories. One operator for write and read (vwm_qbe).
+        if key != "sim":
+            raise ValueError("world-model states cover the sim store "
+                             "only until other corpora are state-encoded")
+        import vwm_qbe
+        with _ENC_LOCK:
+            t_enc = time.perf_counter()
+            exclude = ((mid, t0, t1)
+                       if body.get("exclude_self", True) and mid
+                       and not upload else None)
+            rows = vwm_qbe.search_frames(
+                F, k=int(body.get("k") or 10), exclude=exclude)
+            wm_ms = (time.perf_counter() - t_enc) * 1e3
+        hits = [dict(media=m, t0=round(a, 2), t1=round(b, 2),
+                     score=round(s, 4)) for m, a, b, s in rows]
+        return dict(
+            hits=hits,
+            query=dict(store=key, media=mid, upload=upload, t0=t0,
+                       t1=t1, frames=int(len(F)), sub_windows=None),
+            stats=dict(returned=len(hits), mode="wm",
+                       decode_ms=round(dec_ms, 1),
+                       search_ms=round(wm_ms, 1),
+                       excluded_self=exclude is not None))
+
     with _ENC_LOCK:
         warm()
         t_enc = time.perf_counter()
