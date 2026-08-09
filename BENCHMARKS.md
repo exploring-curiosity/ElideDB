@@ -1754,3 +1754,29 @@ recordings supervise view invariance for FREE (same moment, two views,
 InfoNCE; no labels, self-generated data, allowed by every rule); train-
 corpus v3 encode queued. (b) sub-event matching for composite classes.
 (c) the semantic ceiling note stands: unstack IS pick+place on film.
+
+## 2026-08-09 — Yield/prec is THE metric: decomposition + hypothesis ladder
+
+Reframed per the product: the system must return a SET (own cut) with
+yield = true/support and prec = true/returned, both 0.90. Harness v2
+separates the two failure modes:
+
+- ORACLE-CUT ceiling (best threshold given the ranking): **0.539/0.431**
+  -> no cut can rescue the current ranking; DEPTH is the whole game.
+- The sharpest symptom: pick has P@10 0.87 but deep AUC 0.527 - the scorer
+  finds near-duplicates at the head and ranks the class tail randomly.
+  Corpus-wide AP 0.442.
+
+Hypotheses for the tail, each measured and KILLED:
+1. colour-binding: correct hits share colour at 0.129 vs base 0.125 - the
+   deltas are already colour-blind (shape likewise 0.515 vs 0.505).
+2. row/depth conflation: pick-pick similarity vs row-of-change distance
+   spearman -0.076; change-centered row alignment moved AP 0.442->0.444.
+3. query expansion (alpha-QE): AP +0.02 but oracle YIELD -0.02 - sharpens
+   the head, does not recover the tail.
+
+Conclusion: the fixed operator's invariance budget is spent. In flight:
+cross-view InfoNCE head (vwm_head.py) - two cameras filmed the same
+moment, so agreement across views is free physical supervision; temporal
+jitter positives add phase robustness; trained on the seed-disjoint
+self-generated corpus only.
