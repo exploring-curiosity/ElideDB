@@ -2217,3 +2217,14 @@ arm-motion structure, so their span pairs teach CCA the nuisance.
 Event spans work because their boundaries mark manipulation
 completion. The segmentation that passes this gate must localize
 STATE-CHANGE boundaries, not motion boundaries.
+
+Gate rounds 2-3: statechange boundaries (settled-state diff maxima)
+0.342; change-SELECTED stride spans 0.354 (best label-free source,
+confirming composition matters directionally). Final gate ladder:
+units 0.334 ~ refunits 0.333 < motion 0.342 = statechange 0.342 <
+stride 0.350 < stridesel 0.354 << raw 0.367 << EVENT-FIT 0.433.
+Six label-free constructions fail; the event-supervision gap is
+robust. Open routes (both substantive, recorded): a segmentation that
+truly localizes manipulation completion (write-path proposer class),
+or Desk-verdict span supervision via the sanctioned offline
+post-query tier.

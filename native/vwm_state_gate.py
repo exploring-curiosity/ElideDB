@@ -111,6 +111,21 @@ def fit_pairs(source):
                      for e in meta["events"] if e["ok"]]
         elif source == "stride":
             spans = [(s, s + 30) for s in range(0, T - 30 + 1, 15)]
+        elif source == "stridesel":
+            # composition hypothesis: 5 boundary schemes fail alike ->
+            # the differentiator may be fit-set COMPOSITION, not
+            # boundary placement. Truth events are all manipulation
+            # spans; candidates dilute with idle/travel. Keep only
+            # stride spans whose settled state actually CHANGED
+            # (per-recording Otsu on end-start state-diff mass).
+            import vwm_units
+            rr = rrefs[0][:T]
+            cand = [(s, s + 30) for s in range(0, T - 30 + 1, 15)]
+            mass = np.array([float(np.linalg.norm(
+                endmean(rr, b - 1) - endmean(rr, a)))
+                for a, b in cand], np.float32)
+            thr = vwm_units.otsu(mass)
+            spans = [c for c, m in zip(cand, mass) if m >= thr]
         elif source in ("units", "refunits"):
             # refunits: corner the REFERENCED trajectory - the
             # extraction repair may improve the segmentation itself
@@ -131,6 +146,33 @@ def fit_pairs(source):
             import vwm_units
             spans = [(s, e) for s, e in vwm_units.units_of(rrefs[0][:T])
                      if e - s >= 6]
+        elif source == "statechange":
+            # gate round 1 verdict: motion boundaries teach the
+            # nuisance; event boundaries mark where SETTLED STATE
+            # differs before/after. Cut exactly there: boundary score
+            # = distance between the settled referenced state in the
+            # past vs future 0.5s window, maxima above per-recording
+            # Otsu, spans between consecutive boundaries (+ merges).
+            import vwm_units
+            rr = rrefs[0][:T]
+            W = 5
+            bs = np.zeros(T, np.float32)
+            for t in range(W, T - W):
+                bs[t] = float(np.linalg.norm(
+                    rr[t:t + W].mean(0) - rr[t - W:t].mean(0)))
+            thr = vwm_units.otsu(bs[W:T - W])
+            cuts = [0]
+            for t in range(W, T - W):
+                if bs[t] >= thr and bs[t] == bs[max(0, t - 3):t + 4].max() \
+                        and t - cuts[-1] >= 6:
+                    cuts.append(t)
+            cuts.append(T)
+            spans = [(cuts[i], cuts[i + 1])
+                     for i in range(len(cuts) - 1)
+                     if cuts[i + 1] - cuts[i] >= 6]
+            spans += [(cuts[i], cuts[i + 2])
+                      for i in range(len(cuts) - 2)
+                      if cuts[i + 2] - cuts[i] >= 10]
         for a, b in spans:
             b = min(b, T)
             if b - a < 6:
@@ -211,7 +253,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--spans", default="events",
                     choices=("events", "stride", "units", "refunits",
-                             "motion"))
+                             "motion", "statechange", "stridesel"))
     a = ap.parse_args()
     ev = truth_events()
     prims = np.array([e[0] for e in ev])
