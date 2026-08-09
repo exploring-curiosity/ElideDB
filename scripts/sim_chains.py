@@ -115,7 +115,30 @@ TEMPLATES = {
         ("pick", 1), ("stack", 1, 0),
         ("pick", 2), ("stack", 2, 1),
         ("pick", 3), ("stack", 3, 2)], precarious=True),
+    # class-balance templates: the benchmark's rare classes (unstack
+    # n=42, push n=25) had supervised ceilings of 0.37/0.36 largely
+    # from starvation - the generator is ours, so the fix is episodes,
+    # not scoring. tower_teardown yields 2 unstacks/ep, push_field 3
+    # pushes/ep, verified by the same rules as every other episode.
+    "tower_teardown": dict(n=3, steps=[
+        ("pick", 0), ("place", 0, "Z0"),
+        ("pick", 1), ("stack", 1, 0),
+        ("pick", 2), ("stack", 2, 1),
+        ("unstack", 2, "Z1"),
+        ("unstack", 1, "Z2")]),
+    "push_field": dict(n=3, steps=[
+        ("push", 0, "Z0"),
+        ("push", 1, "Z1"),
+        ("push", 2, "Z2"),
+        ("pick", 0), ("stack", 0, 1)]),
 }
+
+# targeted batches: SDX_TEMPLATES=a,b restricts the round-robin
+_tf = _os.environ.get("SDX_TEMPLATES")
+if _tf:
+    keep = set(_tf.split(","))
+    assert keep <= set(TEMPLATES), f"unknown templates {keep - set(TEMPLATES)}"
+    TEMPLATES = {k: v for k, v in TEMPLATES.items() if k in keep}
 
 
 def zone_of(x, y):

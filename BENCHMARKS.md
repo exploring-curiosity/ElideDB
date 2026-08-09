@@ -1812,3 +1812,14 @@ class-balanced generation (more unstack/push episodes - self-generated,
 allowed) raises the ceiling itself; (b) sub-event units change what
 "same experience" means for composites; (c) accept per-class targets
 (pick to 0.9 first). These are product-semantics choices, not tuning.
+
+## 2026-08-09 — Sub-event units v1: null, with the mechanism
+
+Energy-valley segmentation produced a MEDIAN OF 1 unit per event: the arm
+never pauses mid-event, so stillness valleys separate events, not
+sub-events - the composite structure lives at kinematic phase changes
+(grasp/lift/lower turning points), not motion gaps. Unit set-match scored
+AP 0.428 vs 0.442 whole-span; push collapsed to 0.08 (its low-energy
+motion falls under the recording's own Otsu threshold). vwm_units.py kept
+as the instrument; next unit attempt must cut on change-direction
+reversals, not energy.
