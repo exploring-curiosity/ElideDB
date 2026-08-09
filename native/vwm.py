@@ -38,7 +38,19 @@ OUT = ROOT / "native" / "wm_v1.pt"
 
 L = 64            # window length (6.4s at 10fps)
 STRIDE = 16
-D_IN = 384        # vits16 global latent
+# INPUT: global latent + the 5x5 coarse grid under a FIXED random
+# projection (Johnson-Lindenstrauss; seed-pinned, never fitted). The
+# global vector alone dilutes the arm and blocks to near-invisibility
+# - rounds 2-3 measured states that never beat frozen features because
+# a globally-pooled scene barely changes frame to frame and prediction
+# stayed a copy task at every horizon. The grid is where the dynamics
+# live (DINO-WM predicts patch latents for the same reason), and the
+# TARGETS are the projected grid too, so the state must encode where
+# things are and how they move.
+D_G = 384
+D_C = 5 * 5 * 384
+D_CP = 1536
+D_IN = D_G + D_CP
 # prediction horizons in FRAMES (0.1/0.5/1.5s at 10fps). At horizon 1
 # alone the task was a COPY: val 1-cos hit 0.018 because the next
 # frame is nearly the current one, so the state could be a low-pass of
@@ -47,6 +59,24 @@ D_IN = 384        # vits16 global latent
 # removed). Longer horizons force the state to carry dynamics.
 HORIZONS = (1, 5, 15)
 D = 384
+_RP = None
+
+
+def rproj():
+    global _RP
+    if _RP is None:
+        rs = np.random.RandomState(7)
+        _RP = (rs.randn(D_C, D_CP) / np.sqrt(D_CP)).astype(np.float32)
+    return _RP
+
+
+def build_input(g, c):
+    """(T,384),(T,9600) -> (T, D_IN). THE input operator, used
+    identically by training, gates, battery and the QbE read path."""
+    cp = np.asarray(c, np.float32) @ rproj()
+    cp /= np.maximum(np.linalg.norm(cp, axis=-1, keepdims=True), 1e-8)
+    g = np.asarray(g, np.float32)
+    return np.concatenate([g, cp], -1)
 LAYERS = 6
 HEADS = 6
 FF = 1536
@@ -75,8 +105,11 @@ class Predictor(nn.Module):
             D, HEADS, FF, dropout=0.0, batch_first=True,
             norm_first=True, activation="gelu")
         self.enc = nn.TransformerEncoder(layer, LAYERS)
+        # predict the PROJECTED GRID at each horizon - the spatial
+        # part; predicting the full input back would re-reward copying
+        # the slow global component
         self.out = nn.ModuleList(
-            [nn.Linear(D, D_IN) for _ in HORIZONS])
+            [nn.Linear(D, D_CP) for _ in HORIZONS])
 
     def forward(self, x):                      # (B, T, D_IN)
         T = x.shape[1]
@@ -101,7 +134,7 @@ class Predictor(nn.Module):
             hs.append(h[0, off:])
             ps.append(p[0, off:])
         h = torch.cat(hs); p = torch.cat(ps)
-        tgt = x[0, 1:]
+        tgt = x[0, 1:, D_G:]                    # projected-grid part
         pn = torch.nn.functional.normalize(p[:-1], dim=-1)
         tn = torch.nn.functional.normalize(tgt, dim=-1)
         sur = torch.zeros(x.shape[1], device=dev)
@@ -112,6 +145,27 @@ class Predictor(nn.Module):
     def _fwd_h1(self, xx):
         h, ps = self(xx)
         return h, ps[0]
+
+    @torch.no_grad()
+    def deltas(self, gi, device=None, chunk=512):
+        """Predicted-change field: normalize(pred_grid(t+H) - grid(t))
+        per frame. Appearance cancels in the subtraction; what remains
+        is where the model believes the scene is GOING - dynamics
+        isolated from looks, computed from the trained heads with no
+        retraining. (Precedent: the delta-appearance channel.)"""
+        self.eval()
+        dev = device or next(self.parameters()).device
+        x = torch.as_tensor(np.asarray(gi, np.float32), device=dev)[None]
+        out = []
+        for s in range(0, x.shape[1], chunk):
+            xx = x[:, max(0, s - L):s + chunk]
+            h, ps = self(xx)
+            off = s - max(0, s - L)
+            d = ps[-1][0, off:] - xx[0, off:, D_G:]
+            out.append(d)
+        d = torch.cat(out)
+        d = torch.nn.functional.normalize(d, dim=-1)
+        return d.cpu().numpy()
 
 
 def sigreg(h, k=64, ts=(0.5, 1.0, 1.5, 2.0, 2.5)):
@@ -144,12 +198,15 @@ def load_windows(roots):
     def wins(files):
         X = []
         for f in files:
-            g = np.load(f)["g"].astype(np.float32)
-            for s in range(0, max(1, len(g) - L), STRIDE):
-                w = g[s:s + L]
+            z = np.load(f)
+            gi = build_input(z["g"].astype(np.float32),
+                             z["c"].astype(np.float32))
+            for s in range(0, max(1, len(gi) - L), STRIDE):
+                w = gi[s:s + L]
                 if len(w) == L:
-                    X.append(w)
-        return np.stack(X) if X else np.zeros((0, L, D_IN), np.float32)
+                    X.append(w.astype(np.float16))
+        return (np.stack(X) if X
+                else np.zeros((0, L, D_IN), np.float16))
 
     return wins(tr_eps), wins(val_eps), len(tr_eps), len(val_eps)
 
@@ -171,19 +228,21 @@ def main():
         opt, T_max=EPOCHS * max(1, len(Xtr) // BS))
     from tqdm import tqdm
     hist = []
-    Xva_t = torch.as_tensor(Xva, device=dev)
+    Xva_t = torch.as_tensor(Xva.astype(np.float32), device=dev)
     for ep in range(EPOCHS):
         model.train()
         idx = np.random.RandomState(SEED + ep).permutation(len(Xtr))
         pl = gl = nb = 0
         for i in tqdm(range(0, len(idx), BS), unit="batch",
                       desc=f"epoch {ep}"):
-            xb = torch.as_tensor(Xtr[idx[i:i + BS]], device=dev)
+            xb = torch.as_tensor(Xtr[idx[i:i + BS]].astype(np.float32),
+                                 device=dev)
             h, ps2 = model(xb)
             pred = 0.0
             for hz, p in zip(HORIZONS, ps2):
                 pn = torch.nn.functional.normalize(p[:, :-hz], dim=-1)
-                tn = torch.nn.functional.normalize(xb[:, hz:], dim=-1)
+                tn = torch.nn.functional.normalize(
+                    xb[:, hz:, D_G:], dim=-1)
                 pred = pred + (1.0 - (pn * tn).sum(-1).mean())
             pred = pred / len(HORIZONS)
             gau = sigreg(h)
@@ -199,7 +258,8 @@ def main():
                 v = 0.0
                 for hz, p in zip(HORIZONS, ps2):
                     pn = torch.nn.functional.normalize(p[:, :-hz], dim=-1)
-                    tn = torch.nn.functional.normalize(xb[:, hz:], dim=-1)
+                    tn = torch.nn.functional.normalize(
+                        xb[:, hz:, D_G:], dim=-1)
                     v += float(1.0 - (pn * tn).sum(-1).mean())
                 vp += (v / len(HORIZONS)) * len(xb)
             vp /= max(1, len(Xva_t))
@@ -208,6 +268,7 @@ def main():
               f"val_pred {vp:.4f}")
     torch.save(model.state_dict(), OUT)
     manifest = dict(encoder="vits16@320", pos="none (NoPE)",
+                    input="g+RP(grid) 1920, targets RP(grid)",
                     horizons=list(HORIZONS),
                     L=L, stride=STRIDE, d=D,
                     layers=LAYERS, heads=HEADS, ff=FF, lam=LAMBDA,

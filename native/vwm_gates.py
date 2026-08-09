@@ -89,7 +89,7 @@ def auc(pos, neg):
     return float(gt + 0.5 * eq)
 
 
-def event_table(root, states, frozen):
+def event_table(root, states, frozen):    # noqa: C901
     """(prim, ep, mean-state, mean-frozen) per verified event span."""
     rows = []
     for (ep, npz) in episodes(root):
@@ -102,9 +102,10 @@ def event_table(root, states, frozen):
             a, b = int(e["t0"] * FPS), min(len(h), int(e["t1"] * FPS))
             if b - a < 3:
                 continue
+            dl = states[str(ep) + "/dlt"]
             rows.append((e["prim"], str(ep),
                          _l2(h[a:b].mean(0)), _l2(g[a:b].mean(0)),
-                         _l2(h[b - 1])))
+                         _l2(h[b - 1]), _l2(dl[a:b].mean(0))))
     return rows
 
 
@@ -115,7 +116,9 @@ def p_at_10(rows, qrows=None):
     H = np.stack([r[2] for r in rows])
     G = np.stack([r[3] for r in rows])
     E = np.stack([r[4] for r in rows])
-    cols = {"state": (2, H), "frozen": (3, G), "endstate": (4, E)}
+    DL = np.stack([r[5] for r in rows])
+    cols = {"state": (2, H), "frozen": (3, G), "endstate": (4, E),
+            "delta": (5, DL)}
     out = {}
     for col, (ci, M) in cols.items():
         Q = np.stack([r[ci] for r in qrows])
@@ -141,11 +144,14 @@ def main():
     states, frozen = {}, {}
     all_eps = [e for r in roots_eval + roots_cross for e in episodes(r)]
     for ep, npz in tqdm(all_eps, unit="ep", desc="states"):
-        g = np.load(npz)["g"].astype(np.float32)
-        h, sur = model.states(g)
+        z = np.load(npz)
+        g = z["g"].astype(np.float32)
+        gi = vwm.build_input(g, z["c"].astype(np.float32))
+        h, sur = model.states(gi)
         states[str(ep)] = h
         frozen[str(ep)] = g
         states[str(ep) + "/sur"] = sur
+        states[str(ep) + "/dlt"] = model.deltas(gi)
 
     print("\n=== gate a: primitive probe (frame -> active primitive) ===")
     reps_h, reps_g, labs = [], [], []
@@ -187,7 +193,7 @@ def main():
     print(f"  events: {dict(n_by)}")
     r = p_at_10(rows)
     print(f"  state {r['state']:.3f}   endstate {r['endstate']:.3f}   "
-          f"frozen {r['frozen']:.3f}")
+          f"delta {r['delta']:.3f}   frozen {r['frozen']:.3f}")
 
     print("\n=== gate e: cross-embodiment A->B (train arms -> panda eval) ===")
     for root in roots_cross:
@@ -198,7 +204,7 @@ def main():
         r = p_at_10(rows, qrows)
         print(f"  {Path(root).name:8s} q={len(qrows)}  "
               f"state {r['state']:.3f}   endstate {r['endstate']:.3f}   "
-              f"frozen {r['frozen']:.3f}")
+              f"delta {r['delta']:.3f}   frozen {r['frozen']:.3f}")
 
 
 if __name__ == "__main__":

@@ -65,8 +65,11 @@ class WMIndex:
             if sp.exists():
                 self.traj[mid] = np.load(sp)["h"].astype(np.float32)
             else:
-                g = np.load(npz)["g"].astype(np.float32)
-                h, _ = model().states(g)
+                import vwm
+                z = np.load(npz)
+                gi = vwm.build_input(z["g"].astype(np.float32),
+                                     z["c"].astype(np.float32))
+                h, _ = model().states(gi)
                 np.savez(sp, h=h.astype(np.float16))
                 self.traj[mid] = h.astype(np.float32)
 
@@ -131,12 +134,14 @@ def index(root="data/sim_chains", corpus="sim"):
 
 def query_states(F):
     """Frames -> states, the identical write-path operator."""
+    import vwm
     from vtrans import encode
     G = encode(F)
     T = len(G)
-    g = G.reshape(T, -1, G.shape[-1]).mean(1)
-    g = _l2(g)
-    h, sur = model().states(g)
+    g = _l2(G.reshape(T, -1, G.shape[-1]).mean(1))
+    k = G.shape[1] // 5
+    c = G.reshape(T, 5, k, 5, k, -1).mean((2, 4)).reshape(T, -1)
+    h, sur = model().states(vwm.build_input(g, c))
     return h, sur
 
 
