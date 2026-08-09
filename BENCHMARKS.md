@@ -1935,3 +1935,20 @@ The units TRANSFER: write-time segmentation loses nothing (set-match
 yield is even slightly higher). So the shipping design is sound - cut
 each episode once, store the unit reps, clip per candidate window at O(1).
 Ordered-variant confirmation under the same geometry is running.
+
+### Shipped: span + ordered-phase DTW (w=0.5), episode-cut geometry
+
+Full confirmation under shipping geometry (1352 events):
+
+| scorer | AP | yield | prec |
+|---|---|---|---|
+| whole-span (previous ship) | 0.394 | 0.474 | 0.386 |
+| **span + DTW w=0.5 (SHIPPED)** | **0.396** | **0.494** | **0.388** |
+| span + DTW w=0.7 | 0.391 | 0.506 | 0.384 |
+| span + DTW + cover (yield-first option) | 0.385 | 0.542 | 0.379 |
+| unit coverage alone | 0.285 | 0.831 | 0.334 |
+
+span+DTW w=0.5 strictly dominates the previous ship on all three numbers,
+so it is the default; cover buys +0.068 yield for -0.007 prec if a
+deployment wants recall. Live in vwm_qbe + Desk (verified: same top hits
+as the CLI, 3.7 s/query over the full store with no pruning yet).

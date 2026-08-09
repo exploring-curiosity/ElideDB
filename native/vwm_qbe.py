@@ -54,14 +54,26 @@ class WMIndex:
     def __init__(self, root="data/sim_chains", corpus="sim"):
         self.corpus = corpus
         self.traj = {}          # mid -> list of per-view r20 series
+        self.kin = {}           # mid -> list of per-view (cuts, proj)
         pref = "_".join((ROOT / root).resolve()
                         .relative_to(ROOT / "data").parts)
         import re as _re
+        import vwm_kin
+        self.P = None
         for npz in sorted(CACHE.glob(f"{pref}_ep*_cam*_v3.npz")):
             m = _re.search(r"(ep\d+)_cam", npz.stem)
             mid = f"{corpus}/{m.group(1)}"
-            self.traj.setdefault(mid, []).append(
-                np.load(npz)["r20"].astype(np.float32))
+            r = np.load(npz)["r20"].astype(np.float32)
+            self.traj.setdefault(mid, []).append(r)
+            # WRITE-TIME segmentation: each episode is cut ONCE into
+            # kinematic phases and a query window inherits the cuts
+            # inside it. Measured equal to per-span cutting, and O(1)
+            # per candidate window instead of a re-segmentation.
+            if self.P is None:
+                self.P = vwm_kin.rproj(r.shape[1])
+            rp = vwm_kin._l2(r @ self.P)
+            self.kin.setdefault(mid, []).append(
+                (vwm_kin.dp_cuts(rp, max_units=64), rp))
 
     @staticmethod
     def dmulti(r, s, e):
@@ -84,13 +96,23 @@ class WMIndex:
         qf = float(query_fps or FPS)
         secs = max(0.4, len(hq) / qf)
         Lq = max(6, int(round(secs * FPS)))
+        import vwm_kin
         v = _l2(self.dmulti(np.asarray(hq, np.float32), 0, len(hq)))
+        # query phases, same operator as the store's
+        qp = vwm_kin._l2(np.asarray(hq, np.float32) @ self.P)
+        qc = vwm_kin.dp_cuts(qp)
+        QU = np.stack([vwm_kin.unit_rep(qp, qc[i], qc[i + 1])
+                       for i in range(len(qc) - 1)
+                       if qc[i + 1] - qc[i] >= vwm_kin.MIN_UNIT]
+                      or [vwm_kin.unit_rep(qp, 0, len(qp))])
+        QU = _l2(QU)
         stride = max(2, Lq // 4)
         cands, reps = [], []
         for mid, views in self.traj.items():
             T = min(len(r) for r in views)
             if T < Lq:
                 continue
+            kv = self.kin.get(mid, [])
             for s in range(0, T - Lq + 1, stride):
                 a, b = s / FPS, (s + Lq) / FPS
                 if exclude and mid == exclude[0] \
@@ -99,6 +121,25 @@ class WMIndex:
                 # max over the store's views of this moment
                 rs = [_l2(self.dmulti(r, s, s + Lq)) for r in views]
                 sc = max(float(v @ x) for x in rs)
+                # ORDERED PHASE ALIGNMENT: the window inherits the
+                # episode's cuts; DTW keeps descend->lift from matching
+                # lift->descend. Fused 50/50 with the span score - the
+                # configuration that strictly dominated span-only on
+                # yield, precision AND AP under this exact geometry.
+                dt = -1.0
+                for cuts, rp in kv:
+                    inner = [c for c in cuts
+                             if s + vwm_kin.MIN_UNIT <= c
+                             <= s + Lq - vwm_kin.MIN_UNIT]
+                    seg = [s] + inner + [s + Lq]
+                    U = [vwm_kin.unit_rep(rp, seg[i], seg[i + 1])
+                         for i in range(len(seg) - 1)
+                         if seg[i + 1] - seg[i] >= vwm_kin.MIN_UNIT]
+                    if not U:
+                        continue
+                    dt = max(dt, _dtw(QU, _l2(np.stack(U))))
+                if dt > -1.0:
+                    sc = 0.5 * sc + 0.5 * dt
                 cands.append([mid, a, b, sc])
                 reps.append(rs[0])
         # CSLS: a window close to EVERYTHING is close to nothing in
@@ -122,6 +163,23 @@ class WMIndex:
             if len(out) >= k:
                 break
         return out
+
+
+def _dtw(Q, C):
+    """Path-length-normalized DTW similarity between two unit
+    sequences (tiny: <=8 x <=8)."""
+    M = Q @ C.T
+    u, m = M.shape
+    D = np.empty((u, m), np.float32)
+    D[0, 0] = M[0, 0]
+    for j in range(1, m):
+        D[0, j] = M[0, j] + D[0, j - 1]
+    for i in range(1, u):
+        D[i, 0] = M[i, 0] + D[i - 1, 0]
+        for j in range(1, m):
+            D[i, j] = M[i, j] + max(D[i - 1, j], D[i - 1, j - 1],
+                                    D[i, j - 1])
+    return float(D[u - 1, m - 1] / (u + m - 1))
 
 
 _INDEX = {}
