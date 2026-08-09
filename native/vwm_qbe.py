@@ -49,7 +49,12 @@ class WMIndex:
     def __init__(self, root="data/sim_chains", corpus="sim"):
         self.corpus = corpus
         self.traj = {}
-        sdir = ROOT / "data" / "cache" / "vwm_states"
+        # states cache is keyed by the MODEL: a retrained predictor
+        # must not read trajectories a previous one wrote
+        import hashlib
+        import vwm
+        tag = hashlib.sha1(vwm.OUT.read_bytes()).hexdigest()[:10]
+        sdir = ROOT / "data" / "cache" / f"vwm_states_{tag}"
         sdir.mkdir(parents=True, exist_ok=True)
         pref = "_".join((ROOT / root).resolve()
                         .relative_to(ROOT / "data").parts)
@@ -65,10 +70,27 @@ class WMIndex:
                 np.savez(sp, h=h.astype(np.float16))
                 self.traj[mid] = h.astype(np.float32)
 
-    def search(self, hq, k=10, exclude=None):
-        """hq: (Tq, D) query states. Returns [(mid, t0, t1, score)]."""
-        Lq = max(4, len(hq))
-        v = _l2(np.asarray(hq, np.float32).mean(0))
+    def _mu(self):
+        """The store's mean state - the shared component every sim
+        frame carries (same table, same scene). Uncentered, every
+        mean-state cosine saturated at ~0.999 and episode-start spans
+        (the maximally generic moment) topped every query. Centering
+        by the store's own mean is label-free and store-derived."""
+        if not hasattr(self, "_mu_"):
+            self._mu_ = np.mean([h.mean(0) for h in self.traj.values()],
+                                axis=0)
+        return self._mu_
+
+    def search(self, hq, k=10, exclude=None, query_fps=None):
+        """hq: (Tq, D) query states. Returns [(mid, t0, t1, score)].
+        query_fps: rate hq was sampled at (vsrc decodes at 4fps while
+        the store's trajectories run at the recording's 10) - the
+        window is matched in SECONDS, not frames."""
+        qf = float(query_fps or FPS)
+        secs = max(0.4, len(hq) / qf)
+        Lq = max(4, int(round(secs * FPS)))
+        mu = self._mu()
+        v = _l2(np.asarray(hq, np.float32).mean(0) - mu)
         stride = max(2, Lq // 4)
         cands = []
         for mid, h in self.traj.items():
@@ -79,7 +101,7 @@ class WMIndex:
                                                np.float32), h]), 0)
             for s in range(0, T - Lq + 1, stride):
                 m = (cs[s + Lq] - cs[s]) / Lq
-                sc = float(v @ _l2(m))
+                sc = float(v @ _l2(m - mu))
                 a, b = s / FPS, (s + Lq) / FPS
                 if exclude and mid == exclude[0] \
                         and not (b <= exclude[1] or a >= exclude[2]):
@@ -118,9 +140,13 @@ def query_states(F):
     return h, sur
 
 
-def search_frames(F, k=10, exclude=None):
+def search_frames(F, k=10, exclude=None, query_fps=None):
+    """query_fps: the rate F was decoded at (vsrc.FPS for Desk cuts)."""
+    if query_fps is None:
+        import vsrc
+        query_fps = vsrc.FPS
     h, _ = query_states(F)
-    return index().search(h, k=k, exclude=exclude)
+    return index().search(h, k=k, exclude=exclude, query_fps=query_fps)
 
 
 def main():

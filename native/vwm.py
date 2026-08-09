@@ -57,8 +57,13 @@ class Predictor(nn.Module):
     def __init__(self):
         super().__init__()
         self.inp = nn.Linear(D_IN, D)
-        self.pos = nn.Parameter(torch.zeros(1, 4096, D) )
-        nn.init.normal_(self.pos, std=0.02)
+        # NO positional embedding (NoPE): with a learned absolute
+        # position the state carried WHERE-IN-THE-FILE it sat, and
+        # retrieval degenerated - every query matched episode-START
+        # spans because query states are recomputed from position 0.
+        # The causal mask already supplies order asymmetry, and a
+        # memory must be time-shift invariant: the state is the
+        # content of the past, not its file offset.
         layer = nn.TransformerEncoderLayer(
             D, HEADS, FF, dropout=0.0, batch_first=True,
             norm_first=True, activation="gelu")
@@ -67,7 +72,7 @@ class Predictor(nn.Module):
 
     def forward(self, x):                      # (B, T, D_IN)
         T = x.shape[1]
-        h = self.inp(x) + self.pos[:, :T]
+        h = self.inp(x)
         mask = nn.Transformer.generate_square_subsequent_mask(
             T, device=x.device)
         h = self.enc(h, mask=mask, is_causal=True)
@@ -115,7 +120,8 @@ def sigreg(h, k=64, ts=(0.5, 1.0, 1.5, 2.0, 2.5)):
 def load_windows(roots):
     eps = []
     for r in roots:
-        pref = "_".join(Path(r).relative_to(ROOT / "data").parts)
+        pref = "_".join((ROOT / r).resolve()
+                        .relative_to(ROOT / "data").parts)
         eps += sorted(CACHE.glob(f"{pref}_ep*.npz"))
     rs = np.random.RandomState(SEED)
     rs.shuffle(eps)
@@ -182,7 +188,8 @@ def main():
         print(f"  epoch {ep}: pred {pl/nb:.4f}  sig {gl/nb:.4f}  "
               f"val_pred {vp:.4f}")
     torch.save(model.state_dict(), OUT)
-    manifest = dict(encoder="vits16@320", L=L, stride=STRIDE, d=D,
+    manifest = dict(encoder="vits16@320", pos="none (NoPE)",
+                    L=L, stride=STRIDE, d=D,
                     layers=LAYERS, heads=HEADS, ff=FF, lam=LAMBDA,
                     lr=LR, bs=BS, epochs=EPOCHS, seed=SEED,
                     params=int(n_par), roots=[str(r) for r in roots],

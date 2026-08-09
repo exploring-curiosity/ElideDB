@@ -1604,3 +1604,32 @@ of what looked like retrieval quality.
 Each removal of an assumption cost roughly half the score. The target
 of yield AND precision > 0.90 zero-shot is not approached by any
 configuration measured in this project.
+
+## 2026-08-09 — World-model core v1: predictor-state memory (first measured round)
+
+Embodiment-varied training corpus, self-generated, seed-disjoint from eval
+(seeds 6000+ vs 5000-5149): panda 60 eps (0.93 events ok), xarm7 60 (0.89),
+vx300s 40 (0.76) — three structurally different arms, 77 min of film in 13 min
+wall. Predictor: 12.5M block-causal transformer over frozen vits16@320 global
+latents, LeWM recipe (next-latent 1-cos + SIGReg Epps-Pulley), 12 epochs,
+val pred-loss 0.017.
+
+Gates, each vs its frozen-feature baseline (ground truth eval-only):
+
+| gate | state | frozen baseline | verdict |
+|---|---|---|---|
+| a. primitive probe (frame->prim, 5-fold) | 0.504 | 0.510 (majority 0.442) | tie — no probe gain |
+| b. surprise vs event boundaries (AUC) | 0.440 | 0.651 (latent derivative) | FAIL — anti-correlated |
+| c. event QbE, same-prim P@10 (882 events) | **0.533** | 0.416 | PASS +0.117 |
+| e. cross-embodiment xarm7->panda | **0.469** | 0.389 | PASS +0.080 |
+| e. cross-embodiment vx300s->panda | **0.455** | 0.384 | PASS +0.071 |
+| d. disguise battery (real clips, sim-trained) | 0.824/0.884, rho 0.486/0.292 | frozen 0.987/1.000, 0.499/0.423; pixel floor 0.553/0.390 | FAIL on struct-rho (below pixel floor) |
+
+The retrieval claims (c, e) pass: predictor states beat frozen features on
+same-kind event retrieval, including across embodiments. The battery says a
+sim-only predictor DEGRADES real-footage discrimination — transfer needs
+training on the target recording at ingest (the online design). Round-1
+functional defect found by USING the QbE path: learned absolute positions
+leaked into states and every query matched episode-START spans; round 2
+retrains with NoPE (causal mask only) — a memory must be time-shift
+invariant.
