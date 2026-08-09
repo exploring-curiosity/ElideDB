@@ -1876,3 +1876,44 @@ REMAINING ROUTES, in order of expected value:
    sharpened the majority class; units change the positives).
 3. Recording-side: more/closer cameras raise every ceiling at zero
    algorithmic cost - deployment guidance, not code.
+
+## 2026-08-09 — Kinematic sub-event units: built, benchmarked, envelope conserved
+
+Douglas-Peucker corner cuts on the latent trajectory (tolerance = alpha x
+the clip's own radius of gyration; no labels, nothing fitted) find the
+phases energy valleys could not: median 6 units/event vs 1 for the energy
+cut. Extended ruler, 1352 events, oracle-cut protocol:
+
+| scorer | AP | yield | prec | unstack AP | push AP |
+|---|---|---|---|---|---|
+| whole-span (base) | 0.394 | 0.474 | 0.386 | 0.347 | 0.307 |
+| unit set-match | 0.339 | 0.533 | 0.341 | 0.158 | 0.196 |
+| DTW ordered units | 0.356 | 0.498 | 0.356 | 0.229 | 0.224 |
+| unit coverage (min) | 0.280 | 0.746 | 0.328 | 0.210 | 0.248 |
+| span + DTW (w=0.5) | 0.396 | 0.483 | 0.386 | 0.365 | 0.310 |
+| **span + DTW + cover** | 0.387 | **0.531** | 0.382 | **0.386** | **0.351** |
+| adaptive per-query | 0.395 | 0.440 | 0.383 | 0.248 | 0.310 (pick AP 0.553) |
+
+Findings:
+1. Units do exactly what they were hypothesized to do: the COMPOSITE and
+   rare classes gain (unstack AP 0.347->0.386, push 0.307->0.351) because
+   an unstack shares its grasp-high phase with other unstacks even when
+   the carry differs. The majority class pays for it.
+2. The ENVELOPE IS CONSERVED: no configuration leaves ~0.39-0.40 AP /
+   0.47-0.53 yield / 0.38 prec. Units redistribute across classes; they do
+   not add information. This is the supervised-ceiling result again from
+   the other side.
+3. METRIC TRAP recorded: unit-coverage scores "pick yield 1.000 / prec
+   0.442" while its pick AP (0.363) sits BELOW pick's 0.44 base rate -
+   oracle-cut min(y,p) saturates at full recall for a majority class, so
+   a degenerate ranking can look strong. Always read AP beside it.
+4. Per-query adaptive weighting (informativeness from cross-view
+   agreement) is a null overall; its first version had a zero-weight
+   collapse (all-scorers-uninformative queries ranked by noise) worth
+   remembering: normalize, but always fall back to uniform.
+
+Best yield config is span+DTW+cover: +0.057 yield (+12% relative) at
+-0.004 prec. Shippability check in flight: the benchmark cut units per
+EVENT SPAN, but a live store must cut each episode once and clip - if the
+numbers hold under episode-cut geometry the config ships, otherwise the
+benchmark does not transfer.
