@@ -2228,3 +2228,80 @@ robust. Open routes (both substantive, recorded): a segmentation that
 truly localizes manipulation completion (write-path proposer class),
 or Desk-verdict span supervision via the sanctioned offline
 post-query tier.
+
+## 2026-08-09 (night 2) — the pipeline was not the constraint; the GRAPH was
+
+Owner rejected the label explanation and the MLP "ceiling" (correctly:
+an MLP probe on my own pooled vector bounds that vector's readout, not
+the problem). Nine experiments, all on the 1352-event ruler.
+
+WHAT IS NOT THE CONSTRAINT (each a measured null):
+| test | result |
+|---|---|
+| spatial pooling: g(384) vs r20(7680) vs c5(9600) | 0.368 / 0.388 / 0.366 |
+| full 20x20 grid (re-encoded, 17 GB) | 0.345 - no better than 5x5 |
+| frame-DTW (the STRAP recipe) | 0.308 - WORSE than segment deltas |
+| per-recording referencing on deltas | 0.000 change (deltas already cancel it) |
+| persistent-effect field (settled medians) | 0.329-0.350 |
+| change-site localization, 4 variants | site lands on the ARM (verified by eye) |
+
+The arm defeats every "what changed" detector: it is not transient, it
+is a large pedestal-mounted body always in frame at a different pose
+each event, and it dwells exactly where the interesting thing happens.
+Short medians keep it, long medians keep it, pixel medians keep it,
+cross-event IDF keeps it.
+
+THE ACTUAL DIAGNOSIS (diag_taxonomy + diag_support):
+ - top-10 confusion: pick query returns 86.9% picks, push 77.4%,
+   unstack 68.8%. The retriever is NOT returning junk.
+ - P@1 0.872, P@5 0.801, P@10 0.742 (5 classes); merged into the 3
+   genuinely distinct motions {grasp, release, push}: 0.943/0.884/0.836.
+ - place<->stack confuse each other at 21% - exactly the pair that
+   differs only by table-vs-tower, a ~30px relation.
+ - yield is FLAT vs support (0.41 at S=5, 0.46 at S=80), so the low
+   yield is not a support artifact.
+P@1 0.87 with yield 0.46 means: local structure excellent, global
+structure fragmented. A class is MANY small tight clusters (same
+object, position, embodiment), not one region. Cosine sees only the
+cluster the query lands in.
+
+THE FIX - DIFFUSION ON THE AFFINITY GRAPH (label-free, closed form,
+corpus statistics only, same legal class as the shipped CSLS):
+| metric | cosine+CSLS | +diffusion |
+|---|---|---|
+| AP (5 cls) | 0.397 | **0.495** |
+| P@10 | 0.742 | 0.786 |
+| yield/prec | 0.524/0.349 | **0.606/0.404** |
+| balanced-support20 y/p | 0.448/0.294 | **0.578/0.379** |
+| 3-motion yield/prec | 0.683/0.455 | **0.722/0.481** |
+Stable across k in {10,20,50} and alpha in {0.7,0.9,0.99} (AP
+0.485-0.495) - robust, not fitted to the ruler.
+
+Refinements on top of diffusion (rank affinity, post-CSLS, 2nd round,
+alpha-QE): all within +-0.01; diffusion itself is the whole gain.
+Chosen on dev (sim_chains 882), reported on holdout (sim_eval_bal 470,
+never seen by the choice):
+
+| holdout | AP | P@1 | P@10 | yield/prec | 3-motion y/p |
+|---|---|---|---|---|---|
+| baseline cosine+CSLS | 0.399 | 0.853 | 0.641 | 0.500/0.333 | 0.611/0.407 |
+| + diffusion | **0.546** | 0.868 | 0.744 | **0.643/0.428** | 0.688/0.459 |
+
+THE SCALING LAW (exp13) - the result that decides what to do next.
+Same fixed config, corpus subsampled by EPISODE, 12 draws per size:
+
+| episodes | events | baseline y/p | diffusion y/p | diffusion 3-motion |
+|---|---|---|---|---|
+| 20 | 116 | 0.535/0.354 | 0.445/0.295 | 0.645/0.428 |
+| 40 | 233 | 0.525/0.349 | 0.465/0.309 | 0.641/0.427 |
+| 80 | 475 | 0.521/0.347 | 0.530/0.352 | 0.662/0.441 |
+| 150 | 880 | 0.523/0.349 | 0.586/0.391 | 0.702/0.467 |
+| 230 | 1352 | 0.524/0.349 | **0.618/0.412** | **0.723/0.482** |
+
+The baseline is FLAT in corpus size - cosine cannot use data it is not
+being compared against. Diffusion rises monotonically and has not
+saturated; below ~475 events it is WORSE than cosine because the graph
+is too sparse to propagate. So the current number is CORPUS-limited,
+not method-limited, and "more data" is a measurable path rather than a
+hope. For a storage product this is the right shape: retrieval quality
+improves as the store fills.
