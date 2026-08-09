@@ -2208,3 +2208,12 @@ the event-fit gain is recovered. Segmentation now has a retrieval-
 denominated acceptance test instead of an aesthetic one. Second
 sanctioned route: Desk verdicts accumulate the span supervision
 directly (post-query retraining is the allowed offline tier).
+
+Gate applied to two more label-free candidates: refunits (dp_cuts on
+the REFERENCED trajectory) 0.333, motion (Otsu energy valleys on ref)
+0.342. All four label-free sources fail; notably STRIDE (0.350) beats
+every smart segmentation - the unsupervised cutters align to
+arm-motion structure, so their span pairs teach CCA the nuisance.
+Event spans work because their boundaries mark manipulation
+completion. The segmentation that passes this gate must localize
+STATE-CHANGE boundaries, not motion boundaries.

@@ -99,7 +99,7 @@ def truth_events():
 def fit_pairs(source):
     """(W0, W1) state-vector pairs from the chosen span source."""
     W0, W1 = [], []
-    if source == "units":
+    if source in ("units", "refunits"):
         import vwm_kin
         P = None
     for corp, ep, r20s, rrefs in episodes():
@@ -111,10 +111,13 @@ def fit_pairs(source):
                      for e in meta["events"] if e["ok"]]
         elif source == "stride":
             spans = [(s, s + 30) for s in range(0, T - 30 + 1, 15)]
-        elif source == "units":
+        elif source in ("units", "refunits"):
+            # refunits: corner the REFERENCED trajectory - the
+            # extraction repair may improve the segmentation itself
             if P is None:
                 P = vwm_kin.rproj(r20s[0].shape[1])
-            rp = vwm_kin._l2(r20s[0][:T] @ P)
+            base = r20s[0][:T] if source == "units" else rrefs[0][:T]
+            rp = vwm_kin._l2(base @ P)
             cuts = vwm_kin.dp_cuts(rp, max_units=64)
             spans = [(cuts[i], cuts[i + 1])
                      for i in range(len(cuts) - 1)
@@ -122,6 +125,12 @@ def fit_pairs(source):
             spans += [(cuts[i], cuts[i + 2])
                       for i in range(len(cuts) - 2)
                       if cuts[i + 2] - cuts[i] >= 10]
+        elif source == "motion":
+            # motion-energy valleys (Otsu, per-recording) on the
+            # referenced trajectory - vwm_units.units_of operator
+            import vwm_units
+            spans = [(s, e) for s, e in vwm_units.units_of(rrefs[0][:T])
+                     if e - s >= 6]
         for a, b in spans:
             b = min(b, T)
             if b - a < 6:
@@ -201,7 +210,8 @@ def bench(S, tag, prims, eps_):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--spans", default="events",
-                    choices=("events", "stride", "units"))
+                    choices=("events", "stride", "units", "refunits",
+                             "motion"))
     a = ap.parse_args()
     ev = truth_events()
     prims = np.array([e[0] for e in ev])
