@@ -1663,3 +1663,9 @@ model object-level motion rather than a 5x5 blur of it. The QbE SYSTEM
 around the model (trajectory store, sequence search, Desk toggle, gates with
 baselines) is built, functional, and model-agnostic: any better predictor
 drops in behind vwm.states() with zero read-path changes.
+
+Canonical yield/prec for WM-state event QbE on the sim truthset
+(yield = true/support at k=1.5*support; prec = true/returned, 882 events):
+wm-state 0.515/0.343 vs frozen 0.522/0.348 — a tie; both barely above the
+0.341 prior at these support sizes. Desk verified live: mode:wm returns the
+CLI's exact hits; the c2 path unaffected (86.6% elided).
