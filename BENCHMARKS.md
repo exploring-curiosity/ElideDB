@@ -1669,3 +1669,27 @@ Canonical yield/prec for WM-state event QbE on the sim truthset
 wm-state 0.515/0.343 vs frozen 0.522/0.348 — a tie; both barely above the
 0.341 prior at these support sizes. Desk verified live: mode:wm returns the
 CLI's exact hits; the c2 path unaffected (86.6% elided).
+
+## 2026-08-09 — Sweeps 2-5: the height-profile change operator, 0.416 -> 0.612
+
+Five representation sweeps on the 882-event truthset settled the QbE scorer.
+Three findings stacked, each with its control:
+
+1. CHANGES beat appearances: ordered grid deltas 0.565 vs 0.416 pooled.
+2. WHERE-invariance beats resolution: finer grids LOST (10x10 0.546,
+   20x20 0.521) - they encode table position, and same experiences happen
+   at different places.
+3. HEIGHT is the one location axis worth keeping: row-marginal (image rows ~
+   physical height) 0.600 vs column-marginal control 0.575.
+4. Two temporal scales (3rds+5ths) compose: **0.612 / yield 0.562 / prec 0.374**.
+
+Per primitive (P@10): pick 0.83, place 0.48, stack 0.38, unstack 0.27,
+push 0.19. Trained-predictor arc closed for now: the delta-target round
+could not predict frame-scale grid change at all (val 1-cos 0.94) and its
+states stayed at 0.37 - a self-supervised state must be trained at a
+granularity where prediction is possible; recorded next: per-patch tokens,
+longer horizons, or contrastive-of-changes.
+
+Shipped: vwm_qbe scores ordered height-profile change (dmulti, 3rds+5ths);
+Desk wm mode serves it (verified live); trajectories stored per clip, no
+summary at write time.

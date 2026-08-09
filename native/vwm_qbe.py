@@ -1,16 +1,18 @@
 """QbE over latent trajectories. The world-model read path.
 
-WHAT IS STORED per clip: the projected-grid latent trajectory (the raw
-spatial record) plus the predictor's state trajectory - nothing is
-summarised at write time. WHAT SCORES a window: ORDERED SPATIAL CHANGE
-- the window's grid-delta thirds, concat of l2(cp[t2]-cp[t1]) over
-three consecutive segments. Measured on the 882-event sim truthset
-against every alternative (9-way sweep, BENCHMARKS 2026-08-09): 0.565
-P@10 vs 0.416 for pooled appearance and 0.36 for every predictor-state
-pool - what separates experiences is the SEQUENCE OF CHANGES the world
-undergoes, the delta-appearance result at the event scale. The
-predictor's states still ride along (surprise, future reps); the
-scoring representation is whichever wins the sweep.
+WHAT IS STORED per clip: the HEIGHT-PROFILE trajectory (the 5x5 grid
+column-marginalized to rows x d - image rows ~ physical height for
+these cameras) plus the predictor's state trajectory - nothing is
+summarised at write time. WHAT SCORES a window: ordered HEIGHT-PROFILE
+CHANGE at two temporal scales (thirds + fifths of segment deltas).
+Measured on the 882-event sim truthset (sweeps 1-5, BENCHMARKS
+2026-08-09): 0.612 P@10 vs 0.416 pooled appearance, 0.565 full-grid
+deltas, ~0.36 every predictor-state pool. Three findings stack:
+changes beat appearances; WHERE-invariance beats resolution (finer
+grids LOST - they encode table position); HEIGHT is the location axis
+worth keeping (the column-marginal control scored below the row
+marginal). The predictor's states still ride along (surprise, future
+representations); the scorer is whichever wins the sweep.
 
     python native/vwm_qbe.py --media sim/ep0003 --t0 4 --t1 12
 """
@@ -65,34 +67,35 @@ class WMIndex:
         for npz in sorted(CACHE.glob(f"{pref}_ep*.npz")):
             ep = npz.stem.split("_")[-1]
             mid = f"{corpus}/{ep}"
-            sp = sdir / f"{pref}_{ep}.npz"
+            sp = sdir / f"{pref}_{ep}_v2.npz"
             if sp.exists():
                 z2 = np.load(sp)
-                if "cp" in z2:
-                    self.traj[mid] = (z2["h"].astype(np.float32),
-                                      z2["cp"].astype(np.float32))
-                    continue
+                self.traj[mid] = (z2["h"].astype(np.float32),
+                                  z2["r"].astype(np.float32))
+                continue
             import vwm
             z = np.load(npz)
             c = z["c"].astype(np.float32)
-            cp = c @ vwm.rproj()
-            cp /= np.maximum(
-                np.linalg.norm(cp, axis=-1, keepdims=True), 1e-8)
+            # height profile: column-marginal of the 5x5 grid
+            r = c.reshape(len(c), 5, 5, 384).mean(2).reshape(len(c), -1)
             gi = vwm.build_input(z["g"].astype(np.float32), c)
             h, _ = model().states(gi)
             np.savez(sp, h=h.astype(np.float16),
-                     cp=cp.astype(np.float16))
-            self.traj[mid] = (h, cp)
+                     r=r.astype(np.float16))
+            self.traj[mid] = (h, r)
 
     @staticmethod
-    def d3rds(cp, s, e):
-        """Ordered spatial change of window [s,e): grid-delta thirds.
-        Deltas cancel the shared scene, so no centering is needed."""
-        t1 = s + (e - s) // 3
-        t2 = s + 2 * (e - s) // 3
-        return np.concatenate([_l2(cp[t1] - cp[s]),
-                               _l2(cp[t2] - cp[t1]),
-                               _l2(cp[e - 1] - cp[t2])])
+    def dmulti(r, s, e):
+        """Ordered height-profile change of window [s,e): segment
+        deltas at two temporal scales (3rds + 5ths). Deltas cancel the
+        standing scene; the row marginal cancels WHERE on the table."""
+        parts = []
+        for n in (3, 5):
+            cuts = [s + (e - s) * i // n for i in range(n + 1)]
+            cuts[-1] = e - 1
+            parts += [_l2(r[cuts[i + 1]] - r[cuts[i]])
+                      for i in range(n)]
+        return np.concatenate(parts)
 
     def search(self, hq, k=10, exclude=None, query_fps=None):
         """hq: (Tq, D) query states. Returns [(mid, t0, t1, score)].
@@ -102,15 +105,15 @@ class WMIndex:
         qf = float(query_fps or FPS)
         secs = max(0.4, len(hq) / qf)
         Lq = max(6, int(round(secs * FPS)))
-        v = _l2(self.d3rds(np.asarray(hq, np.float32), 0, len(hq)))
+        v = _l2(self.dmulti(np.asarray(hq, np.float32), 0, len(hq)))
         stride = max(2, Lq // 4)
         cands = []
-        for mid, (h, cp) in self.traj.items():
-            T = len(cp)
+        for mid, (h, r) in self.traj.items():
+            T = len(r)
             if T < Lq:
                 continue
             for s in range(0, T - Lq + 1, stride):
-                sc = float(v @ _l2(self.d3rds(cp, s, s + Lq)))
+                sc = float(v @ _l2(self.dmulti(r, s, s + Lq)))
                 a, b = s / FPS, (s + Lq) / FPS
                 if exclude and mid == exclude[0] \
                         and not (b <= exclude[1] or a >= exclude[2]):
@@ -204,15 +207,12 @@ def query_states(F):
 
 
 def query_grid(F):
-    """Frames -> projected-grid trajectory, the write-path operator."""
-    import vwm
+    """Frames -> height-profile trajectory, the write-path operator."""
     G = _encode_grid(F)
     T = len(G)
     k = G.shape[1] // 5
-    c = G.reshape(T, 5, k, 5, k, -1).mean((2, 4)).reshape(T, -1)
-    cp = c @ vwm.rproj()
-    return cp / np.maximum(
-        np.linalg.norm(cp, axis=-1, keepdims=True), 1e-8)
+    c = G.reshape(T, 5, k, 5, k, -1).mean((2, 4))
+    return c.mean(2).reshape(T, -1)          # (T, 5*384) row marginal
 
 
 def search_frames(F, k=10, exclude=None, query_fps=None):
