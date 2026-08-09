@@ -2429,3 +2429,30 @@ depth: per-entity site-anchored chains, temporal contact profiles,
 multi-entity graphs, crop fingerprints - then re-run this exact
 probe. The instrument stack for that loop is now complete: ent gate,
 ruler bench, fusion probe, holdout protocol.
+
+L5 iteration 2 (graded thirds, endpoint agent-distances, adjacency)
++ selector A/B, all measured, all honest:
+- struct v2: AP 0.297 (from 0.288) - enrichment without correct
+  mover selection moves nothing.
+- THE NUMBER THAT LOCATES THE BUG: the top mover by displacement is
+  the true entity 8% of the time; the true entity is in the candidate
+  list 80% of the time. The moment graph describes an agent shard in
+  ~92% of windows.
+- Selector A/B (top-mover correctness): displacement 0.08, site
+  colour 0.08 (site region-mean colours are washed - everything
+  anchors), rest-fraction 0.08 (FALSE PREMISE: under the piecewise
+  scene, EVERY moving-layer track exists only while moving - blocks
+  included; resting identity lives in SITES), agent-colour 0.05,
+  d-from-agent 0.27, site position 0.08 (change-region radii too
+  loose - everything anchors).
+- All ~0.08 results equal some_correct/#cands: the selectors are
+  RANDOM because their features are near-constant across candidates.
+
+NEXT (the precise open problem): mover selection = SITE-TRACK
+LINKAGE done properly. (a) sharpen site appearance at ent build:
+median over the TOP-QUARTILE-changed core pixels, not the region
+mean that mixes shadow fringe; (b) define the mover as the track
+that CONNECTS a vanish site to an appear site (colour+position+time
+jointly, a small matching problem) rather than any max-score pick;
+(c) then the v2 graded facts should finally describe the right
+entity, and the fusion probe is the gate again.

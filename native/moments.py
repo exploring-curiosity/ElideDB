@@ -43,124 +43,149 @@ def _l2(v):
     return v / max(float(np.linalg.norm(v)), 1e-8)
 
 
-def moment(rows, view, a, b):
-    """L5: the episode structure of window [a,b) in one view.
+NDIM = 14
 
-    Returns None if nothing happened, else a dict of RELATIONAL facts:
-      sites:   list of (kind, rgb) - kind in {vanish, appear, change}
-               vanish = a settled thing left this spot,
-               appear = a settled thing arrived,
-               decided by which side matches the moving evidence
-      mover:   dict(rgb, disp_ext, contact_frac, post_free_corr)
-               disp_ext = displacement / own extent (scale-free)
-               contact_frac = fraction of its moving life in contact
-               post_free_corr = did it keep moving with the agent
-               after last contact (held) or come to rest (released)
+
+def moment(rows, view, a, b):
+    """L5 v2: the episode structure of window [a,b) in one view, as
+    GRADED relational facts (the v1 8-bit skeleton tied massively and
+    added noise to the graph - measured).
+
+    All facts are relational (PROBLEM.md #5): the mover's own extent
+    is the length unit; time is in thirds of its own in-window life;
+    'other entity' is any different-looking episodic evidence, never a
+    named thing. Returns dict(vec, patient_rgb, agent_rgb) or None.
     """
     vr = [r for r in rows if r["view"] == view]
     ents = [r for r in vr if r["role"] == "entity"]
     agents = [r for r in vr if r["role"] == "agent"]
-    sites = [s for s in vr if s["role"] == "site"
-             and s["t0"] <= b + 10 and s["t1"] >= a - 10]
+    sites_all = [s for s in vr if s["role"] == "site"]
+    sites = [s for s in sites_all
+             if s["t0"] <= b + 10 and s["t1"] >= a - 10]
 
-    # the window's mover: the episodic track with the largest
-    # extent-normalized displacement inside the window
-    best, mv = None, None
+    agent_rgb = None
+    if agents:
+        biggest = max(agents, key=lambda r: r["extent"])
+        agent_rgb = np.median(np.asarray(biggest["rgb"]), 0)
+
+    # mover selection: among displaced episodic tracks, PREFER one
+    # whose colour matches a settled-scene change in the window - the
+    # sites are the near-perfect evidence (0.999 gate) and agent
+    # shards never match them. Max displacement is only the
+    # tiebreak/fallback, not the selector (the v2 mistake: with ~100
+    # junk tracks/view, max displacement often picks an agent shard).
+    cands = []
     for r in ents:
         m = (r["t"] >= a) & (r["t"] <= b)
         if m.sum() < 3:
             continue
-        ext = max(r["extent"], 4.0)
+        ext_c = max(r["extent"], 4.0)
         d = np.hypot(r["cx"][m].max() - r["cx"][m].min(),
-                     r["cy"][m].max() - r["cy"][m].min()) / ext
-        if best is None or d > best:
-            best, mv = d, (r, m)
-    out = dict(sites=[], mover=None, agent_rgb=None)
-    if agents:
-        biggest = max(agents, key=lambda r: r["extent"])
-        out["agent_rgb"] = np.median(np.asarray(biggest["rgb"]), 0)
+                     r["cy"][m].max() - r["cy"][m].min()) / ext_c
+        if d <= 0.35:
+            continue
+        crgb = np.median(np.asarray(r["rgb"])[m], 0)
+        anchored = any(
+            min(np.abs(s["pre_rgb"] - crgb).sum(),
+                np.abs(s["post_rgb"] - crgb).sum()) < 200
+            for s in sites)
+        cands.append((anchored, d, r, m))
+    best, mv = None, None
+    if cands:
+        cands.sort(key=lambda c: (c[0], c[1]), reverse=True)
+        anchored, best, r0, m0 = cands[0]
+        mv = (r0, m0)
+
+    if mv is None or best is None or best <= 0.35:
+        nv = len(sites)
+        if nv == 0:
+            return None
+        vec = np.zeros(NDIM, np.float32)
+        vec[10] = vec[11] = min(nv, 3) / 3.0
+        return dict(vec=vec, patient_rgb=None, agent_rgb=agent_rgb)
+
+    r, m = mv
+    ext = max(r["extent"], 4.0)
+    tt = r["t"][m]
+    cx, cy = r["cx"][m], r["cy"][m]
+    con = r["contact"][m]
+    n = len(tt)
+    mrgb = np.median(np.asarray(r["rgb"])[m], 0)
+
+    # ordered life in thirds: motion profile and contact profile.
+    # grasp = free->contact->contact; release = contact->..->free;
+    # push = brief contact mid. The ORDER is the signature.
+    thirds = np.array_split(np.arange(n), 3)
+    step = np.hypot(np.diff(cx), np.diff(cy))
+    moving = step > 0.05 * ext
+    mo = [float(moving[ix[ix < len(moving)]].mean())
+          if len(ix) and (ix < len(moving)).any() else 0.0
+          for ix in thirds]
+    co = [float(con[ix].mean()) if len(ix) else 0.0 for ix in thirds]
+
+    # distance to the nearest agent at the window's endpoints, in own
+    # extents: held ends near zero, released/pushed ends far
+    def d_agent(t_ref, x, y):
+        bestd = 6.0
+        for ag in agents:
+            i = int(np.clip(np.searchsorted(ag["t"], t_ref), 0,
+                            len(ag["t"]) - 1))
+            if abs(int(ag["t"][i]) - int(t_ref)) > 5:
+                continue
+            bestd = min(bestd, float(np.hypot(ag["cx"][i] - x,
+                                              ag["cy"][i] - y)) / ext)
+        return min(bestd, 6.0) / 6.0
+    da0 = d_agent(tt[0], cx[0], cy[0])
+    da1 = d_agent(tt[-1], cx[-1], cy[-1])
+
+    # site-anchored chain: a vanish site is colour-matched near the
+    # start, an appear site colour-matched near the end
+    has_v = has_a = 0.0
     for s in sites:
-        # which side of the change holds the thing: the side whose
-        # colour differs more from the OTHER side's surroundings is
-        # ambiguous without the scene patch; V1 keeps both colours and
-        # the kind is decided by the mover linkage below
-        out["sites"].append(dict(pre=s["pre_rgb"], post=s["post_rgb"],
-                                 cx=s["cx"], cy=s["cy"],
-                                 w=s["w"], h=s["h"]))
-    if mv is not None and best is not None and best > 0.35:
-        r, m = mv
-        contact = float(r["contact"][m].mean())
-        # after its last in-window contact, did it keep moving (held)
-        # or rest (released)? relational: own motion, own extent
-        tt = r["t"][m]
-        cx, cy = r["cx"][m], r["cy"][m]
-        ci = np.where(r["contact"][m])[0]
-        post_free = 0.0
-        if len(ci) and ci[-1] < len(tt) - 3:
-            j = ci[-1]
-            ext = max(r["extent"], 4.0)
-            post_free = float(np.hypot(cx[-1] - cx[j], cy[-1] - cy[j])
-                              / ext)
-        out["mover"] = dict(
-            rgb=np.median(np.asarray(r["rgb"])[m], 0),
-            disp_ext=float(best),
-            contact_frac=contact,
-            post_free=post_free,
-            n_moving=int(m.sum()))
-        # classify each site by colour agreement with the mover:
-        # vanish if its PRE matches the mover, appear if its POST does
-        for s in out["sites"]:
-            dp = np.abs(s["pre"] - out["mover"]["rgb"]).sum()
-            dq = np.abs(s["post"] - out["mover"]["rgb"]).sum()
-            s["kind"] = ("vanish" if dp < dq else "appear") \
-                if min(dp, dq) < 200 else "other"
-    else:
-        for s in out["sites"]:
-            s["kind"] = "other"
-    if not out["sites"] and out["mover"] is None:
-        return None
-    return out
+        rad = 3 * ext + max(s["w"], s["h"])
+        if np.abs(s["pre_rgb"] - mrgb).sum() < 200 and \
+                np.hypot(s["cx"] - cx[0], s["cy"] - cy[0]) < rad:
+            has_v = 1.0
+        if np.abs(s["post_rgb"] - mrgb).sum() < 200 and \
+                np.hypot(s["cx"] - cx[-1], s["cy"] - cy[-1]) < rad:
+            has_a = 1.0
 
+    # other-entity adjacency at the endpoints: evidence registry from
+    # every OTHER track's last known position and settled sites up to
+    # the window end. Generic pairwise relation - departed from next
+    # to something / arrived next to something.
+    pts = []
+    for r2 in ents:
+        if r2["tid"] == r["tid"]:
+            continue
+        mm2 = r2["t"] <= b
+        if mm2.any():
+            i2 = int(np.where(mm2)[0][-1])
+            pts.append((float(r2["cx"][i2]), float(r2["cy"][i2]),
+                        np.median(np.asarray(r2["rgb"]), 0)))
+    for s in sites_all:
+        if s["t1"] <= b:
+            pts.append((s["cx"], s["cy"], s["post_rgb"]))
 
-def sim_moment(ma, mb):
-    """L7: correspondence score between two single-view moments,
-    per component. Structure never sees appearance; appearance never
-    sees position; nothing sees absolute coordinates."""
-    if ma is None or mb is None:
-        return dict(struct=0.0, patient=0.0, agent=0.0)
-    # STRUCTURE: compare the event pattern
-    sa = _struct_vec(ma)
-    sb = _struct_vec(mb)
-    struct = float(_l2(sa) @ _l2(sb))
-    # PATIENT appearance: mover colour (or best site colour)
-    pa = ma["mover"]["rgb"] if ma["mover"] is not None else None
-    pb = mb["mover"]["rgb"] if mb["mover"] is not None else None
-    patient = 0.0
-    if pa is not None and pb is not None:
-        patient = float(np.exp(-np.abs(pa - pb).sum() / 180.0))
-    agent = 0.0
-    if ma["agent_rgb"] is not None and mb["agent_rgb"] is not None:
-        agent = float(np.exp(
-            -np.abs(ma["agent_rgb"] - mb["agent_rgb"]).sum() / 180.0))
-    return dict(struct=struct, patient=patient, agent=agent)
+    def near_other(x, y):
+        bestd = 6.0
+        for px, py, prgb in pts:
+            if np.abs(prgb - mrgb).sum() < 120:
+                continue        # same-looking = likely its own history
+            bestd = min(bestd, float(np.hypot(px - x, py - y)) / ext)
+        return 1.0 - min(bestd, 6.0) / 6.0      # closeness, not dist
+    no0 = near_other(cx[0], cy[0])
+    no1 = near_other(cx[-1], cy[-1])
 
-
-def _struct_vec(m):
-    """The moment's event pattern as pure relational facts."""
-    nv = sum(1 for s in m["sites"] if s.get("kind") == "vanish")
-    na = sum(1 for s in m["sites"] if s.get("kind") == "appear")
-    if m["mover"] is not None:
-        mv = m["mover"]
-        return np.array([
-            1.0,                            # something moved
-            min(mv["disp_ext"], 8.0) / 8.0,  # how far, in own units
-            mv["contact_frac"],             # carried vs free
-            min(mv["post_free"], 4.0) / 4.0,  # kept moving after release?
-            float(nv > 0), float(na > 0),   # settled world lost/gained
-            min(nv, 3) / 3.0, min(na, 3) / 3.0,
-        ], np.float32)
-    return np.array([0.0, 0, 0, 0, float(nv > 0), float(na > 0),
-                     min(nv, 3) / 3.0, min(na, 3) / 3.0], np.float32)
+    vec = np.array([
+        1.0, min(best, 8.0) / 8.0,
+        mo[0], mo[1], mo[2],
+        co[0], co[1], co[2],
+        da0, da1,
+        has_v, has_a,
+        no0, no1,
+    ], np.float32)
+    return dict(vec=vec, patient_rgb=mrgb, agent_rgb=agent_rgb)
 
 
 # ---------------- benchmark on the sim ruler ----------------
@@ -194,20 +219,36 @@ def bench():
     prims = np.array([e[0] for e in evs])
     eps_ = np.array([e[1] for e in evs])
     print(f"{n} events", flush=True)
-    comp = {k: np.zeros((n, n), np.float32)
-            for k in ("struct", "patient", "agent")}
-    from tqdm import tqdm
-    for i in tqdm(range(n), unit="q", desc="pairs"):
-        for j in range(i, n):
-            best = dict(struct=0.0, patient=0.0, agent=0.0)
-            for va in range(2):
-                for vb in range(2):
-                    s = sim_moment(evs[i][2][va], evs[j][2][vb])
-                    if s["struct"] + s["patient"] > \
-                            best["struct"] + best["patient"]:
-                        best = s
-            for k in comp:
-                comp[k][i, j] = comp[k][j, i] = best[k]
+    # collect per-view vectors; standardize struct dims corpus-wide
+    # (store-side statistics, the CSLS legal class) so cosine weights
+    # the graded dims comparably
+    V = np.zeros((n, 2, NDIM), np.float32)
+    Prgb = np.full((n, 2, 3), np.nan, np.float32)
+    for i, (_, _, ms) in enumerate(evs):
+        for v in range(2):
+            if ms[v] is not None:
+                V[i, v] = ms[v]["vec"]
+                if ms[v]["patient_rgb"] is not None:
+                    Prgb[i, v] = ms[v]["patient_rgb"]
+    mu = V.reshape(-1, NDIM).mean(0)
+    sd = V.reshape(-1, NDIM).std(0) + 1e-6
+    Vz = (V - mu) / sd
+    Vz = Vz / np.maximum(
+        np.linalg.norm(Vz, axis=-1, keepdims=True), 1e-8)
+    comp = {}
+    S = None
+    for a in range(2):
+        for b in range(2):
+            X = Vz[:, a] @ Vz[:, b].T
+            S = X if S is None else np.maximum(S, X)
+    comp["struct"] = S
+    S = None
+    for a in range(2):
+        for b in range(2):
+            D = np.abs(Prgb[:, None, a] - Prgb[None, :, b]).sum(-1)
+            X = np.exp(-np.nan_to_num(D, nan=765.0) / 180.0)
+            S = X if S is None else np.maximum(S, X)
+    comp["patient"] = S.astype(np.float32)
 
     def csls(S):
         hub = np.sort(S, 1)[:, -50:].mean(1)
@@ -267,13 +308,36 @@ def bench():
     Ss = csls(comp["struct"])
     Sp = csls(comp["patient"])
     show(metr(Ss), "struct alone")
-    show(metr(Sp), "patient alone")
-    fuse = zrow(Ss) + 0.3 * zrow(Sp)
-    show(metr(fuse), "struct+0.3patient")
-    D = diffuse(fuse)
-    show(metr(D), "fused+diffusion")
-    show(metr(Ss, sub=hold), "[HOLDOUT] struct")
-    show(metr(D, sub=hold), "[HOLDOUT] fused+diff")
+    show(metr(diffuse(Ss), sub=None), "struct+diffusion")
+    show(metr(Ss, sub=hold), "[HOLD] struct")
+    show(metr(diffuse(Ss), sub=hold), "[HOLD] struct+diff")
+    # fusion probe against the delta channel (the standing baseline)
+    rv = Path(__file__).parent.parent / \
+        ("/private/tmp/claude-501/-Users-sudharshanramesh-Studies-"
+         "MyProjects-StreetDex/98dca676-44e6-4cc3-8fda-c9744a9c5fb3/"
+         "scratchpad/ruler_vecs.npz").lstrip("/")
+    rv = Path("/private/tmp/claude-501/-Users-sudharshanramesh-Studies"
+              "-MyProjects-StreetDex/98dca676-44e6-4cc3-8fda-c9744a9c5"
+              "fb3/scratchpad/ruler_vecs.npz")
+    if rv.exists():
+        z = np.load(rv, allow_pickle=True)
+        D0 = z["D0"].astype(np.float32)
+        D1 = z["D1"].astype(np.float32)
+        if len(D0) == n:
+            Sd = None
+            for a in (D0, D1):
+                for b2 in (D0, D1):
+                    X = a @ b2.T
+                    Sd = X if Sd is None else np.maximum(Sd, X)
+            Sd = csls(Sd)
+            show(metr(diffuse(Sd), sub=hold), "[HOLD] delta+diff base")
+            for w in (0.15, 0.3, 0.6):
+                F = diffuse(zrow(Sd) + w * zrow(Ss))
+                show(metr(F, sub=hold), f"[HOLD] delta+{w}struct")
+            for w in (0.3,):
+                F = diffuse(zrow(Sd) + w * zrow(Ss)
+                            + 0.15 * zrow(Sp))
+                show(metr(F, sub=hold), f"[HOLD] +{w}st+0.15pa")
     print("\nbaseline to beat [HOLDOUT @1352]: diffusion-current "
           "AP 0.546 y/p 0.643/0.428 | 3cls 0.688/0.459", flush=True)
 
