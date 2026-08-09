@@ -188,6 +188,11 @@ def _diffuse_rerank(cands, R):
     bounded. NOTE the measured size effect: below ~475 events the graph
     is too sparse and diffusion is WORSE than cosine, so it is skipped
     for small candidate sets rather than applied on faith.
+
+    CAUTION for any future abstention work: the scores this writes are
+    RELATIVE (normalized so the best is 1.0), not cosine similarities.
+    A fixed confidence cut calibrated on cosine magnitudes is
+    meaningless against them; a cut must be fitted on the rank profile.
     """
     if len(cands) < 500:
         return
