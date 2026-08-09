@@ -2305,3 +2305,50 @@ is too sparse to propagate. So the current number is CORPUS-limited,
 not method-limited, and "more data" is a measurable path rather than a
 hope. For a storage product this is the right shape: retrieval quality
 improves as the store fills.
+
+Two further attacks on the residual, both REJECTED by the holdout:
+ - second-order similarity (neighbour-profile cosine, meant to bridge
+   the clusters): dev 3cls 0.776 vs diffusion 0.769, but 5cls never
+   beats it; selection kept plain diffusion.
+ - arm-free clean scenes at 640px (pixel-median removes the arm; no
+   site selection needed; 40x40 patches so a block is ~2x2 cells,
+   aimed squarely at the place<->stack tower relation): helps on DEV
+   (0.658/0.438 vs 0.638/0.425) and HURTS on HOLDOUT (0.625/0.416 vs
+   0.643/0.428). The dev gain was selection overfitting; rejected.
+   This is why the choose-on-dev / report-on-holdout split exists.
+
+SETTLED, holdout: diffusion alone. AP 0.546, P@1 0.868, P@10 0.744,
+yield/prec 0.643/0.428 (3-motion 0.688/0.459).
+
+## 2026-08-09 — SCALING LAW CONFIRMED: +220 episodes moved the number
+
+Prediction from exp13: adding fresh episodes raises diffusion's yield
+and leaves the baseline where it is. Test: 220 new episodes (sim_grow,
+seeds 9000+, disjoint from everything measured), corpus 1352 -> 2660
+events over 449 episodes. Same fixed config (k=10, alpha=0.9).
+
+| holdout (sim_eval_bal, never used for any choice) | AP | P@1 | P@10 | yield/prec | 3-motion |
+|---|---|---|---|---|---|
+| baseline @1352 | 0.399 | 0.853 | 0.641 | 0.500/0.333 | 0.611/0.407 |
+| baseline @2660 | 0.396 | 0.851 | 0.636 | 0.499/0.332 | 0.610/0.406 |
+| diffusion @1352 | 0.546 | 0.868 | 0.744 | 0.643/0.428 | 0.688/0.459 |
+| **diffusion @2660** | **0.597** | 0.860 | 0.775 | **0.696/0.463** | **0.722/0.481** |
+
+The baseline is flat to three decimals (0.500 -> 0.499) while diffusion
+gains +0.053 yield from data alone. Full-corpus numbers: 5-class
+0.668/0.445, 3-motion **0.768/0.512**, P@1 0.913, P@10 0.845.
+
+Scaling curve, re-measured on the grown corpus (still not saturated):
+| episodes | events | baseline | diffusion | diffusion 3-motion |
+|---|---|---|---|---|
+| 80 | 480 | 0.527 | 0.490 | 0.673 |
+| 150 | 887 | 0.523 | 0.563 | 0.705 |
+| 230 | 1339 | 0.524 | 0.620 | 0.734 |
+| 300 | 1780 | 0.526 | 0.641 | 0.748 |
+| 449 | 2660 | 0.526 | **0.668** | **0.768** |
+
+So the honest position on the 0.80 target: 3-motion yield is at 0.768
+and rising ~0.02 per +450 events; 0.80 is within reach of one more
+growth batch. 5-class yield is at 0.668 and would need the place<->
+stack tower relation, which four localization attempts and the
+clean-scene channel all failed to supply.
