@@ -1693,3 +1693,42 @@ longer horizons, or contrastive-of-changes.
 Shipped: vwm_qbe scores ordered height-profile change (dmulti, 3rds+5ths);
 Desk wm mode serves it (verified live); trajectories stored per clip, no
 summary at write time.
+
+## 2026-08-09 — Atomic diagnosis of the 0.612 (the road to 0.9)
+
+Confusion at top-10 (rows = query):
+
+|        | pick | place | stack | unstack | push |
+|--------|------|-------|-------|---------|------|
+| pick   | 82.6 | 9.6   | 4.9   | 0.8     | 2.0  |
+| place  | 35.3 | 47.9  | 13.2  | 1.4     | 2.2  |
+| stack  | 32.0 | 27.0  | 37.7  | 1.7     | 1.6  |
+| unstack| 30.2 | 24.8  | 16.4  | 26.7    | 1.9  |
+| push   | 67.6 | 8.4   | 4.4   | 0.4     | 19.2 |
+
+Three mechanistic atoms, each with a measured signature:
+
+1. CAMERA BIAS (largest): 92.1% of retrieved spans share the query's camera
+   vs 39.4% chance (+0.53). cam2 queries score 0.509 vs cam0's 0.665. Every
+   episode has a second recorded view the store ignored. Fix: encode all
+   views, score max over view pairs — raw data only.
+2. HEIGHT RESOLUTION at one-block scale: 5 rows put "table level" and "one
+   block up" in the same ~100px cell — precisely the stack->place/pick leak.
+   Fix: 10/20-ROW marginals (finer height, columns still marginalized —
+   full finer grids already measured as losses).
+3. PUSH IS BLIND BY CONSTRUCTION: lateral motion at constant height is what
+   the row marginal deletes (67.6% of push hits are picks). Needs a lateral
+   term; smallest class (25), third priority.
+
+Duration is a minor confound (within-primitive: pick 0.83 vs 0.79).
+
+Can it reach 0.9? Honest bounds: pick plausibly yes (0.83 pre-fixes).
+unstack has a SEMANTIC ceiling under this grading — its span IS a
+grasp-from-tower + carry + release, so a large fraction of its visual
+content is legitimately pick-then-place; 0.9 same-label retrieval for
+unstack would require the representation to privilege the tower-origin
+over everything else the clip shows. push at n=25 is statistically fragile.
+A corpus-wide 0.9 P@10 therefore requires either (a) all three atoms fixed
+AND the composite classes re-graded at sub-event level, or (b) accepting
+that the honest corpus-wide number lands below the per-class ceiling of its
+hardest class. Sweep 6 (running) isolates atoms 1+2.
