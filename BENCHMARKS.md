@@ -1823,3 +1823,27 @@ AP 0.428 vs 0.442 whole-span; push collapsed to 0.08 (its low-energy
 motion falls under the recording's own Otsu threshold). vwm_units.py kept
 as the instrument; next unit attempt must cut on change-direction
 reversals, not energy.
+
+## 2026-08-09 — Extended ruler + feature-ceiling flatness: the constraint is upstream vision
+
+Balance batch (80+80 eps, 0.91 verified): push support 25->140, unstack
+42->105. Extended-ruler (1352 events) supervised ceilings:
+
+| class | old ceiling y/p | balanced ceiling y/p |
+|---|---|---|
+| push | 0.362/0.141 | **0.606/0.508** (~4x AP) |
+| unstack | 0.374/0.204 | 0.571/0.452 |
+| ALL | 0.789/0.722 | 0.777/0.713 |
+
+Starvation PROVED and fixed. Then the feature-set ceiling sweep came back
+FLAT: row-dmulti 0.741 AP, full-grid 0.717, +static context 0.735, all
+combined 0.735 - no derived feature raises the bound, so the loss is in
+the frozen per-frame encoding itself (320px, distant cams, one-block
+height at the resolution edge). Sub-event units v1 also null (median 1
+unit/event - stillness separates events, not phases).
+
+In flight: identical operator at 448px/28-grid - the direct test of
+"upstream vision is the constraint". If the ceiling rises, the road to
+0.9 is resolution/encoder investment + closing the unsup gap (0.397 vs
+0.736 AP); if it stays flat, the residual is scene/observation physics
+and the honest targets are per-class.

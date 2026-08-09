@@ -28,7 +28,11 @@ sys.path.insert(0, str(ROOT / "native"))
 import vcore                                              # noqa: E402
 from vtrans import encode                                 # noqa: E402
 
-CACHE = ROOT / "data" / "cache" / "vwm"
+# SDX_VWM_CACHE: alternate cache dir for resolution experiments (the
+# flat feature-ceiling sweep said the constraint is upstream of every
+# derived feature - the test is the same operator with better eyes).
+import os as _os
+CACHE = ROOT / "data" / "cache" / _os.environ.get("SDX_VWM_CACHE", "vwm")
 W, H = 640, 480          # sim_stack RES, every sim episode
 
 
