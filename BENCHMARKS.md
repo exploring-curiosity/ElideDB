@@ -1978,3 +1978,48 @@ conserved the envelope: the latent never contained the state.
 
 Capacity check in flight (MLP + full-grid + frame-pair probes) to
 separate "encoder lacks it" from "probe could not read it".
+
+## 2026-08-09 — CAPACITY VERDICT + the atomic anatomy of the similarity lookup
+
+Capacity check (MLP, full-grid, frame-pair) and the relational-confound
+closer (non-relational aggregates):
+
+| target | linear | MLP | verdict |
+|---|---|---|---|
+| hand_z | 0.66 | **0.84** | PRESENT, nonlinearly coded |
+| nearblk_z | 0.17 | 0.26 | ABSENT |
+| tower_top_z | 0.18 | 0.28 | ABSENT |
+| mean_blk_z (non-relational) | 0.20 | 0.27 | ABSENT - closes the confound |
+| n_lifted (non-relational) | 0.20 | 0.25 | ABSENT |
+| grip | 0.06 | -0.03 | ABSENT |
+| velocities (frame-pair) | 0.05-0.07 | 0.21 best | mostly absent |
+
+MECHANISM: blocks are ~30px objects = ~2x2 patches at 16px stride. A 5cm
+world height change is a sub-patch image shift, and DINOv3 patch features
+are deliberately robust to sub-patch translation - so block VERTICAL STATE
+lives below the representation's granularity. The arm spans hundreds of
+pixels; its state is present (0.84). Global 448px barely helped because
+the patch stride scaled with it.
+
+### The similarity lookup, atomized and rated
+
+| # | atomic stage | what it must preserve | measured | rating |
+|---|---|---|---|---|
+| A1 | camera/frames 480p@10fps | scene state visible | blocks ~30px | WEAK for small objects |
+| A2 | frozen encoder (vits16 grid) | object + agent state | hand 0.84 / blocks 0.18-0.28 / grip 0.06 | **THE FAILURE POINT** |
+| A3 | spatial pooling (row profile) | keep A2, drop nuisance | hand_y 0.57->0.31; killers already dead | secondary loss |
+| A4 | JL projection | isometry | 0.166 vs 0.159 full-grid | LOSSLESS |
+| A5 | temporal deltas (3+5+8) | ordered change | best hand-op family (0.416->0.612 arc) | OK given A2 |
+| A6 | kinematic units + DTW | phase structure | +yield, envelope conserved | OK given A2 |
+| A7 | view max-matching | cross-camera | +0.056, bias 0.92->absorbed | GOOD |
+| A8 | CSLS hub correction | de-hub scores | +0.02, minority classes +0.1-0.15 | GOOD |
+| A9 | cut/abstention | secondary per owner | not the constraint (oracle-cut used) | - |
+
+Everything downstream of A2 is now measured to be either fine or a
+secondary loss; SEVEN matcher variants conserved the envelope because A2
+never handed them the state. The repair is the extraction stage: the
+working representation must recover sub-patch object state - object
+tracks (position/height per compact moving/foreground region, generic
+detection, no names) as the state record, with the patch grid demoted to
+an appearance descriptor per object. That is the tracks-first design the
+project already holds, now with its quantitative justification.
