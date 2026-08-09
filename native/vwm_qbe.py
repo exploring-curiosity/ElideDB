@@ -132,11 +132,63 @@ def index(root="data/sim_chains", corpus="sim"):
     return _INDEX[key]
 
 
+_VE = {}
+
+
+def _vits():
+    """The WM query encoder, SELF-CONTAINED. The Desk process serves
+    the c2 stores with their own encoder (vitl16); reusing vcore's
+    global singleton would force one encoder on both paths and break
+    whichever the environment did not name. fp32: the DINOv3 ViT fp16
+    NaN trap is recorded, not rediscovered."""
+    if not _VE:
+        import torch
+        from transformers import AutoImageProcessor, AutoModel
+        name = "facebook/dinov3-vits16-pretrain-lvd1689m"
+        dev = "mps" if torch.backends.mps.is_available() else "cpu"
+        _VE["proc"] = AutoImageProcessor.from_pretrained(name)
+        _VE["m"] = AutoModel.from_pretrained(
+            name, dtype=torch.float32,
+            low_cpu_mem_usage=True).to(dev).eval()
+        _VE["dev"] = dev
+        _VE["torch"] = torch
+    return _VE
+
+
+GRID = 20
+
+
+def _encode_grid(F):
+    """(T,H,W,3) -> (T,GRID,GRID,d) with the vits16@320 operator the
+    caches were built with (mirrors vtrans.encode)."""
+    e = _vits()
+    torch = e["torch"]
+    out = []
+    B = 16
+    for i in range(0, len(F), B):
+        chunk = [np.ascontiguousarray(x[..., :3]) for x in F[i:i + B]]
+        px = e["proc"](images=chunk, return_tensors="pt",
+                       size={"height": 320, "width": 320})["pixel_values"]
+        with torch.no_grad():
+            r = e["m"](pixel_values=px.to(e["dev"]))
+        h = r.last_hidden_state
+        nreg = int(getattr(e["m"].config, "num_register_tokens", 0) or 0)
+        P = h[:, 1 + nreg:].float().cpu().numpy()
+        sq = int(round(P.shape[1] ** 0.5))
+        P = P[:, :sq * sq].reshape(len(chunk), sq, sq, -1)
+        k = max(sq // GRID, 1)
+        P = P[:, :k * GRID, :k * GRID]
+        P = P.reshape(len(chunk), GRID, k, GRID, k, -1).mean((2, 4))
+        out.append(P)
+    G = np.concatenate(out)
+    # per-cell l2, exactly as vtrans.encode built the caches
+    return G / np.maximum(np.linalg.norm(G, axis=-1, keepdims=True), 1e-8)
+
+
 def query_states(F):
     """Frames -> states, the identical write-path operator."""
     import vwm
-    from vtrans import encode
-    G = encode(F)
+    G = _encode_grid(F)
     T = len(G)
     g = _l2(G.reshape(T, -1, G.shape[-1]).mean(1))
     k = G.shape[1] // 5
