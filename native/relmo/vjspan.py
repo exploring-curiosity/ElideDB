@@ -54,7 +54,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from relmo import registry as R  # noqa: E402
 from relmo.vjs import (GRID, MODEL, TUBELET, probe_dims, read_frames,  # noqa: E402
                        to_tensor)
-from relmo.vjdense import MINCTX, WIN, dense_record  # noqa: E402
+from relmo.vjrec4 import CTX, WIN, record as v4_record  # noqa: E402
+
+
+def dense_record(model, torch, dev, clip, n_frames, cal, layer):
+    """v4 record, returning (gate_map, error_channel).
+
+    Switched from v3's growing context to v4's FIXED-length window. The growing
+    context put a downward ramp in every trace - early steps predicted from
+    almost no history - and two ramps align to each other regardless of what
+    event produced them. Measured consequence: with v3 the ease_out warp put
+    the true match at rank 32.5; with v4 it is rank 1.0.
+    The error channel is used because it won with an interval that excludes
+    zero (0.584 [0.566,0.602] vs pred_change 0.525 [0.508,0.540])."""
+    r = v4_record(model, torch, dev, clip, n_frames, cal, layer)
+    return r["where_map"], r["error"]
+
+
+MINCTX = CTX
 from relmo.vjeval import REC, l2, parse  # noqa: E402
 
 WARPS = {"same": lambda u: u, "ease_out": lambda u: 1 - (1 - u) ** 2}
