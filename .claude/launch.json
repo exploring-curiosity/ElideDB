@@ -4,8 +4,24 @@
     {
       "name": "vdesk",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["native/vdesk.py", "--port", "8788"],
+      "runtimeArgs": [
+        "native/vdesk.py",
+        "--port",
+        "8788"
+      ],
       "port": 8788
+    },
+    {
+      "name": "relmo-viewer",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8765",
+        "--directory",
+        "data/relmo"
+      ],
+      "port": 8765
     }
   ]
 }
