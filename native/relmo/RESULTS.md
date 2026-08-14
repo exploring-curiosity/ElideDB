@@ -82,8 +82,9 @@ Each of these was believed, then measured, then abandoned.
 |---|---|
 | error-based representations shed the scene confound | **false** — static patches 83.3 vs moving 88.3, ratio 1.07 at layer 24 |
 | …though at layer 3 the ratio is 6.64, so the refutation was depth-specific | retracted and re-recorded |
-| ordering vs warp-robustness is a fundamental tradeoff | **false** — an artefact of the context-length ramp; error/span is both |
-| a time warp changes the residual's content irreducibly | **false** — rank 32.5 → 1.0 once context length is fixed |
+| ordering vs warp-robustness is a fundamental tradeoff | **false** — an artefact of the context-length ramp; span is both ordered and warp-robust |
+| a time warp changes the residual's content irreducibly | **false** — rank 32.5 → 1.0–4.5 once context length is fixed |
+| the error channel was worth keeping because it scored higher | **false** — a design constraint is not a metric question; barred |
 | half of every clip is wasted | **false** — the discarded half is the setup, 0.461 alone |
 | a short prediction horizon is sharper | **false** — long horizon 0.586 vs short 0.574 |
 | subtracting appearance removes nuisance | **false** — 0.472 → 0.335 |
@@ -95,15 +96,16 @@ Each of these was believed, then measured, then abandoned.
 
 1. **Index cost — 6.5× real-time.** An hour of recording takes ~6.5 h to index.
    This is what blocks the real use case. Engineering, not research.
-2. **The content channel depends on the model being wrong.** `error` is a
-   function of *(event, model prior)*, not of the event. Structurally worst on
-   the open/close pair — `CloseCabinet` 0.381 is the weakest real family — and
-   it would drift under online adaptation. Retained only because it beat
-   `pred_change` by −0.050 [−0.059, −0.042], and only while the model is frozen.
-3. **Boundary accuracy is unvalidated.** Span containment is 8/8, but that only
+2. **`ease_out` warps sit at rank 4.5, not 1.0.** Fast-start/slow-end is the one
+   differential profile the alignment does not fully absorb. Still top 1% of
+   447, so it degrades gracefully rather than failing.
+3. **Close is systematically weaker than Open.** `CloseCabinet` 0.339 is the
+   weakest real family. Closing ends in contact and stillness, which is how many
+   things end; opening ends in a revealed interior, which is more distinctive.
+4. **Boundary accuracy is unvalidated.** Span containment is 8/8, but that only
    proves the right episode. The clean label-free test is to query with a
    sub-span of a known episode, where true boundaries are exact.
-4. **Layer 6 was chosen by peeking at the graded score.** Layers 3/6/9 came out
+5. **Layer 6 was chosen by peeking at the graded score.** Layers 3/6/9 came out
    1.92/1.93/1.91, so it is inconsequential, but it is the one hyperparameter
    that saw labels.
 
