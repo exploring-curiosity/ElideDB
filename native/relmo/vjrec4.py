@@ -105,6 +105,13 @@ def main():
     ap.add_argument("--layer", type=int, default=6)
     ap.add_argument("--frames", type=int, default=64)
     ap.add_argument("--limit", type=int, default=0)
+    # OOD corpora have no vjrec/ pass and no calibration of their own. The
+    # affine is a property of the HF predictor against its EMA target encoder,
+    # not of the dataset, and refitting it per target domain is exactly the
+    # kind of per-domain tuning an out-of-domain claim may not use - so the
+    # source calibration travels unchanged.
+    ap.add_argument("--from-manifest", action="store_true")
+    ap.add_argument("--calib", default="rcasa")
     a = ap.parse_args()
 
     import torch
@@ -112,10 +119,17 @@ def main():
     from transformers import VJEPA2Model
 
     d = REC / a.dataset
-    files = [p for p in sorted(d.glob("*.npz")) if not p.name.startswith("_")]
+    if a.from_manifest:
+        man = R.read_manifest(a.dataset)
+        files = [Path(e["id"] + ".npz") for e in man["episodes"]]
+        shard = {e["id"]: e["shard"] for e in man["episodes"]}
+    else:
+        files = [p for p in sorted(d.glob("*.npz"))
+                 if not p.name.startswith("_")]
+        shard = {}
     if a.limit:
         files = files[:a.limit]
-    z = np.load(d / "_calib.npz")
+    z = np.load(REC / a.calib / "_calib.npz")
     cal = (float(z["alpha"]), z["b"].astype(np.float32))
     dev = "mps" if torch.backends.mps.is_available() else "cpu"
     print(f"loading {MODEL} onto {dev}...", flush=True)
@@ -132,7 +146,8 @@ def main():
           f"{len(todo)} to do (~{len(todo)*11/60:.0f} min)", flush=True)
     t0, done, failed = time.time(), 0, 0
     for p in tqdm(todo, unit="ep", desc=f"v4/L{a.layer}"):
-        ep = R.dataset_dir(a.dataset) / "shard_0000" / p.stem / "frames.mp4"
+        ep = (R.dataset_dir(a.dataset) / shard.get(p.stem, "shard_0000")
+              / p.stem / "frames.mp4")
         if not ep.exists():
             failed += 1
             continue

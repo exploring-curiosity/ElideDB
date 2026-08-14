@@ -60,6 +60,9 @@ def main():
     ap.add_argument("--frames", type=int, default=64)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--model", default=MODEL)
+    ap.add_argument("--from-manifest", action="store_true",
+                    help="enumerate the dataset manifest instead of a prior "
+                         "vjrec pass - needed for OOD corpora, which have none")
     a = ap.parse_args()
 
     import torch
@@ -68,7 +71,14 @@ def main():
     from transformers import AutoModel
 
     d = REC / a.dataset
-    files = [p for p in sorted(d.glob("*.npz")) if not p.name.startswith("_")]
+    shard = {}
+    if a.from_manifest:
+        man = R.read_manifest(a.dataset)
+        files = [Path(e["id"] + ".npz") for e in man["episodes"]]
+        shard = {e["id"]: e["shard"] for e in man["episodes"]}
+    else:
+        files = [p for p in sorted(d.glob("*.npz"))
+                 if not p.name.startswith("_")]
     if a.limit:
         files = files[:a.limit]
     dev = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -88,7 +98,8 @@ def main():
     print(f"{len(files)} episodes, {len(todo)} to do", flush=True)
     t0, done, failed = time.time(), 0, 0
     for p in tqdm(todo, unit="ep", desc="siglip"):
-        ep = R.dataset_dir(a.dataset) / "shard_0000" / p.stem / "frames.mp4"
+        ep = (R.dataset_dir(a.dataset) / shard.get(p.stem, "shard_0000")
+              / p.stem / "frames.mp4")
         if not ep.exists():
             failed += 1
             continue

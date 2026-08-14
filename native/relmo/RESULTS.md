@@ -27,7 +27,69 @@ video ──► V-JEPA 2 encoder (frozen)
 Nothing is labelled at write time. The corpus family names are parsed in
 `vjeval.py` only, for scoring.
 
-## Numbers
+## Numbers — trained recurrence (2026-08-14)
+
+The frozen numbers below are the ceiling of a frozen encoder. A trained
+`z_t = f(z_{t-1}, a_t, g_t)`, supervised only on **relational physics** read
+from sim state at training time, moves the shipped read path a long way past
+it. Splits are scene-grouped (188 scenes, no scene or camera variant straddles
+a split), train 65 / val 15 / test 20. Mean ± sd over 5 seeds.
+
+| split | frozen | learned `z` | chance |
+|---|---|---|---|
+| test, train-disjoint pool | 0.526 | **0.737 ± 0.003** | 0.216 |
+| test, deployment index | 0.534 | **0.739 ± 0.006** | 0.222 |
+| ood_val — unseen tasks (`ArrangeTea`, `OpenFridge`) | 0.518 | **0.653 ± 0.008** | 0.214 |
+
+Per query class, test / train-disjoint pool:
+
+| class | chance | frozen | learned | ≥0.70 |
+|---|---|---|---|---|
+| Open/sliding | 0.095 | 0.753 | **0.938 ± 0.027** | yes |
+| PickPlace | 0.271 | 0.611 | **0.848 ± 0.012** | yes |
+| Open/hinged | 0.211 | 0.438 | 0.637 ± 0.022 | −0.063 |
+| Close/hinged | 0.169 | 0.433 | 0.626 ± 0.008 | −0.074 |
+| Close/sliding | 0.095 | 0.329 | 0.471 ± 0.014 | −0.229 |
+
+**The controls carry the claim.** Reconstruction-only (no physics loss) scores
+0.458 and permuted physics targets 0.325 — both *below* the 0.526 frozen
+baseline. The recurrence architecture alone loses; the physics supervision is
+what works.
+
+**Why physics and not labels.** Targets are openness rate, contact, speed,
+rotation and motion in the gripper frame (`relmo/vjphys.py`), read from sim
+state at TRAINING time only — never at serve, never indexed. Task-family labels
+are used solely to grade. The transfer claim rests on the targets being
+physical: an `OpenFridge` query, an object never trained on, goes 0.481 → 0.662
+against in-domain distractors.
+
+**Feasibility gate first.** Before any training, the frozen descriptor was
+probed for these targets: opening-vs-closing reads at 0.923 per step and 0.974
+per episode on held-out scenes, against a 0.505 shuffled control. The
+information was already present and the cosine metric was discarding it — which
+is the whole diagnosis in one number.
+
+**Seed noise nearly fooled the selection.** One checkpoint read 0.678 on
+ood_val; five seeds of that config average 0.603 ± 0.049. Selecting on
+seed-mean moved the choice to `wrec=1.0` (ood_val 0.653 ± **0.008**). Every
+number above is a seed aggregate, never a best checkpoint.
+
+### Why the remaining classes are short
+
+`Close/sliding` is the smallest physical event in the corpus. `CloseDrawer`
+episodes begin from a half-open drawer and traverse **0.450** of the joint
+range, against 0.740 for `OpenDrawer` and 0.958–0.998 for cabinets, and a
+drawer rotates least of anything measured. Least translation *and* least
+rotation — it is the worst class for the frozen model (0.329) and the trained
+one (0.471) alike. That is a property of the data, not a bug in the metric.
+
+Adding rotation targets (`d_rot`, `rot_cum`) was aimed at hinged-vs-sliding
+confusion and **worked on its mechanism** — Open/hinged wrong-kinematics errors
+halved, 23/186 → 12/186, precision 0.726 → 0.796 on val — but did **not** move
+the aggregate (ood_val 0.656 ± 0.019 vs 0.653 ± 0.008). Recorded as a mechanism
+win and an aggregate null.
+
+## Numbers — frozen encoder (superseded as the shipped path)
 
 447 episodes, k = support, group-aware grading, chance 0.222.
 95% intervals bootstrapped over **queries** (2000 resamples); paired

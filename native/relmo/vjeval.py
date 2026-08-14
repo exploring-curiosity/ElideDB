@@ -56,9 +56,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from relmo import registry as R  # noqa: E402
 
 REC = R.BASE / "vjrec"
-VERBS = ("Open", "Close", "PickPlace", "Prepare", "Stack", "Load")
+VERBS = ("Open", "Close", "PickPlace", "Prepare", "Stack", "Load", "Arrange")
+# Fridge and Tea appear only in rcasa_eval, the held-out OOD set. OBJGROUP
+# already mapped Fridge to hinged ("not in rcasa; here for reuse") but the
+# parser's object list did not, so OpenFridge graded as Open/Other and formed
+# its own group - which would have hidden the exact thing the OOD set tests,
+# namely whether an unseen object retrieves the hinged doors it moves like.
+# GRADING ONLY, as with everything in this table.
 OBJECTS = ("Cabinet", "Microwave", "Drawer", "Sink", "Counter", "Coffee",
-           "Bowls", "Dishwasher")
+           "Bowls", "Dishwasher", "Fridge", "Tea")
 
 # ---------------------------------------------------------------------------
 # EVALUATION ONLY. Never read by the write path, never indexed, never ranked.
@@ -84,7 +90,8 @@ OBJGROUP = {
     "Drawer": "sliding",
     "Sink": "basin",
     "Coffee": "appliance", "Bowls": "vessel", "Counter": "surface",
-}
+    "Tea": "tea",          # rcasa_eval only; a novel multi-step task, its own
+}                          # class - it must not be folded into Coffee for free
 
 
 def group_key(m, pickplace_any_destination=True):
