@@ -77,6 +77,47 @@ ood_val; five seeds of that config average 0.603 ± 0.049. Selecting on
 seed-mean moved the choice to `wrec=1.0` (ood_val 0.653 ± **0.008**). Every
 number above is a seed aggregate, never a best checkpoint.
 
+### ood_test on real robot video - the trained model LOSES
+
+bridge, 503 episodes, real cameras, real kitchens, a WidowX arm, no sim state.
+Two event types ("sweep into pile" vs "put X in pot/pan and pot/pan on stove"),
+balanced, chance 0.499. Read once.
+
+| arm | ood_test | 95% CI |
+|---|---|---|
+| **frozen `pred_change`** | **0.908** | [0.899, 0.917] |
+| `wrec=0.1` + SigLIP | 0.875 | |
+| CTRL no-physics | 0.839 | |
+| trained `z` (`wrec=1.0`, 5 seeds) | 0.804 +/- 0.030 | |
+| `wrec=0.1` | 0.692 | |
+| CTRL shuffled targets | 0.748 | [0.739, 0.757] |
+
+**Training loses to not training, out of domain.** The more appearance an arm
+preserves the better it does here, and the no-physics control beats every
+physics arm.
+
+The reason is specific, not general. Both bridge classes are free-body
+transport: in our target space both have `has_art = 0` and `d_open = 0`, so the
+physics targets cannot separate them at all, while appearance separates them
+trivially. The target set is ARTICULATION-CENTRIC and this corpus has no
+articulation, so the appearance `z` gave up is never repaid.
+
+So the transfer claim has to be stated narrowly and honestly:
+
+  transfer across TASKS within a domain   HOLDS   0.518 -> 0.653 (ood_val)
+  transfer across DOMAINS                 FAILS   0.908 -> 0.804 (ood_test)
+
+A caveat that cuts the other way: this is a two-class, appearance-separable
+problem, which is the setting least able to show what the representation is
+for. It is evidence that training costs appearance sensitivity; it is not
+evidence about fine-grained event matching on real video, which bridge's
+long-episode subset cannot test.
+
+NOTE ON SELECTION. The SigLIP arm dominates on val (0.787) and ood_test (0.875)
+and ties on ood_val, so it looks like the better arm - but ood_test was
+designated read-once and switching arms on it would consume it as a selection
+set. Recorded, not acted on. A future selection needs a fresh OOD domain.
+
 ### What the ceiling actually is
 
 Retrieving with the **true** physics sequences as the descriptor, under the
