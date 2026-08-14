@@ -138,6 +138,22 @@ design constraint into a metric question, and the justification I gave for it
 
 ## Things that were refuted, and by what
 
+**Appending predicted physics to the descriptor** (2026-08-14). The diagnosis
+said the discriminative directions are low-variance inside `z`, so giving the
+physics head's standardised output unit weight in the metric should help. It
+does, in domain: val 0.765 -> 0.783. It **hurts out of domain**: ood_val
+0.653 +/-0.008 -> 0.616 +/-0.020. The head was fit on rcasa; on unseen tasks its
+predictions are less reliable and weighting them up amplifies that error.
+Rejected by the ood_val selection rule. Selecting on val would have shipped it.
+
+**Rotation targets as an aggregate win** (2026-08-14). `d_rot`/`rot_cum` were
+added to fix hinged-vs-sliding confusion and did fix it - Open/hinged
+wrong-kinematics errors 23/186 -> 12/186, precision 0.726 -> 0.796 on val - but
+ood_val was unchanged (0.656 +/-0.019 vs 0.653 +/-0.008). A mechanism win is not
+an aggregate win.
+
+
+
 Each of these was believed, then measured, then abandoned.
 
 | claim | outcome |
