@@ -1,7 +1,10 @@
 # ElideDB / RelMo — V-JEPA 2 span retrieval
 
-State as of 2026-08-14. Branch `relmo-vjepa-span`. Frozen model, no gradient
-steps taken anywhere.
+State as of 2026-08-14. Branch `relmo-vjepa-span`. The V-JEPA 2 **encoder and
+predictor remain frozen** — no gradient ever reaches them. A small recurrence
+`f` on top of their frozen output is trained (333k params, `relmo/vjz.py`);
+everything below the "frozen encoder" heading predates it and is kept as the
+zero-training floor.
 
 ## What the system is
 
