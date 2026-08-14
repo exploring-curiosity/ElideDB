@@ -65,10 +65,12 @@ def dense_record(model, torch, dev, clip, n_frames, cal, layer):
     almost no history - and two ramps align to each other regardless of what
     event produced them. Measured consequence: with v3 the ease_out warp put
     the true match at rank 32.5; with v4 it is rank 1.0.
-    The error channel is used because it won with an interval that excludes
-    zero (0.584 [0.566,0.602] vs pred_change 0.525 [0.508,0.540])."""
+    Content is pred_change = pred(t+k) - actual(t). The error channel is
+    BARRED (owner, absolute): it measures the model's guess rather than the
+    event, so it cannot carry forward to complex scenarios and it drifts under
+    adaptation."""
     r = v4_record(model, torch, dev, clip, n_frames, cal, layer)
-    return r["where_map"], r["error"]
+    return r["where_map"], r["pred_change"]
 
 
 MINCTX = CTX

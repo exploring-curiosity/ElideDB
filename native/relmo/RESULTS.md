@@ -14,8 +14,8 @@ video ──► V-JEPA 2 encoder (frozen)
             │
             ├─ layer 6   ‖h(t+k) − h(t)‖         WHERE  the gate: what changed
             └─ layer 24  predictor
-                          pred(t+k) − actual(t+k) WHAT   the content: what the
-                                                         model could not predict
+                          pred(t+k) − actual(t)   WHAT   the content: what the
+                                                         model expected to change
                      ↓ pool WHAT over the frame, weighted by WHERE
               per-timestep descriptor sequence
                      ↓
@@ -35,24 +35,44 @@ differences use shared resample indices.
 
 | arm | true/returned | precision | 95% CI | lift |
 |---|---|---|---|---|
-| **error / span** | 21612/36990 | **0.584** | [0.566, 0.602] | **2.63×** |
-| error / cosine | 21288/36990 | 0.576 | [0.557, 0.593] | 2.59× |
-| pred_change / span | 19423/36990 | 0.525 | [0.508, 0.540] | 2.37× |
+| **pred_change / span** | 19423/36990 | **0.525** | [0.508, 0.540] | **2.37×** |
 | pred_change / cosine | 19093/36990 | 0.516 | [0.499, 0.532] | 2.33× |
 | obs_change / span | 18128/36990 | 0.490 | [0.471, 0.508] | 2.21× |
 | obs_change / cosine | 16634/36990 | 0.450 | [0.430, 0.468] | 2.03× |
 | scene-only baseline | 11162/36990 | 0.302 | [0.294, 0.309] | 1.36× |
 
-Time-warp invariance — median rank of the true original among 447, where the
-query is the same episode re-rendered under a warp (correct answer known
-without annotation):
+Paired: `span − cosine = +0.0089 [+0.0046, +0.0132]`, excludes zero. The span
+matcher genuinely beats whole-sequence cosine rather than merely tying it.
+`pred_change` beats `obs_change`, so *what the model expected to change*
+carries more than *what actually changed*.
+
+Time-warp invariance — median rank of the true original among 447, query is the
+same episode re-rendered under a warp (correct answer known without annotation):
 
 | channel | matcher | identity | ease_in | ease_out | sigmoid | zoom |
 |---|---|---|---|---|---|---|
-| error | cosine | 1.0 | 15.5 | 85.5 | 1.0 | 1.0 |
-| **error** | **span** | **1.0** | **1.0** | **1.0** | **1.0** | **1.0** |
-| pred_change | span | 1.0 | 1.0 | 4.5 | 1.0 | 1.0 |
+| **pred_change** | **span** | **1.0** | **1.0** | **4.5** | **1.0** | **1.0** |
+| pred_change | cosine | 1.0 | 18.0 | 55.0 | 1.0 | 1.0 |
+| obs_change | span | 1.0 | 2.5 | 4.5 | 1.0 | 1.5 |
 | obs_change | cosine | 1.0 | 306.0 | 212.5 | 3.0 | 7.5 |
+
+### The barred channel
+
+`error = pred(t+k) − actual(t+k)` is **forbidden** by standing owner rule and is
+not cached, benchmarked or reported. It scored 0.584 [0.566, 0.602] and was
+rank 1.0 on every warp — better on both. That is not a reason to use it.
+
+It is a function of *(event, model prior)*, not of the event: its magnitude
+reports what the model happened to guess, so the same event yields different
+descriptors as the prior shifts and an index built from it drifts against
+itself under any adaptation. It is structurally worst on exactly the open/close
+distinction the product exists to make. Its advantage is evidence about one
+frozen checkpoint, not about the design. The ~0.06 is the accepted cost of a
+signal that generalises.
+
+I argued for keeping it three times on benchmark grounds. That was converting a
+design constraint into a metric question, and the justification I gave for it
+("error is a contrast operation") was constructed after seeing it win.
 
 ## Things that were refuted, and by what
 

@@ -1,4 +1,4 @@
-"""Evaluate v4: three content channels x two matchers, WITH intervals.
+"""Evaluate v4: content channels x two matchers, WITH intervals.
 
 Every comparison in this project so far has been a point estimate. I told the
 owner a 0.573-vs-0.517 gap was "well outside the noise" without ever computing
@@ -13,10 +13,12 @@ Paired differences between arms use the SAME resample indices, which is what
 makes a difference-interval meaningful - the arms share queries, so their errors
 are correlated and an unpaired comparison overstates the uncertainty.
 
-CHANNELS (v4 caches all three; they differ only in what is subtracted)
-    error       pred(t+k) - actual(t+k)
+CHANNELS (they differ only in what is subtracted)
+    pred_change pred(t+k)   - actual(t)    <- the content channel
     obs_change  actual(t+k) - actual(t)
-    pred_change pred(t+k)   - actual(t)
+    error       pred(t+k) - actual(t+k)    BARRED by standing owner rule; it
+        measures the model's guess rather than the event, so it cannot carry
+        forward and it drifts under adaptation. Not benchmarked, not reported.
 
 MATCHERS
     cosine    mean over t of cos(A_t,B_t) - assumes a shared clock
@@ -131,7 +133,7 @@ def main():
               f"{p:7.3f} {f'[{lo:.3f},{hi:.3f}]':>16s} {p/base:5.2f}x")
 
     # PAIRED differences against the incumbent
-    ref = "error/cosine"
+    ref = "pred_change/cosine"
     print(f"\npaired difference vs {ref} (same resamples; CI excluding 0 = real)")
     for k in arms:
         if k == ref:

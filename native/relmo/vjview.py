@@ -55,8 +55,7 @@ def main():
     a = ap.parse_args()
 
     d = REC / a.dataset
-    # v4 + error channel + span ranking: 0.584 [0.566,0.602] vs v2's
-    # cosine arm, and rank 1.0 under every time warp.
+    # v4 + pred_change + span ranking: 0.525 [0.508,0.540], 2.37x chance.
     d2 = OUT4 / f"{a.dataset}_L{a.layer}"
     files = [p for p in sorted(d.glob("*.npz"))
              if not p.name.startswith("_") and (d2 / f"{p.stem}.npz").exists()]
@@ -64,9 +63,12 @@ def main():
     for p in files:
         meta.append(parse(p.stem))
         z2 = np.load(d2 / f"{p.stem}.npz")
-        # v4 caches all three content channels; 'error' won with an interval
-        # excluding zero (0.584 [0.566,0.602] vs pred_change 0.525).
-        seq.append(z2["error"])
+        # pred_change = pred(t+k) - actual(t). The error channel is BARRED
+        # (owner, absolute): it is a function of (event, model prior), so the
+        # same event yields different descriptors as the prior shifts and an
+        # index built from it drifts against itself. Scoring higher on one
+        # frozen checkpoint is evidence about the checkpoint, not the design.
+        seq.append(z2["pred_change"])
         m = z2["where_map"]
         t = np.clip(m, 0, None).reshape(len(m), -1).mean(1)
         traces.append((t / (t.max() + 1e-9)).round(3).tolist())

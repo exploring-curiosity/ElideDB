@@ -12,26 +12,26 @@ TWO defects in v3 that the owner exposed, fixed here.
    along the trace. This is a prerequisite for any temporal comparison: DTW
    aligning two traces that both ramp will match the ramps, not the events.
 
-2. ONE PASS, THREE CONTENTS
-   The three candidate content channels differ only in what is subtracted, and
-   all are available from the same forward. Caching one and re-running the
-   corpus to try another wasted 20 minutes per experiment.
-       error       pred(t+k) - actual(t+k)    what the model got wrong
-       obs_change  actual(t+k) - actual(t)    what actually changed
-       pred_change pred(t+k)   - actual(t)    what the model expected to change
+2. CONTENT IS pred_change. THE ERROR CHANNEL IS BARRED.
+       pred_change pred(t+k) - actual(t)    what the model expected to change
+       obs_change  actual(t+k) - actual(t)  what actually changed
+       error       pred(t+k) - actual(t+k)  FORBIDDEN - do not revive
 
-   The owner's objection to `error`, which stands: it is a function of
-   (event, model prior), not of the event. Actual=open/guessed=close gives a
-   large error; actual=close/guessed=close gives a small one - so the magnitude
-   reports the model's guess, not the event. That is structurally worst on
-   exactly the open/close pair, which is where the measured numbers are worst
-   (CloseCabinet 0.377, Close below Open on every hinged object). It also
-   breaks outright under online adaptation: after a hundred openings the same
-   event yields a small error where it once yielded a large one, so an index
-   built from it drifts against itself.
-   `error` is retained as an ARM, not as the answer, and is defensible only
-   while the model is frozen - a fixed arbitrary lens is still a repeatable
-   function of the event, and retrieval needs consistency rather than truth.
+   Standing owner rule, given repeatedly and finally as absolute: "Dont use the
+   error channel. Youre dependent on error as the signal will never understand
+   the experience in complex scenarios and it will just get carried forward."
+
+   The reason is structural and no benchmark answers it. `error` is a function
+   of (event, MODEL PRIOR), not of the event. Its magnitude reports what the
+   model happened to guess: actual=open/guessed=close gives a large error,
+   actual=close/guessed=close a small one. So the same event yields different
+   descriptors as the prior shifts, an index built from it drifts against
+   itself under any adaptation, and it is structurally worst on exactly the
+   open/close distinction the product exists to make.
+   It scored higher on this ONE frozen checkpoint - 0.584 [0.566,0.602] against
+   pred_change 0.525 [0.508,0.540]. That is evidence about the checkpoint, not
+   about the design, and I was wrong to keep re-raising it as a counter.
+   The 0.06 is the accepted cost of a signal that generalises.
 
 The gate is unchanged: layer-6 observed change, which converges on truth rather
 than on zero as the model improves.
@@ -57,7 +57,9 @@ from relmo.vjeval import REC  # noqa: E402
 OUT4 = R.BASE / "vjrec4"
 CTX = 8             # FIXED history per prediction, in temporal steps
 WIN = 4             # target steps per split
-CHANNELS = ("error", "obs_change", "pred_change")
+# error = pred(t+k)-actual(t+k) is BARRED by standing owner rule and is not
+# cached, benchmarked or reported. See docs/memory/decisions.md 2026-08-14.
+CHANNELS = ("pred_change", "obs_change")
 
 
 def record(model, torch, dev, clip, n_frames, cal, layer):
@@ -85,7 +87,6 @@ def record(model, torch, dev, clip, n_frames, cal, layer):
             now6 = h[(c - 1) * n_sp:c * n_sp].unsqueeze(0)
             gates.append((h[c * n_sp:hi * n_sp].reshape(S, n_sp, -1)
                           - now6).norm(dim=-1).cpu().numpy())
-            out["error"].append((P - T).cpu().numpy())
             out["obs_change"].append((T - NOW).cpu().numpy())
             out["pred_change"].append((P - NOW).cpu().numpy())
     G = np.concatenate(gates)
