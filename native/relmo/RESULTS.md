@@ -227,6 +227,33 @@ does, in domain: val 0.765 -> 0.783. It **hurts out of domain**: ood_val
 predictions are less reliable and weighting them up amplifies that error.
 Rejected by the ood_val selection rule. Selecting on val would have shipped it.
 
+**Pairwise term from channel agreement** (2026-08-14). The loss had never seen
+two clips together, so nothing optimised the geometry cosine+DTW reads - the
+gap between a regressive z (0.73) and a discriminative probe on the SAME frozen
+features (0.862). Positives from two independent channels agreeing are 97.5%
+same-group against 0.189 chance, with no label and no declared category. It
+helps in domain and HURTS out of it: val 0.732 -> 0.754, ood_val 0.694 ->
+0.667. Rejected by the ood_val selection rule - the third time in this session
+that a change helping val hurt OOD.
+
+**MaxSim as a DTW surrogate** (2026-08-14). Theory: mean-pooling optimises a
+different geometry than the DTW the query path uses. Measured WORSE at every
+weight - 0.678-0.714 against mean-pooling's 0.754. MaxSim lets any step match
+any step, so it is a LOOSER surrogate than DTW, not a tighter one; it discards
+the ordering DTW enforces. Batch size was ruled out separately (bs 96 vs 291:
+0.697 / 0.702), so "positives invisible in a batch" was also wrong.
+
+**Between/within-episode scatter subspace** (2026-08-14). Directions where
+episodes differ more than moments within an episode differ, as a label-free
+route to the discriminative subspace. 0.29-0.35 against the frozen 0.463. It is
+instance discrimination in disguise: it rewards separating two OpenCabinet
+clips, which is exactly backwards.
+
+**Uncurated physical targets** (2026-08-14). Raw pose trajectories of the top-2
+movers, to remove the hand-design in picking 11 scalars: 0.455 vs 0.709. The
+curated channels encode invariances (normalised openness, unit-free rotation)
+that raw world pose lacks. Less hand-designed is not automatically better.
+
 **Motion-weighted physics loss** (2026-08-14). Most trace steps of a
 Close/Drawer episode carry no event - 1.6% of its articulation is in the first
 six steps - so weighting the loss by per-step motion should concentrate

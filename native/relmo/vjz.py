@@ -47,6 +47,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from relmo import registry as R  # noqa: E402
+from relmo import vjpair  # noqa: E402
 from relmo import vjphys  # noqa: E402
 from relmo.vjsplit import load as load_split  # noqa: E402
 from relmo.vjzeval import evaluate, report  # noqa: E402
@@ -160,6 +161,7 @@ def encode(model, ck, recs, dev="cpu", bs=64):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--arm", default="a1", choices=["a1", "a1sig"])
+    ap.add_argument("--dataset", default="rcasa")
     ap.add_argument("--dim", type=int, default=128)
     ap.add_argument("--epochs", type=int, default=300)
     ap.add_argument("--lr", type=float, default=1e-3)
@@ -183,6 +185,16 @@ def main():
     # d_rel_x (+0.026) and open (+0.021) hurt there.
     ap.add_argument("--drop", default="",
                     help="comma-separated vjphys.KEYS names to exclude")
+    # PAIRWISE term. Nothing in the loss had ever seen two clips together, so
+    # nothing optimised the geometry cosine+DTW reads at query time - which is
+    # the whole gap between a regression-trained z (0.73) and a discriminative
+    # probe on the SAME frozen features (0.862). Positives come from two
+    # independent channels agreeing (relmo/vjpair.py), never from a label and
+    # never from a declared category.
+    ap.add_argument("--wpair", type=float, default=0.0)
+    ap.add_argument("--k-pos", type=int, default=10)
+    ap.add_argument("--margin", type=float, default=0.2)
+    ap.add_argument("--bs", type=int, default=32)
     ap.add_argument("--wd", type=float, default=1e-4)
     ap.add_argument("--every", type=int, default=10)
     ap.add_argument("--seed", type=int, default=0)
@@ -249,6 +261,20 @@ def main():
         return A, G, S, Y, Ahat, W
     TR, VA = tens(tr), tens(va)
 
+    POS = NEG = None
+    if a.wpair:
+        pids, pmat, nmat = vjpair.load(a.dataset if hasattr(a, "dataset")
+                                       else "rcasa", a.k_pos)
+        ix = {e: k for k, e in enumerate(pids)}
+        sel = np.array([ix[i] for i in tr if i in ix])
+        if len(sel) != len(tr):
+            raise SystemExit("pair matrix does not cover the train split - "
+                             "rebuild with: python -m relmo.vjpair")
+        POS = torch.tensor(pmat[np.ix_(sel, sel)], device=dev)
+        NEG = torch.tensor(nmat[np.ix_(sel, sel)], device=dev)
+        print(f"  pairwise: {int(POS.sum())} pos / {int(NEG.sum())} neg "
+              f"among train", flush=True)
+
     model = build_model(torch, nn, 1024, d_sig, a.dim, a.arm,
                         n_phys=len(keepj)).to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=a.wd)
@@ -263,7 +289,7 @@ def main():
 
     best, best_state, best_ep = -1.0, None, -1
     hist = []
-    bs = 32
+    bs = a.bs
     bar = tqdm(range(a.epochs), unit="ep", desc=f"vjz:{a.arm}")
     for ep in bar:
         model.train()
@@ -276,6 +302,22 @@ def main():
             loss = a.wphys * (w * (P - TR[3][s]) ** 2).mean()
             if a.wrec:
                 loss = loss + a.wrec * nn.functional.mse_loss(Rc, TR[4][s])
+            if POS is not None:
+                # Mean of the per-step unit vectors. A MaxSim sequence
+                # surrogate was tried on the theory that mean-pooling optimises
+                # a different geometry than the DTW the query path uses, and it
+                # was WORSE at every weight (0.678-0.714 vs 0.754). MaxSim lets
+                # any step match any step, so it is a LOOSER surrogate than DTW,
+                # not a tighter one - it drops the ordering DTW enforces.
+                # Batch size was also ruled out: bs 96 vs 291 gave 0.697/0.702.
+                e = torch.nn.functional.normalize(
+                    torch.nn.functional.normalize(Z, dim=-1).mean(1), dim=-1)
+                cs = e @ e.T
+                pm, nm = POS[s][:, s], NEG[s][:, s]
+                lp = (1 - cs)[pm].mean() if pm.any() else cs.sum() * 0
+                ln = torch.relu(cs - a.margin)[nm].mean() if nm.any() \
+                    else cs.sum() * 0
+                loss = loss + a.wpair * (lp + ln)
             opt.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
