@@ -31,9 +31,10 @@ alike, and needs no per-family table. Its time derivative is the signed fact
 that matters: opening is positive, closing is negative, for every articulated
 object including ones never seen.
 
-THE MOVER is chosen as the target body with the largest displacement over the
-episode. Not by name, not by a per-task rule - rcasa lists 1-4 target bodies
-(door, handle, inner box, ...) and which one carries the event differs by task.
+THE MOVER is whichever NON-ROBOT body moves furthest over the episode. Not by
+name, not by a per-task rule, and no longer via state["target_bodies"] - that
+field is rcasa declaring which object the task is about, i.e. a per-task
+annotation, and it has no business inside a training target.
 
     python -m relmo.vjphys --dataset rcasa
 """
@@ -55,8 +56,16 @@ OUT = R.BASE / "vjphys"
 N_T, FRAMES = 32, 64
 STEPS = list(range(CTX, N_T))
 # order is the contract with the trainer; changing it invalidates a checkpoint
-KEYS = ("open", "d_open", "has_art", "contact", "speed", "grip_dist",
-        "d_rel_x", "d_rel_y", "d_rel_z", "d_rot", "rot_cum")
+KEYS = ("open", "d_open", "has_art", "speed", "d_rot", "rot_cum")
+
+# DROPPED 2026-08-14, on the owner's rule that a target must describe the EVENT
+# and not the robot: contact (target<->gripper), grip_dist (target->eef) and
+# d_rel_x/y/z (mover motion expressed IN THE GRIPPER FRAME). All three are
+# defined by a Panda gripper that does not exist on a WidowX, and ood_test
+# showed exactly that failure - the trained model lost to the frozen one on
+# real robot video (0.804 vs 0.908). Val leave-one-out rated grip_dist among
+# the MOST valuable channels; that value is the domain-specific value we are
+# deliberately giving up.
 
 # d_rot / rot_cum were added after the first trained model was diagnosed on
 # val: it improved open-vs-close but made hinged-vs-sliding WORSE than the
@@ -76,82 +85,47 @@ def quat_angle(q1, q2):
     return 2.0 * float(np.arccos(d))
 
 
-def quat_to_mat(q):
-    """MuJoCo (w,x,y,z) -> 3x3."""
-    w, x, y, z = q
-    return np.array([
-        [1 - 2*(y*y + z*z), 2*(x*y - z*w),     2*(x*z + y*w)],
-        [2*(x*y + z*w),     1 - 2*(x*x + z*z), 2*(y*z - x*w)],
-        [2*(x*z - y*w),     2*(y*z + x*w),     1 - 2*(x*x + y*y)]])
-
-
-def gripper_bodies(names):
-    return np.array([i for i, n in enumerate(names)
-                     if "gripper0" in n or n.endswith("_hand")], dtype=int)
-
-
-def eef_body(names):
-    for i, n in enumerate(names):
-        if n.endswith("eef"):
-            return i
-    g = gripper_bodies(names)
-    return int(g[0]) if len(g) else 0
-
-
 def targets(st):
     """state.npz -> (24, len(KEYS)) float32, or None if unusable."""
     names = [str(x) for x in st["body_names"]]
-    tb = np.asarray(st["target_bodies"], dtype=int)
     xpos, xquat, xvel = st["xpos"], st["xquat"], st["xvel"]
     T = len(xpos)
-    if T < 8 or len(tb) == 0:
+    if T < 8:
         return None
     idx = np.linspace(0, T - 1, FRAMES).round().astype(int)
 
-    # THE MOVER: largest total displacement among the declared targets
-    disp = np.linalg.norm(xpos[:, tb, :] - xpos[0, tb, :], axis=-1).sum(0)
-    mover = int(tb[int(np.argmax(disp))])
+    # THE MOVER, chosen WITHOUT the simulator's task annotation. The previous
+    # version picked among state["target_bodies"], which is rcasa declaring
+    # which object the task is about - a per-task hand-off sitting inside the
+    # training targets. Largest displacement among all non-robot bodies is what
+    # the video itself would show and needs no annotation.
+    robot = np.array([i for i, n in enumerate(names)
+                      if n.startswith(("robot", "gripper"))], dtype=int)
+    cand = np.setdiff1d(np.arange(xpos.shape[1]), robot)
+    disp = np.linalg.norm(xpos[:, cand, :] - xpos[0, cand, :], axis=-1).sum(0)
+    if not len(cand) or float(disp.max()) <= 0:
+        return None
+    mover = int(cand[int(np.argmax(disp))])
 
-    # articulated joint on any target body (hinge=3, slide=2); free=0 has none
+    # articulated joint on THE MOVER (hinge=3, slide=2); a free body has none
     jb, jt, ja, jr = (st["jnt_bodyid"], st["jnt_type"], st["jnt_qposadr"],
                       st["jnt_range"])
     q = np.zeros(T, np.float64)
     has_art = 0.0
     for k in range(len(jb)):
-        if int(jb[k]) in set(tb.tolist()) and int(jt[k]) in (2, 3):
+        if int(jb[k]) == mover and int(jt[k]) in (2, 3):
             d = max(abs(float(jr[k][0])), abs(float(jr[k][1])))
             if d > 1e-6:
                 q = np.abs(st["qpos"][:, int(ja[k])]) / d      # see docstring
                 has_art = 1.0
                 break
 
-    grip = gripper_bodies(names)
-    eef = eef_body(names)
-    cp, cn = st["contact_pairs"], st["contact_n"]
-    gset = set(grip.tolist())
-    tset = set(tb.tolist())
-
     out = np.zeros((len(STEPS), len(KEYS)), np.float32)
     for si, t in enumerate(STEPS):
         f = int(min(idx[t * TUBELET], T - 1))
         f1 = int(min(idx[min(t + 1, N_T - 1) * TUBELET], T - 1))
-        # contact between a target body and a gripper body
-        k = int(cn[f])
-        c = 0.0
-        if k:
-            pr = cp[f][:k, 1:3]
-            for b1, b2 in pr:
-                if (int(b1) in tset and int(b2) in gset) or \
-                   (int(b2) in tset and int(b1) in gset):
-                    c = 1.0
-                    break
-        Rg = quat_to_mat(xquat[f][eef])
-        dw = xpos[f1][mover] - xpos[f][mover]
-        drel = Rg.T @ dw                       # motion in the GRIPPER frame
-        out[si] = (q[f], q[f1] - q[f], has_art, c,
+        out[si] = (q[f], q[f1] - q[f], has_art,
                    float(np.linalg.norm(xvel[f][mover][:3])),
-                   float(np.linalg.norm(xpos[f][mover] - xpos[f][eef])),
-                   drel[0], drel[1], drel[2],
                    quat_angle(xquat[f][mover], xquat[f1][mover]),
                    quat_angle(xquat[0][mover], xquat[f][mover]))
     return out
