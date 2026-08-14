@@ -77,6 +77,43 @@ ood_val; five seeds of that config average 0.603 ± 0.049. Selecting on
 seed-mean moved the choice to `wrec=1.0` (ood_val 0.653 ± **0.008**). Every
 number above is a seed aggregate, never a best checkpoint.
 
+### What the ceiling actually is
+
+Retrieving with the **true** physics sequences as the descriptor, under the
+identical protocol, sets the ceiling of the physics-supervision route. A
+label-supervised probe (fit on `group_key` on purpose, never shipped) sets what
+supervision itself is worth. Val:
+
+| descriptor | overall | PickPlace | Open/hin | Close/hin | Open/sli | Close/sli |
+|---|---|---|---|---|---|---|
+| frozen `pred_change` | 0.463 | | | | | |
+| GT-physics oracle | 0.709 | 0.727 | 0.634 | 0.740 | **1.000** | **1.000** |
+| GT-physics + scale invariance | 0.743 | | | | | |
+| GT-physics, val-pruned channels | 0.799 | | | | | |
+| **trained `z`** | **0.765** | 0.848 | 0.637 | 0.626 | 0.950 | 0.471 |
+| label-supervised probe *(ceiling)* | 0.862 | **0.949** | **0.882** | 0.717 | 0.650 | 0.550 |
+
+Three readings:
+
+1. **The trained model already beats the physics oracle** (0.765 vs 0.709). It
+   is not merely recovering the physics - the reconstruction term carries
+   appearance structure the targets do not have.
+2. **Label supervision is not a uniform ceiling.** It reaches 0.862 overall yet
+   is *worse* than the label-free model on Open/sliding (0.650 vs 0.950).
+3. **Each source is strong where the others are weak.** Physics owns the
+   sliding classes; labels own hinged and transport. A per-class best-of is
+   ~0.90, so that target is reachable only by a representation carrying physics
+   AND appearance structure at once - not by adding categories.
+
+The largest single gap in the system is `Close/sliding`: oracle **1.000**,
+model **0.471**. Perfect physics separates closing drawers flawlessly, so this
+is estimation error, not a missing concept.
+
+Channel pruning must be derived on val. A test-side pass called `grip_dist` and
+`speed` nuisance; val leave-one-out says they are among the most valuable
+channels (-0.051, -0.048 to drop) and only `d_rel_x` (+0.026) and `open`
+(+0.021) hurt.
+
 ### Why the remaining classes are short
 
 `Close/sliding` is the smallest physical event in the corpus. `CloseDrawer`
@@ -148,6 +185,14 @@ does, in domain: val 0.765 -> 0.783. It **hurts out of domain**: ood_val
 0.653 +/-0.008 -> 0.616 +/-0.020. The head was fit on rcasa; on unseen tasks its
 predictions are less reliable and weighting them up amplifies that error.
 Rejected by the ood_val selection rule. Selecting on val would have shipped it.
+
+**Motion-weighted physics loss** (2026-08-14). Most trace steps of a
+Close/Drawer episode carry no event - 1.6% of its articulation is in the first
+six steps - so weighting the loss by per-step motion should concentrate
+capacity where events happen. Val over 4 seeds: 0.7528 +/-0.0062 unweighted,
+0.7612 +/-0.0213 at w=2, 0.7605 +/-0.0298 at w=5. The mean rises 0.008 and the
+spread triples. When the sd exceeds the gap the arms are indistinguishable, and
+the instability is specific to the weighted arms. Null.
 
 **Rotation targets as an aggregate win** (2026-08-14). `d_rot`/`rot_cum` were
 added to fix hinged-vs-sliding confusion and did fix it - Open/hinged

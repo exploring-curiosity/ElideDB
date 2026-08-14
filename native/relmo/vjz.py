@@ -169,6 +169,20 @@ def main():
     # retrieval survives this, the physics supervision is not what is working
     # and the recurrence architecture alone explains the gain.
     ap.add_argument("--shuffle-y", action="store_true")
+    # Motion weighting. Most trace steps of a Close/Drawer episode carry no
+    # event at all - 1.6% of its articulation happens in the first six steps -
+    # so a flat per-step loss spends most of its capacity on idle state, and
+    # idle state looks alike in every class. Weight each step by how much is
+    # actually happening in it, normalised WITHIN the episode so a large event
+    # does not simply outvote a small one.
+    ap.add_argument("--wmotion", type=float, default=0.0)
+    # Drop target channels from the LOSS (they stay in vjphys on disk). Chosen
+    # by leave-one-out on val over the GT-physics oracle, never on test: an
+    # earlier test-side pass called grip_dist and speed nuisance, and val says
+    # they are among the most valuable channels (-0.051, -0.048 to drop). Only
+    # d_rel_x (+0.026) and open (+0.021) hurt there.
+    ap.add_argument("--drop", default="",
+                    help="comma-separated vjphys.KEYS names to exclude")
     ap.add_argument("--wd", type=float, default=1e-4)
     ap.add_argument("--every", type=int, default=10)
     ap.add_argument("--seed", type=int, default=0)
@@ -198,7 +212,14 @@ def main():
         for k, i in enumerate(tr):
             D[i] = dict(D[i], y=ys[perm[k]])
         print("  CONTROL: physics targets permuted across episodes", flush=True)
-    Ytr = stack(tr, "y")
+    drop = [k.strip() for k in a.drop.split(",") if k.strip()]
+    bad = [k for k in drop if k not in vjphys.KEYS]
+    if bad:
+        raise SystemExit(f"unknown target channel(s): {bad}")
+    keepj = np.array([j for j, k in enumerate(vjphys.KEYS) if k not in drop])
+    if drop:
+        print(f"  dropping targets {drop} -> {len(keepj)} channels", flush=True)
+    Ytr = stack(tr, "y")[:, :, keepj]
     ymu, ysd = Ytr.reshape(-1, Ytr.shape[-1]).mean(0), \
         Ytr.reshape(-1, Ytr.shape[-1]).std(0) + 1e-6
     Atr = stack(tr, "a")
@@ -208,17 +229,28 @@ def main():
     use_sig = a.arm == "a1sig"
     d_sig = D[tr[0]]["sig"].shape[-1] if use_sig and D[tr[0]]["sig"] is not None else 0
 
+    kmov = [vjphys.KEYS.index(k) for k in ("d_open", "speed") ]
+
+    def step_weight(ids):
+        Y = stack(ids, "y")
+        m = np.abs(Y[:, :, kmov]).sum(-1)
+        m = m / (m.mean(1, keepdims=True) + 1e-9)      # within-episode
+        return (1.0 + a.wmotion * m).astype(np.float32)
+
     def tens(ids):
         A = torch.tensor(stack(ids, "a"), device=dev)
         G = torch.tensor(stack(ids, "g"), device=dev)
-        Y = torch.tensor((stack(ids, "y") - ymu) / ysd, device=dev).float()
+        Y = torch.tensor((stack(ids, "y")[:, :, keepj] - ymu) / ysd,
+                         device=dev).float()
         S = (torch.tensor(stack(ids, "sig"), device=dev)
              if d_sig else torch.zeros(len(ids), 1, 1, device=dev))
         Ahat = torch.tensor((stack(ids, "a") - amu) / asd, device=dev)
-        return A, G, S, Y, Ahat
+        W = torch.tensor(step_weight(ids), device=dev).unsqueeze(-1)
+        return A, G, S, Y, Ahat, W
     TR, VA = tens(tr), tens(va)
 
-    model = build_model(torch, nn, 1024, d_sig, a.dim, a.arm).to(dev)
+    model = build_model(torch, nn, 1024, d_sig, a.dim, a.arm,
+                        n_phys=len(keepj)).to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=a.wd)
     npar = sum(p.numel() for p in model.parameters())
     print(f"  {npar/1e3:.0f}k params on {dev} | wrec {a.wrec}", flush=True)
@@ -240,7 +272,8 @@ def main():
         for k in range(0, len(tr), bs):
             s = perm[k:k + bs]
             Z, P, Rc = model(TR[0][s], TR[1][s], TR[2][s] if d_sig else TR[2])
-            loss = a.wphys * nn.functional.mse_loss(P, TR[3][s])
+            w = TR[5][s]
+            loss = a.wphys * (w * (P - TR[3][s]) ** 2).mean()
             if a.wrec:
                 loss = loss + a.wrec * nn.functional.mse_loss(Rc, TR[4][s])
             opt.zero_grad()
@@ -264,6 +297,7 @@ def main():
     CKPT.mkdir(parents=True, exist_ok=True)
     tag = a.tag or f"{a.arm}_d{a.dim}_r{a.wrec}"
     torch.save(dict(state=model.state_dict(), arm=a.arm, dim=a.dim,
+                    drop=drop,
                     d_sig=d_sig, wrec=a.wrec, ymu=ymu, ysd=ysd,
                     amu=amu, asd=asd, best_val=best, best_epoch=best_ep),
                CKPT / f"{tag}.pt")
