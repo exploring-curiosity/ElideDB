@@ -95,3 +95,53 @@ physics (R2 ~0.000 even under an oracle object mask), and fusion saturated over
 nine schemes. `n_t` is the one genuinely new thing; if the number moves, that is
 where it comes from. If `m` alone ties the baseline, the recursion is
 decoration and we learn that in one run.
+
+---
+
+# OUTCOME — measured 2026-08-14. Thesis NOT supported.
+
+447 episodes, k=support, group-aware, chance 0.222.
+
+    pred_change (baseline)   0.525   2.37x
+    m + n + baseline         0.503   2.27x
+    m + n                    0.486   2.19x
+    m  motif only            0.473   2.13x
+    n  novelty only          0.473   2.13x
+
+Decomposed to find which part failed:
+
+    a  ungated, no memory (baseline)   0.525
+    a  ungated, memory 0.75            0.523   -0.002   memory NEUTRAL
+    a  ungated, memory 0.50            0.529   +0.004   inside noise
+    a  GATED,  no memory               0.513   -0.012   the GATE costs
+    a  GATED + memory 0.75             0.513   -0.012
+
+THREE FINDINGS
+
+1. THE CONFIRMATION GATE IS WRONG (-0.012). The design said reality should gate
+   identity. Measured, it downweights the wrong steps, and it injects
+   obs_change's noise - the weaker channel (0.490 vs 0.525) - into the stronger
+   one. Gating a strong signal by agreement with a weak one costs.
+
+2. NOVELTY IS WORSE, AND PREDICTABLY SO IN HINDSIGHT. n_t removes the component
+   of the present explained by history - i.e. the SHARED, typical structure.
+   Shared structure is exactly what lets a cabinet opening match a microwave
+   opening. The term strips the cross-instance signal and keeps the
+   idiosyncratic remainder. It should never have been proposed as a
+   cross-object matching feature.
+
+3. MEMORY IS NEUTRAL. Plausible reason: a_t = pred(t+1) - act(t) is already a
+   forecast over the next WIN=4 steps, so it integrates the near future by
+   construction. Leaking it again over the same horizon (lambda = 1 - 1/4) is
+   redundant. If memory were ever to help it would need a timescale LONGER than
+   the predictor horizon - but that integrates over a span the model has no
+   coherent view of, which is the argument that fixed lambda in the first place.
+
+NOT A BROKEN IMPLEMENTATION. The positive control passed cleanly: the gate goes
+to 0 exactly when reality contradicts, and novelty decays to 0 under a steady
+motif then spikes to 1.0 at the step where the motif switches.
+
+lambda was fixed by principle and NOT swept afterwards, despite lambda=0.5
+scoring marginally higher - that gap is inside the +/-0.015 noise band seen
+across every arm in this project, and sweeping it would be the metric-peeking
+already on record against the layer-6 choice.
