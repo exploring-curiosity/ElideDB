@@ -48,7 +48,7 @@ def dirs(root="vjrec6", dataset="rcasa", layer=6, suffix=""):
             R.BASE / sig / f"{dataset}{suffix}")
 
 
-def channels(z, phase=None):
+def channels(z, phase=None, primary="a"):
     """npz -> (a_t, g_t). b_t is consumed here and never leaves as a vector.
 
     `phase` is an optional relmo.vjphase model. Stream-time records carry a
@@ -62,16 +62,31 @@ def channels(z, phase=None):
     a, b = z["pred_change"].astype(np.float32), z["obs_change"].astype(np.float32)
     if phase is not None and "step" in z:
         from relmo.vjphase import apply as phase_apply
-        return phase_apply(a, b, z["step"], phase)
+        a, g = phase_apply(a, b, z["step"], phase)
+        # phase_apply returns the corrected A as the vector; when b is primary
+        # we need its corrected form instead, so recompute it the same way
+        if primary == "b":
+            from relmo.vjphase import apply as _ap, phase_of, unit
+            B = unit(unit(b) - phase["mu_b"][phase_of(z["step"])])
+            return B.astype(np.float32), g
+        return a, g
     na = np.linalg.norm(a, axis=-1, keepdims=True) + 1e-9
     nb = np.linalg.norm(b, axis=-1, keepdims=True) + 1e-9
     cos = ((a / na) * (b / nb)).sum(-1, keepdims=True)
+    # THE BAR IS SYMMETRIC. pred(t+1)-act(t+1) = a - b is formable by any linear
+    # layer that receives BOTH as vectors, so at most one of them may be one.
+    # It does not say WHICH: v6 chose `a` by default, and the frozen sweep says
+    # that was backwards - b alone outscores a alone (0.442 vs 0.420 prec).
+    # `a` is what the model GUESSED and is therefore partly a function of the
+    # prior, which is the owner's own objection to the error channel; `b` is
+    # purely a function of what happened. Either way g stays two scalars and
+    # cannot reconstruct a 1024-d residual.
     g = np.concatenate([cos, np.log(nb / na)], -1).astype(np.float32)
-    return a, g
+    return (b if primary == "b" else a), g
 
 
 def gather(ids, dataset="rcasa", want_y=False, rec_dir=None, sig_dir=None,
-           phase=None, arc=0.0):
+           phase=None, arc=0.0, primary="a"):
     """{id: dict(a, g, sig)}. `want_y` is accepted and ignored - there are no
     targets any more; the parameter stays so existing callers keep working."""
     rec_dir = rec_dir or REC4
@@ -82,7 +97,7 @@ def gather(ids, dataset="rcasa", want_y=False, rec_dir=None, sig_dir=None,
         if not f.exists():
             continue
         z = np.load(f)
-        a, g = channels(z, phase)
+        a, g = channels(z, phase, primary)
         s = sig_dir / f"{i}.npz"
         v = np.load(s)["sig"].astype(np.float32) if s.exists() else None
         if arc > 0 and "where_map" in z:

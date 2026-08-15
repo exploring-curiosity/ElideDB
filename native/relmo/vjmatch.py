@@ -237,7 +237,7 @@ def score_rates(q_by_rate, packed, keep=None, free_ends=False, pad_cost=1e6,
     return best
 
 
-def fit_pca(seqs, dim=256, sample=200_000, seed=0):
+def fit_pca(seqs, dim=256, sample=200_000, seed=0, whiten=False):
     """PCA over pooled STEP vectors. Label-free, fitted on train only.
 
     The cost matrix einsum is 93-98% of evaluation time and scales linearly in
@@ -254,7 +254,14 @@ def fit_pca(seqs, dim=256, sample=200_000, seed=0):
     _, S, Vt = np.linalg.svd(X - mu, full_matrices=False)
     dim = min(dim, Vt.shape[0])
     var = float((S[:dim] ** 2).sum() / (S ** 2).sum())
-    return dict(mu=mu, W=Vt[:dim].T.astype(np.float32), var=var)
+    W = Vt[:dim].T
+    if whiten:
+        # divide each component by its singular value. Cosine retrieval on
+        # pooled deep features is usually dominated by a few high-variance
+        # directions; whitening equalises them so the tail of the spectrum -
+        # where the discriminative structure often sits - can contribute.
+        W = W / (S[:dim] / np.sqrt(max(len(X) - 1, 1)) + 1e-6)
+    return dict(mu=mu, W=W.astype(np.float32), var=var, whiten=whiten)
 
 
 def apply_pca(x, p):

@@ -1157,3 +1157,55 @@ layer. But the frozen sweep showed `b` alone OUTSCORES `a` alone (0.442 vs
 currently denied. The open question is how to give f more of `b` without letting
 it form the residual - e.g. admitting `b` only in the subspace orthogonal to
 `a`, or through a separate encoder that never sees `a` in the same layer.
+
+## Frozen: where the ceiling is, and what does not move it
+
+Held out - TEST queries, train-disjoint pool, `[a;b;sig]` with PCA-256 per
+channel fitted on TRAIN, arc-length reparameterised, anchored symmetric2.
+
+| treatment | prec@sup | NDCG@sup | wAUC |
+|---|---|---|---|
+| **plain PCA-256** | **0.532** | **0.645** | **0.832** |
+| PCA + whiten | 0.429 | 0.487 | 0.731 |
+| power-norm (signed sqrt) then PCA | 0.524 | 0.635 | 0.829 |
+| power-norm + whiten | 0.441 | 0.502 | 0.748 |
+| temporal smoothing + PCA | 0.521 | 0.627 | 0.825 |
+| temporal smoothing + whiten | 0.421 | 0.481 | 0.725 |
+
+**Whitening is strongly harmful here** (-0.103 prec), the opposite of its usual
+effect on pooled deep features. The high-variance directions of these channels
+ARE the discriminative structure, not a nuisance to be equalised - worth
+remembering before reaching for it again. Power normalisation and temporal
+smoothing are both mildly negative.
+
+Frozen now stands at **0.532 / 0.645 / 0.832** held out, against a random floor
+of 0.217 / 0.150 / 0.502. Everything free has been tried: channel combinations,
+nine interleaved constructions, three matcher-level conjunctive costs, three
+normalisation treatments, arc-length reparameterisation, and the anchored
+matcher. What remains for the frozen path all requires a re-encode:
+
+1. **Tempo-adaptive encoder stride** - set each window's frame stride from the
+   local rate of change so a window spans constant CHANGE rather than constant
+   TIME. The surviving hypothesis from the clip-vs-stream mechanism hunt, and
+   the only one with a measured argument behind it: arc-length, its post-hoc
+   approximation, is the largest single frozen gain in this file. Boundary-free
+   and streaming-compatible.
+2. **Encoder layer** for the descriptor - currently `last_hidden_state`, with
+   layer 6 used only for the pooling gate.
+3. **Spatial pooling** - currently one gate-weighted mean over 256 tokens.
+
+## A note on the a/b bar, since it was misread once
+
+The barred residual is pred(t+1)-act(t+1) = a - b. Any linear layer receiving
+BOTH as vectors computes it (W1 a + W2 b with W2 = -W1), which is why `b` was
+demoted to two scalars. But that argument constrains only that AT MOST ONE of
+them may be a vector - it says nothing about which. v6 picked `a` by default;
+the frozen sweep says that was backwards, since `b` alone outscores `a` alone
+(0.442 vs 0.420 prec) and `a` is what the model GUESSED, hence partly a function
+of the prior - the owner's own objection to the error channel.
+
+An earlier proposal here - admit `b` only in the subspace orthogonal to `a` -
+was WRONG and is withdrawn. Decomposing b = b_par + b_perp against a, the error
+is a - b = (a - b_par) - b_perp, so b_perp is literally a component of the
+error. Feeding it in is matching on the model's surprise, which is the barred
+channel arriving through the back door.
