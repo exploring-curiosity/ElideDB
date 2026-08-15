@@ -96,7 +96,12 @@ def build(task, split=None, kind=None, cams=CAMS, limit=0, name=None):
             episodes.append(dict(
                 id=f"{task}_episode_{idx:06d}__{cam}", task=task, camera=cam,
                 rollout=f"{task}#{idx:06d}", instruction=instr,
-                length=int(r.get("length", 0)), fps=fps,
+                length=int(r.get("length", 0)),
+                # `T` is what relmo.vjrel.meta_table reads to get DURATION, and
+                # duration is now part of the ground truth (the relevance decays
+                # with the duration ratio). Without it every episode would read
+                # as 0 s and the whole duration term would silently vanish.
+                T=int(r.get("length", 0)), fps=fps,
                 video=str(mp4),
                 shard="lerobot", kind=rel["kind"], split_src=rel["split"]))
         if limit and len({e["rollout"] for e in episodes}) >= limit:
@@ -107,6 +112,30 @@ def build(task, split=None, kind=None, cams=CAMS, limit=0, name=None):
                               kind=rel["kind"], src_split=rel["split"],
                               fps=fps, cameras=list(cams), episodes=episodes))
     return ds, episodes
+
+
+def build_many(kind, rollouts, name, cams=CAMS, tasks=None):
+    """One MERGED manifest across every task of a kind. Width over depth: the
+    cap is per task, so adding tasks costs episodes but adding episodes to one
+    task does not crowd out another."""
+    rels = [r for r in releases() if r["kind"] == kind]
+    by_task = {}
+    for r in rels:                       # a task can ship as pretrain AND target
+        by_task.setdefault(r["task"], r)
+    if tasks:
+        by_task = {t: r for t, r in by_task.items() if t in set(tasks)}
+    eps, per = [], {}
+    for task in sorted(by_task):
+        _, e = build(task, kind=kind, cams=cams, limit=rollouts,
+                     name=f"_tmp_{task}")
+        eps.extend(e)
+        per[task] = len({x["rollout"] for x in e})
+    fps = eps[0]["fps"] if eps else 20
+    R.write_manifest(name, dict(name=name, source="robocasa_lerobot",
+                                kind=kind, fps=fps, cameras=list(cams),
+                                rollouts_per_task=rollouts,
+                                tasks=sorted(by_task), episodes=eps))
+    return name, eps, per
 
 
 def main():
