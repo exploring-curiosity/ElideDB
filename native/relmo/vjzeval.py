@@ -91,12 +91,21 @@ def evaluate(desc, query_ids, pool_ids, min_support=5, boot=0, seed=0,
         raise SystemExit("empty pool or query set")
     meta = {i: parse(i) for i in set(pool) | set(qry)}
     grp = {i: group_key(meta[i]) for i in meta}
-    # A positive is now the same event AND the same MOMENT. Owner, 2026-08-15:
-    # "a 7s and 10s can be the same but a 7s and 20 are different." Duration
-    # comes from the manifest, never from the trace, so the GT cannot shift
-    # when the encoder does.
+    # The positive class is EVENT-level. Duration declines the rank rather than
+    # gating membership, so it lives in the graded relevance and is read by
+    # NDCG - a binary metric cannot express a passive decline.
     dur = {i: vjrel.all_meta().get(i, {}).get("dur", 0.0) for i in meta}
     pool_dur = np.array([dur[i] for i in pool])
+    # graded relevance, computed once over the union and indexed per query.
+    # This is where the duration decay lives.
+    AM = vjrel.all_meta()
+    uni = list(dict.fromkeys(list(qry) + list(pool)))
+    upos = {i: k for k, i in enumerate(uni)}
+    REL, _ = vjrel.relevance(uni, AM)
+    rel_q = REL[np.array([upos[i] for i in qry])[:, None],
+                np.array([upos[i] for i in pool])[None, :]]
+    q_at = {i: k for k, i in enumerate(qry)}
+    nd, nd_sup = [], []
     if multirate:
         packed = vjmatch.pack({r: {i: l2(v[i]) for i in v}
                                for r, v in desc.items()}, pool)
@@ -112,9 +121,7 @@ def evaluate(desc, query_ids, pool_ids, min_support=5, boot=0, seed=0,
         keep = pool_ep != _epid(q)
         if keep.sum() < min_support:
             continue
-        ratio = (np.maximum(pool_dur[keep], dur[q])
-                 / np.maximum(np.minimum(pool_dur[keep], dur[q]), 1e-9))
-        sv = (pool_grp[keep] == grp[q]) & vjrel.same_moment(ratio)
+        sv = pool_grp[keep] == grp[q]
         sup = int(sv.sum())
         if sup < min_support:
             continue
@@ -128,6 +135,17 @@ def evaluate(desc, query_ids, pool_ids, min_support=5, boot=0, seed=0,
             C = np.where(P_ok[keep][:, None, :], C, PAD_COST)
             s = -match(C, P_len[keep])
         hit = int(sv[np.argsort(-s)[:sup]].sum())
+        rq = rel_q[q_at[q]][keep]
+        if rq.max() > 0:
+            ones = np.ones((1, len(s)), bool)
+            nd.append(vjrel.ndcg(s[None, :], rq[None, :], ones))
+            # NDCG@support: cut at exactly the k that prec@support returns, so
+            # the pair describes the SAME returned list - one says how many
+            # belong, the other whether they are in the right order and whether
+            # near-relevant beat far-relevant. Its random floor is 0.150,
+            # against 0.528 for the full-list variant, which is why the
+            # full-list number makes real differences look like rounding.
+            nd_sup.append(vjrel.ndcg(s[None, :], rq[None, :], ones, k=sup))
         per_q.append((meta[q]["task"], grp[q], hit, sup,
                       sup * sup / int(keep.sum())))
     if not per_q:
@@ -137,7 +155,9 @@ def evaluate(desc, query_ids, pool_ids, min_support=5, boot=0, seed=0,
     sup = np.array([r[3] for r in per_q], float)
     rnd = np.array([r[4] for r in per_q], float)
     out = dict(overall=hit.sum() / sup.sum(), chance=rnd.sum() / sup.sum(),
-               n_queries=len(per_q))
+               n_queries=len(per_q),
+               ndcg_sup=float(np.nanmean(nd_sup)) if nd_sup else float("nan"),
+               ndcg=float(np.nanmean(nd)) if nd else float("nan"))
 
     for field, key in (("per_group", 1), ("per_task", 0)):
         d = {}
@@ -163,9 +183,10 @@ def report(name, res, per="per_group"):
     print(f"\n=== {name} ===")
     ci = res.get("ci95")
     ci_s = f"  95% CI [{ci[0]:.3f}, {ci[1]:.3f}]" if ci else ""
-    print(f"overall {res['overall']:.3f}  chance {res['chance']:.3f}  "
-          f"lift {res['overall']/res['chance']:.2f}x  "
-          f"n={res['n_queries']}{ci_s}")
+    print(f"prec@support {res['overall']:.3f}  chance {res['chance']:.3f}  "
+          f"lift {res['overall']/res['chance']:.2f}x  |  "
+          f"NDCG@support {res.get('ndcg_sup', float('nan')):.3f} "
+          f"(random floor 0.150)  n={res['n_queries']}{ci_s}")
     print(f"{'group':22s} {'prec':>6s} {'chance':>7s} {'lift':>6s} {'sup':>5s}")
     for k, v in sorted(res[per].items(), key=lambda x: -x[1]["prec"]):
         flag = "  <- 0.70" if v["prec"] >= 0.70 else ""

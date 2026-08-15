@@ -72,9 +72,7 @@ def grade(S, q_ids, p_ids, meta, min_support=5):
                 np.array([pos[j] for j in p_ids])[None, :]]
     for a in range(len(q_ids)):
         keep = rp != rq[a]
-        ratio = (np.maximum(dp[keep], dq[a])
-                 / np.maximum(np.minimum(dp[keep], dq[a]), 1e-9))
-        sv = (gp[keep] == gq[a]) & vjrel.same_moment(ratio)
+        sv = gp[keep] == gq[a]
         k = int(sv.sum())
         if k < min_support:
             continue

@@ -55,21 +55,26 @@ from relmo.vjeval import group_key, parse  # noqa: E402
 W_EVENT, W_OBJ, W_SCENE, W_CAM = 1.00, 0.50, 0.25, 0.25
 MAX_REL = W_EVENT + W_OBJ + W_SCENE + W_CAM
 
-# DURATION IS CONTENT, and the tolerance is marginal. Owner, 2026-08-15:
-# "I want 7s and 10s episode to be linked but not ranked 1. time invariance is
-#  a moment. for example a speeding car is not the same as a driving car. make
-#  the moment invariances marginal. a 7s and 10s can be the same but a 7s and
-#  20 are different."
+# DURATION IS CONTENT, and it declines the rank rather than gating it.
+# Owner, 2026-08-15: "its not a yes/no. its a passive declination in rank of the
+# similiarity. Just the rank goes down as ratio increases." and "reduce the
+# ratio further keep it 1.5".
 #
-# So a duration ratio is not a nuisance to be normalised away - past a point it
-# is a DIFFERENT EVENT. The cut is not chosen by taste: it is the geometric
-# mean of the owner's own two examples, 10/7 = 1.429 (same) and 20/7 = 2.857
-# (different), which is 2.02. Inside it the weight decays from 1.0 so a
-# duration-matched instance always outranks a stretched one - "linked but not
-# ranked 1" - and never falls below a floor, because inside the band it is
-# still a match. At the cut it goes to zero, exactly like a different verb.
-R_CUT = 2.0
-W_DUR_FLOOR = 0.25
+# So there is no cut and no positive-class gate. The weight decays smoothly and
+# monotonically in the LOG of the duration ratio, by a factor of e for every
+# R_SCALE-fold mismatch:
+#
+#     weight(r) = exp( -ln(r) / ln(R_SCALE) )
+#
+#     1.00x -> 1.000     1.43x -> 0.396     2.00x -> 0.181
+#     1.50x -> 0.368     1.75x -> 0.246     2.86x -> 0.075
+#
+# A duration-matched instance therefore always outranks a stretched one - "7s
+# and 10s linked but not ranked 1" - and a 7 v 20 s pair sinks to 7% of full
+# relevance without ever being declared a non-match. NDCG is what reads this;
+# precision@support stays event-level, because a binary metric cannot express a
+# passive decline.
+R_SCALE = 1.5
 
 
 def dur_ratio(durations):
@@ -79,15 +84,9 @@ def dur_ratio(durations):
 
 
 def dur_weight(ratio):
-    """1.0 at identical duration, decaying to a floor, 0 at and beyond R_CUT."""
+    """1.0 at identical duration, falling by 1/e per R_SCALE-fold mismatch."""
     r = np.maximum(np.asarray(ratio, float), 1.0)
-    w = 1.0 - np.log(r) / np.log(R_CUT)
-    return np.where(r >= R_CUT, 0.0, np.maximum(w, W_DUR_FLOOR))
-
-
-def same_moment(ratio):
-    """The BINARY positive class: within the duration band, so gradeable."""
-    return np.asarray(ratio, float) < R_CUT
+    return np.exp(-np.log(r) / np.log(R_SCALE))
 
 
 def meta_table(dataset="rcasa"):
@@ -136,16 +135,16 @@ def relevance(ids, meta):
     cam = np.array([meta[i]["camera"] for i in ids])
 
     ratio = dur_ratio([meta[i]["dur"] for i in ids])
-    same = (event[:, None] == event[None, :]) & same_moment(ratio)
+    same = event[:, None] == event[None, :]        # group_key, not the verb
     rel = np.where(same, W_EVENT, 0.0)
     rel = rel + np.where(same & (obj[:, None] == obj[None, :]), W_OBJ, 0.0)
     rel = rel + np.where(same & (scene[:, None] == scene[None, :]),
                          W_SCENE, 0.0)
     rel = rel + np.where(same & (cam[:, None] == cam[None, :]), W_CAM, 0.0)
 
-    # duration scales the WHOLE relevance, not just the event floor: past the
-    # cut it is a different moment and nothing about a shared object or kitchen
-    # brings it back
+    # duration scales the WHOLE relevance, not just the event floor - a
+    # stretched instance of the same event in the same kitchen is still less
+    # like the query than an unstretched one
     rel = rel * dur_weight(ratio)
     valid = roll[:, None] != roll[None, :]        # drops diagonal AND cross-view
     return rel.astype(np.float32), valid

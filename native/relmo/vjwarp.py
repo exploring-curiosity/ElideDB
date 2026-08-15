@@ -287,7 +287,8 @@ def evaluate(args):
             print(f"  {fac:7.1f} {len(r):4d} {float((r==1).mean()):7.3f} "
                   f"{float((r<=5).mean()):7.3f} {float((1/r).mean()):7.3f} "
                   f"{int(np.median(r)):9d}")
-        from relmo.vjrel import R_CUT
+        from relmo.vjrel import R_SCALE as _RS
+        R_CUT = _RS ** 2      # 2.25x: relevance down to 1/e^2, the band edge
         inb = [np.array(v, float) for k, v in rows.items()
                if k != 1.0 and max(k, 1 / k) < R_CUT]
         out = [np.array(v, float) for k, v in rows.items()

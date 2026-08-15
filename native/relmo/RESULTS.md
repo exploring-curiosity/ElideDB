@@ -775,3 +775,73 @@ Open/sliding 0.235, Close/hinged 0.195 (chance 0.095-0.270).
    invariance. arc-length survives the correction; multi-rate does not.
 3. **The trained arms have not been re-scored under the new GT or the two-sided
    warp metric.**
+
+---
+
+# The two metrics, and why these two
+
+Owner, 2026-08-15: *"if there are 10 supports and 10 non-supports in a corpus of
+20, then I want something that ranks all the 20 in the best similarity ranking
+and gives the 10 alone returned. So prec@support and one more metric for the
+overall ranking."*
+
+## The pair
+
+    prec@support   rank everything, return exactly `support` items, count how
+                   many are the same event. Binary; ignores order and grade.
+                   "Of what I hand back, how much belongs."
+
+    NDCG@support   the SAME cut. sum(rel / log2(rank+1)) over those `support`
+                   items, divided by the best achievable for that query.
+                   Graded and position-discounted, normalised per query.
+                   "Are the best ones at the top, and did near-relevant beat
+                   far-relevant."
+
+They are cut at the same k, so they describe the same returned list from two
+angles. Nothing else is needed.
+
+## Why not the others, measured on the whole corpus
+
+Random-ranking floors, 474 recordings, same GT:
+
+| metric | random floor | best arm | headroom | spread across the 3 arms | % of headroom used |
+|---|---|---|---|---|---|
+| prec@support | 0.179 | 0.519 | 0.340 | 0.153 | **45%** |
+| **NDCG@support** | **0.150** | 0.606 | 0.456 | 0.089 | **20%** |
+| NDCG full-list | 0.528 | 0.807 | 0.279 | 0.043 | 15% |
+| concord | 0.503 | 0.751 | 0.248 | 0.029 | 12% |
+
+(macro-averaged for this table so the four are compared on one basis)
+
+**Full-list NDCG is the trap.** Its random floor is 0.528, because in a
+474-long list a random ranking still accumulates most of the achievable
+discounted gain. Reporting "0.781 vs 0.807" makes a real 0.026 difference read
+as rounding; against the floor it is 0.253 vs 0.279, a 10% relative gap. Cutting
+at support drops the floor to 0.150 and the same comparison becomes 0.517 vs
+0.606.
+
+**concord is position-blind.** An inversion between ranks 1 and 2 costs exactly
+what one between ranks 400 and 401 costs. Its floor is 0.503 and it separates
+the arms least of the four.
+
+**rel@10** has a fixed k that does not track support, which is the wrong shape
+for "rank till the support".
+
+**dur-rho** is a diagnostic, not a quality metric. It holds the event constant
+and asks only whether duration-matched instances outrank stretched ones. Keep
+it for answering "is the passive decline honoured", never as a headline.
+
+## The headline table, on these two metrics
+
+Whole corpus, 474 recordings, frozen, anchored symmetric2 matcher.
+prec@support is micro-averaged, matching every earlier number in this file.
+
+| arm | prec@support | NDCG@support |
+|---|---|---|
+| random ranking | 0.217 | 0.150 |
+| **v4 clip-time** | **0.533** | **0.606** |
+| v6 stream-time | 0.375 | 0.517 |
+| v6 stream-time + arc | 0.424 | 0.554 |
+
+`relmo/vjzeval.evaluate` now returns `ndcg_sup` and `report()` prints it, so
+every future number carries both.
