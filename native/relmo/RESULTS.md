@@ -845,3 +845,100 @@ prec@support is micro-averaged, matching every earlier number in this file.
 
 `relmo/vjzeval.evaluate` now returns `ndcg_sup` and `report()` prints it, so
 every future number carries both.
+
+---
+
+# wAUC, and why clip-time "beats" stream-time
+
+Owner: *"NDCG just focusses on getting top ranks correct... but the overall till
+support is messed up. and after support ranking too. and why is clip time vs
+stream time fail. try a v7 with both cliptime and stream time."*
+
+## The metric NDCG was hiding
+
+NDCG's `1/log2(rank+1)` discount means rank 1 is worth 6.6x rank 100. It reads
+the head of the list and almost nothing else. **wAUC** is the same graded
+relevance with a UNIFORM position weight:
+
+    wAUC = ( sum_c rel(c) * pct(c)  -  worst ) / ( best - worst )
+
+where pct(c) = 1 - rank(c)/(N-1). 1.0 = every item above every less-relevant
+one; **0.502 = random**. It reads the whole ranking - through the support and
+past it - which is exactly what NDCG does not.
+
+Whole corpus, 474 recordings, frozen, anchored matcher:
+
+| arm | prec@sup | NDCG@sup | **wAUC** | order-in-k | miss depth |
+|---|---|---|---|---|---|
+| random floor | 0.217 | 0.150 | **0.502** | 0.009 | 0.587 |
+| v4 clip-time | **0.533** | **0.606** | 0.790 | **0.414** | 0.492 |
+| v6 stream-time | 0.375 | 0.517 | **0.791** | 0.284 | **0.457** |
+| v6 stream-time + arc | 0.424 | 0.554 | **0.796** | 0.316 | 0.461 |
+
+`order-in-k` = Spearman(rank, relevance) INSIDE the returned k.
+`miss depth` = mean rank percentile of positives that missed the cut; lower is
+better.
+
+**On the whole ranking the two are indistinguishable** (0.790 vs 0.791/0.796),
+and stream-time buries its misses less deeply. Clip-time's entire advantage is
+in the head of the list. Every earlier conclusion in this file that
+stream-time "regressed" was reading a head-of-list metric.
+
+## Why clip-time wins the aggregate: the corpus duration histogram
+
+Queries split by their own duration, whole corpus as the pool:
+
+| query duration | n | clip prec | strm prec | clip wAUC | strm wAUC |
+|---|---|---|---|---|---|
+| < 8 s | 58 | **0.503** | 0.375 | 0.693 | **0.733** |
+| 8-12 s | 187 | **0.570** | 0.410 | **0.830** | 0.775 |
+| 12-20 s | 144 | **0.525** | 0.442 | 0.783 | **0.801** |
+| > 20 s | 85 | 0.447 | **0.457** | 0.781 | **0.878** |
+
+Stream-time improves monotonically with length - wAUC 0.733 / 0.775 / 0.801 /
+**0.878**. Clip-time peaks at 8-12 s and decays. 187 of 474 recordings sit in
+8-12 s, which is clip-time's sweet spot, so **the aggregate favours clip-time
+because of the corpus's duration distribution, not because the formulation is
+better.** Past 20 s stream-time wins on both metrics.
+
+The cause is trace LENGTH, not sampling rate. Re-scoring the same 229 long
+recordings at 8 / 4 / 2.7 fps (steps of 0.25 / 0.50 / 0.75 s) gave prec 0.527 /
+0.520 / 0.491 and wAUC 0.826 / 0.814 / 0.802 - coarsening the rate makes it
+WORSE, refuting the per-step-SNR hypothesis. A 5 s recording yields 8 descriptor
+steps under stream time where clip-time always emits 24.
+
+## v7 — fuse them
+
+Per query, z-score each arm's distances over its own candidate set, then
+combine. Whole corpus, identical pools:
+
+| arm | prec@sup | NDCG@sup | wAUC | NDCG full | order-in-k | miss depth |
+|---|---|---|---|---|---|---|
+| clip-time only | 0.533 | 0.606 | 0.790 | 0.807 | 0.414 | 0.492 |
+| stream+arc only | 0.424 | 0.554 | 0.796 | 0.781 | 0.316 | 0.461 |
+| z-fuse, clip 0.25 | 0.489 | 0.634 | 0.819 | 0.829 | 0.419 | 0.466 |
+| **z-fuse, clip 0.50** | **0.533** | **0.659** | **0.825** | **0.840** | **0.460** | 0.475 |
+| z-fuse, clip 0.75 | **0.547** | 0.645 | 0.813 | 0.829 | 0.441 | 0.487 |
+| RRF (rank fusion) | 0.514 | 0.644 | 0.819 | 0.835 | 0.439 | 0.471 |
+
+**Every fusion weight in [0.25, 0.75] beats BOTH single arms on wAUC, NDCG@sup
+and NDCG-full.** At 0.50 the fusion matches clip-time's precision exactly while
+adding +0.053 NDCG@support and +0.035 wAUC; at 0.75 it also beats clip-time's
+precision (0.547 vs 0.533). Parameter-free RRF lands in the same place, so the
+gain is not an artefact of the weighting.
+
+That is the expected result given the duration table: the two representations
+fail on opposite ends of the duration axis, so they are complementary rather
+than redundant. Cost is one extra encode per recording.
+
+Not tested: a duration-AWARE fusion weight. It would likely help, and it would
+also be a per-corpus tuned parameter, so it needs a held-out corpus before it
+can be believed.
+
+## Standing metrics, final
+
+    prec@support   membership of the returned set        floor 0.217
+    NDCG@support   order at the HEAD of that set         floor 0.150
+    wAUC           the whole ranking, position-uniform   floor 0.502
+
+`vjzeval.evaluate` returns all three and `report()` prints them.

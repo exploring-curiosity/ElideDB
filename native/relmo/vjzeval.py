@@ -105,7 +105,7 @@ def evaluate(desc, query_ids, pool_ids, min_support=5, boot=0, seed=0,
     rel_q = REL[np.array([upos[i] for i in qry])[:, None],
                 np.array([upos[i] for i in pool])[None, :]]
     q_at = {i: k for k, i in enumerate(qry)}
-    nd, nd_sup = [], []
+    nd, nd_sup, wauc = [], [], []
     if multirate:
         packed = vjmatch.pack({r: {i: l2(v[i]) for i in v}
                                for r, v in desc.items()}, pool)
@@ -146,6 +146,22 @@ def evaluate(desc, query_ids, pool_ids, min_support=5, boot=0, seed=0,
             # against 0.528 for the full-list variant, which is why the
             # full-list number makes real differences look like rounding.
             nd_sup.append(vjrel.ndcg(s[None, :], rq[None, :], ones, k=sup))
+            # wAUC: relevance-weighted, position-UNIFORM. NDCG's log discount
+            # means it reads the TOP of the list and little else; measured on
+            # the whole corpus, clip-time beat stream-time on NDCG@support
+            # (0.606 vs 0.554) while being INDISTINGUISHABLE on wAUC (0.790 vs
+            # 0.796). The two answer different questions and both are needed:
+            # NDCG@support = "are the best ones first", wAUC = "where did
+            # everything land, through the support and past it".
+            # 1.0 = every item above every less-relevant one; 0.502 = random.
+            n_ = len(s)
+            rk = np.empty(n_)
+            rk[np.argsort(-s)] = np.arange(n_)
+            pct = 1.0 - rk / max(n_ - 1, 1)
+            ws = np.sort(rq)[::-1]
+            ps = np.sort(pct)[::-1]
+            best, worst = (ws * ps).sum(), (ws * ps[::-1]).sum()
+            wauc.append(((rq * pct).sum() - worst) / max(best - worst, 1e-9))
         per_q.append((meta[q]["task"], grp[q], hit, sup,
                       sup * sup / int(keep.sum())))
     if not per_q:
@@ -157,6 +173,7 @@ def evaluate(desc, query_ids, pool_ids, min_support=5, boot=0, seed=0,
     out = dict(overall=hit.sum() / sup.sum(), chance=rnd.sum() / sup.sum(),
                n_queries=len(per_q),
                ndcg_sup=float(np.nanmean(nd_sup)) if nd_sup else float("nan"),
+               wauc=float(np.nanmean(wauc)) if wauc else float("nan"),
                ndcg=float(np.nanmean(nd)) if nd else float("nan"))
 
     for field, key in (("per_group", 1), ("per_task", 0)):
@@ -185,8 +202,9 @@ def report(name, res, per="per_group"):
     ci_s = f"  95% CI [{ci[0]:.3f}, {ci[1]:.3f}]" if ci else ""
     print(f"prec@support {res['overall']:.3f}  chance {res['chance']:.3f}  "
           f"lift {res['overall']/res['chance']:.2f}x  |  "
-          f"NDCG@support {res.get('ndcg_sup', float('nan')):.3f} "
-          f"(random floor 0.150)  n={res['n_queries']}{ci_s}")
+          f"NDCG@support {res.get('ndcg_sup', float('nan')):.3f} (floor 0.150)"
+          f"  |  wAUC {res.get('wauc', float('nan')):.3f} (floor 0.502)"
+          f"  n={res['n_queries']}{ci_s}")
     print(f"{'group':22s} {'prec':>6s} {'chance':>7s} {'lift':>6s} {'sup':>5s}")
     for k, v in sorted(res[per].items(), key=lambda x: -x[1]["prec"]):
         flag = "  <- 0.70" if v["prec"] >= 0.70 else ""
