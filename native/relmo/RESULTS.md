@@ -1253,3 +1253,77 @@ the full test protocol), against a random floor of 0.217 / 0.150 / 0.502.
 What is left for the frozen path has no hypothesis attached, only the
 possibility of a lucky hyperparameter: the encoder layer the descriptor is read
 from, and the spatial pooling. Both need a re-encode.
+
+---
+
+# v9 — learned 256-token pooling + f. Targets met.
+
+Owner: *"start with the training of the 256 tokens and the f function. Now I
+expect the train set to be >90% and test and val >80"*
+
+## Result, 3 seeds, prec@support / NDCG@support / wAUC
+
+| split | prec@support | NDCG@support | wAUC | target |
+|---|---|---|---|---|
+| **train** | **0.982 ± 0.004** | 0.891 ± 0.010 | 0.984 ± 0.005 | >0.90 met |
+| **val** | **0.863 ± 0.023** | 0.754 ± 0.020 | 0.948 ± 0.008 | >0.80 met |
+| **test** | **0.856 ± 0.014** | 0.741 ± 0.014 | 0.943 ± 0.008 | >0.80 met |
+| ood_val | 0.797 ± 0.023 | 0.705 ± 0.017 | 0.922 ± 0.010 | - |
+
+Held out means TEST queries against a train-disjoint pool. Seed aggregates, not
+a picked checkpoint. Random floor is 0.217 / 0.150 / 0.502.
+
+Against the previous best (fixed gate pooling, `b` primary):
+
+| | train | val | test | ood |
+|---|---|---|---|---|
+| rk8_b, fixed pooling | 0.968 | 0.752 | 0.763 | 0.706 |
+| **p1, learned pooling** | **0.982** | **0.863** | **0.856** | **0.797** |
+| gain | +0.014 | **+0.111** | **+0.093** | **+0.091** |
+
+## What changed
+
+`relmo/vjrec7` stores V-JEPA's 256 spatial tokens per step instead of collapsing
+them, and `relmo/vjrank2` learns the collapse:
+
+    w_{t,k} = softmax_k  q( tok_{t,k}, gate_{t,k} )
+    u_t     = sum_k w_{t,k} tok_{t,k}
+    z_t     = f(z_{t-1}, [u_t, fixed_t, sig_t], g_t)
+
+v6's pooling was a fixed gate - layer-6 change magnitude, median-subtracted and
+clipped - never trained and never compared against an alternative. The head now
+sees each token's own feature alongside that gate value, so the gate is a hint
+rather than the whole answer.
+
+**The learned pooling is ADDITIVE, not a replacement.** The token PCA keeps only
+69.5% of per-token variance at 96-d, against 99.1% for pooled descriptors at
+256-d, because per-token features are far higher rank. A learned pooling over
+96-d tokens alone would therefore be capped BELOW the fixed pooling it exists to
+improve. Feeding both means the head can only add to what the gate found.
+
+**Primary channel is `b`.** The a-b bar constrains that at most ONE of
+pred_change / obs_change enters as a vector - not which. Swapping to `b` alone
+was worth +0.087 val and +0.087 test before any pooling was learned.
+
+## The overfitting diagnosis was wrong
+
+Train was 0.968 against val 0.752, which reads as overfitting, so the pooling
+head shipped with temporal crop, token dropout and channel dropout. Screening
+three regularisation strengths on val:
+
+| config | val prec (training-time) |
+|---|---|
+| **weak** (crop 0.9, tok-drop 0.05, chan-drop 0.05, wd 1e-4) | **0.900** |
+| medium (crop 0.7, tok-drop 0.2, chan-drop 0.15, wd 1e-3) | 0.860 |
+| strong (crop 0.5, tok-drop 0.35, chan-drop 0.25, wd 3e-3) | 0.854 |
+
+**Weak wins.** The gap was missing capacity in the POOLING, not excess capacity
+in f - the fixed gate was discarding information that no amount of regularising
+f could recover. All three configs clear both targets, so the conclusion does
+not rest on the selection.
+
+## Cost
+
+Per-token records are 0.95 GB for rcasa and 0.16 GB for rcasa_eval at 96-d
+fp16, from one extra encode pass (~13 min). Training is ~12 min per seed. The
+model is 384k parameters and emits a 128-d descriptor per step.
