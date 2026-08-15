@@ -1081,3 +1081,79 @@ Also fixed: Accelerate's BLAS raises spurious divide-by-zero / overflow FP flags
 on Apple Silicon. Verified against a float64 einsum reference (max abs diff
 1e-5, relative 8e-7) and silenced with a SCOPED errstate, so a genuine
 non-finite value elsewhere still surfaces.
+
+---
+
+# v8c — interleaving cannot be hand-built. It is what f is for.
+
+Owner: *"a;b;sig is not a composite. Youre jus adding them on top while they
+compliment each other in the computation of t+1 of each... and obs_change was
+already a part of my z function. I dont want overlay formulas. I want actual
+interlevation among the channels."*
+
+Correct on both counts. Concatenation with each part L2-normalised makes
+cos([a;b],[a';b']) exactly the MEAN of cos(a,a') and cos(b,b') - the parts never
+meet. And `obs_change` was already in `z_t = f(z_{t-1}, pred(t+1), act(t),
+act(t+1))`, so reporting it as a finding overstated it.
+
+## Nine genuinely interleaved constructions, all worse
+
+Whole corpus, 474 recordings, frozen, PCA-256 per channel.
+
+| construction | prec@sup | NDCG@sup | wAUC |
+|---|---|---|---|
+| **stacked `[a;b;sig]` — the overlay** | **0.495** | **0.614** | **0.833** |
+| `a (*) b`  per-dim expectation/outcome agreement | 0.386 | 0.434 | 0.767 |
+| `a (*) sig` | 0.379 | 0.459 | 0.757 |
+| `b (*) sig` | 0.394 | 0.459 | 0.766 |
+| all three interactions | 0.439 | 0.529 | 0.795 |
+| stacked + interactions | 0.489 | 0.583 | 0.823 |
+| matcher: `cos_a . cos_b . cos_s` | 0.446 | 0.504 | 0.766 |
+| matcher: `cos_a . cos_s` | 0.434 | 0.480 | 0.762 |
+| matcher: `min(cos_a, cos_b, cos_s)` | 0.442 | 0.499 | 0.769 |
+
+Both kinds fail: descriptor-level second-order terms, and matcher-level
+conjunctive costs where a step-pair must agree on every channel at once rather
+than on average. Adding the interaction terms ON TOP of the first-order channels
+also fails (0.489 against 0.495) - they carry no signal the first-order channels
+do not already have, and only dilute.
+
+The elementwise product was chosen because its SUM is the scalar cos(a,b) that g
+already carries, so the vector form says WHERE the expectation and the outcome
+agreed rather than merely how much - strictly more information than the scalar.
+It still loses. That is the result: at the frozen level there is no hand-written
+mixing of these channels that beats laying them side by side.
+
+## The interleaving has to be LEARNED, which is exactly what f is
+
+vjrank's recurrence already has the owner's form, and its gate and candidate
+layers see every channel TOGETHER:
+
+    gamma_t = sigmoid( W_g [ z_{t-1}, u_a(a_t), u_s(sig_t), g_t ] )
+    c_t     = tanh   ( W_c [ z_{t-1}, u_a(a_t), u_s(sig_t) ] )
+    z_t     = (1-gamma_t) z_{t-1} + gamma_t c_t
+
+TEST queries against a train-disjoint pool - nothing below was ever a gradient:
+
+| arm | dim | prec@sup | NDCG@sup | wAUC |
+|---|---|---|---|---|
+| frozen overlay `[a;b;sig]` | 768 | 0.532 | **0.645** | 0.832 |
+| **learned f, 3 seeds** | **128** | **0.676 ± 0.019** | 0.617 ± 0.025 | **0.876 ± 0.018** |
+
++0.144 prec@support and +0.044 wAUC over the best frozen construction, at SIX
+TIMES smaller descriptor. It loses 0.028 on NDCG@support, so the frozen overlay
+still orders the head of the list slightly better.
+
+A caveat that had to be caught rather than reported: scored on the WHOLE corpus
+the learned model reads 0.782 / 0.712 / 0.918, but 61% of that corpus was in its
+training set. The held-out numbers above are the real ones.
+
+## What this opens
+
+f currently receives `b` only as two scalars, because the barred residual
+pred(t+1)-act(t+1) = a - b would otherwise be formable in its first linear
+layer. But the frozen sweep showed `b` alone OUTSCORES `a` alone (0.442 vs
+0.420 prec), so the direction of what actually happened carries signal that f is
+currently denied. The open question is how to give f more of `b` without letting
+it form the residual - e.g. admitting `b` only in the subspace orthogonal to
+`a`, or through a separate encoder that never sees `a` in the same layer.
