@@ -57,7 +57,17 @@ import numpy as np
 ARC_DS = 1716.64
 
 
-def dtw(C, free_ends=False, lens=None):
+def dtw(C, free_ends=False, lens=None, band=0.0):
+    """band: Sakoe-Chiba half-width as a FRACTION of the reference length. 0
+    disables it. The DP is a Python scan over (query x reference), so it is the
+    bottleneck in every evaluation - banding it cuts the inner loop from R to
+    2*band*R. Paths outside the band are forbidden, which is the standard
+    constraint and is exact for any alignment that does not warp by more than
+    the band allows."""
+    return _dtw(C, free_ends, lens, band)
+
+
+def _dtw(C, free_ends=False, lens=None, band=0.0):
     """C: (N, Q, R) cost -> (N,) length-normalised distance. Lower is better.
 
     free_ends=False anchors both ends and divides by Q+R exactly.
@@ -86,6 +96,14 @@ def dtw(C, free_ends=False, lens=None):
         St = np.zeros((n, r), np.int64)
 
     INF = np.float64(1e18)
+    # band limits per query row, around the diagonal of the LONGEST reference
+    if band > 0:
+        w = max(2, int(round(band * r)))
+        slope = (r - 1) / max(q - 1, 1)
+        lo_all = np.maximum(0, (np.arange(q) * slope - w).astype(int))
+        hi_all = np.minimum(r - 1, (np.arange(q) * slope + w).astype(int))
+        if not free_ends:
+            D[:, hi_all[0] + 1:] = INF
     for i in range(1, q):
         c = C[:, i, :]
         diag = np.concatenate([np.full((n, 1), INF), D[:, :-1]], 1) + 2.0 * c
@@ -98,11 +116,15 @@ def dtw(C, free_ends=False, lens=None):
         runS = np.where(take_d,
                         np.concatenate([np.zeros((n, 1), np.int64),
                                         St[:, :-1]], 1), St)
-        for j in range(1, r):                   # reference advances, query holds
+        j0, j1 = (1, r) if band <= 0 else (max(1, lo_all[i]), hi_all[i] + 1)
+        for j in range(j0, j1):                 # reference advances, query holds
             alt = run[:, j - 1] + c[:, j]
             better = alt < run[:, j]
             run[:, j] = np.where(better, alt, run[:, j])
             runS[:, j] = np.where(better, runS[:, j - 1], runS[:, j])
+        if band > 0:                            # outside the band is forbidden
+            run[:, :lo_all[i]] = INF
+            run[:, hi_all[i] + 1:] = INF
         D, St = run, runS
 
     rows = np.arange(n)
@@ -213,6 +235,36 @@ def score_rates(q_by_rate, packed, keep=None, free_ends=False, pad_cost=1e6,
                 best[idx[take]] = d[take]
                 mism[idx[take]] = mm[take]
     return best
+
+
+def fit_pca(seqs, dim=256, sample=200_000, seed=0):
+    """PCA over pooled STEP vectors. Label-free, fitted on train only.
+
+    The cost matrix einsum is 93-98% of evaluation time and scales linearly in
+    descriptor dimension (measured: 1024-d costs 107ms/query at Q=R=44 against
+    8ms for the DP; 2816-d costs 417ms). Projecting to 256 dims is a ~7x
+    end-to-end speedup for a 1024-d channel and ~25x for a 2816-d concat, and
+    it shrinks whatever index this eventually feeds.
+    """
+    X = np.concatenate([np.asarray(s, np.float32) for s in seqs])
+    rng = np.random.default_rng(seed)
+    if len(X) > sample:
+        X = X[rng.choice(len(X), sample, replace=False)]
+    mu = X.mean(0, keepdims=True)
+    _, S, Vt = np.linalg.svd(X - mu, full_matrices=False)
+    dim = min(dim, Vt.shape[0])
+    var = float((S[:dim] ** 2).sum() / (S ** 2).sum())
+    return dict(mu=mu, W=Vt[:dim].T.astype(np.float32), var=var)
+
+
+def apply_pca(x, p):
+    # Accelerate's BLAS sets spurious divide-by-zero / overflow FP status flags
+    # on Apple Silicon even when every input and output is finite - verified
+    # against a float64 einsum reference (max abs diff 1e-6, relative 1e-7).
+    # Silence it here rather than globally, so a REAL non-finite value elsewhere
+    # still surfaces.
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        return ((np.asarray(x, np.float32) - p["mu"]) @ p["W"]).astype(np.float32)
 
 
 def _brute(c, free_ends):

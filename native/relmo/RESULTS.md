@@ -1002,3 +1002,82 @@ The alternatives, if that fails: multi-span hypothesis indexing (emit traces
 over several candidate extents at each position, index all) or label-free
 change-point segmentation. Both re-introduce an extent decision that the tempo
 route avoids.
+
+---
+
+# v8b — raising the FROZEN stream-time number, no training, no re-encoding
+
+Owner: *"dont think of what v4 brings with clip time. thats a broken method
+which worked somehow. Just think what can be done to bring the frozen vjepa-2
+stream time result higher."*
+
+Every arm below is built from channels already on disk. Whole corpus, 474
+recordings, anchored symmetric2 matcher, arc-length reparameterised, PCA-256 per
+channel fitted on TRAIN only.
+
+| arm | dim | prec@sup | NDCG@sup | wAUC |
+|---|---|---|---|---|
+| `a` pred_change — v6 as shipped | 256 | 0.420 | 0.556 | 0.803 |
+| `b` obs_change alone | 256 | 0.442 | 0.572 | 0.796 |
+| `[a;sig]` | 512 | 0.480 | 0.570 | 0.823 |
+| `[b;sig]` | 512 | 0.487 | 0.563 | 0.812 |
+| `[a;sig]` centred | 512 | 0.461 | 0.612 | 0.812 |
+| **`[a;b;sig]`** | 768 | **0.495** | **0.614** | **0.833** |
+| `[a;b;sig]` centred | 768 | 0.466 | **0.626** | 0.820 |
+
+**+0.075 prec@support, +0.058 NDCG@support, +0.030 wAUC over the shipped
+baseline, for zero extra compute at write time.**
+
+## Two findings worth keeping
+
+**obs_change beats pred_change as a descriptor** (0.442 vs 0.420 prec, 0.572 vs
+0.556 NDCG@sup). This is the owner's own argument about the barred error
+channel, applied one step further: `error` was rejected because it is "a
+function of (event, MODEL PRIOR), not of the event". But `pred_change` =
+pred(t+1) - act(t) is ALSO partly a function of the prior - it is what the model
+guessed. `obs_change` = act(t+1) - act(t) is the only channel that is purely a
+function of what happened. It is not the error channel and never can be: no
+prediction enters it, so no residual can be formed from it.
+
+**SigLIP is weak alone and strong fused.** On its own it is 0.410 prec / 0.390
+NDCG@sup - the worst arm measured. Concatenated with `a` it adds +0.060 prec.
+Appearance and predicted-dynamics fail on different queries, which is the same
+complementarity STRAP relies on; the mistake was reading its solo score and
+setting it aside.
+
+**Centring** (subtracting each recording's own mean descriptor) trades head for
+body: NDCG@support 0.614 -> 0.626 while prec 0.495 -> 0.466 and wAUC
+0.833 -> 0.820. Use it if the head of the list is what matters.
+
+## THE ERROR BAR STILL APPLIES TO TRAINING
+
+Concatenating `a` and `b` is safe for the FROZEN matcher: each part is
+L2-normalised before concatenation, so the cosine of the whole is the mean of
+the two part-cosines and `a - b` is never formed. A TRAINED head over `[a;b]`
+would form it in its first linear layer, which is exactly what
+relmo/vjrank.py's structural bar exists to prevent. If this descriptor ever
+feeds training, `b` must go back to entering as two scalars.
+
+## Evaluation cost, and why it was 45 minutes
+
+Not fp16 and not the encoder - fp16 encoding runs at 3.58x real-time. The
+evaluation was slow, and profiling (rather than guessing) found the cost matrix
+einsum at **93-98%** of it, scaling linearly in descriptor dimension:
+
+| Q x R | dim | einsum | DP | einsum share |
+|---|---|---|---|---|
+| 44 x 44 | 1024 | 107 ms | 8 ms | 93% |
+| 44 x 44 | 2816 | 417 ms | 8 ms | 98% |
+| 216 x 216 | 1024 | 2541 ms | 176 ms | 94% |
+| 216 x 216 | 256 | 398 ms | 176 ms | 69% |
+
+A Sakoe-Chiba band on the DP was tried first and bought only 1.5-2.3x while
+damaging the ranking below band=0.25 - because the DP was never the bottleneck.
+PCA to 256 dims per channel is the fix: 3.9x end to end, 99.1 / 93.8 / 97.4 %
+variance kept for a / b / sig, and it reproduces the full-dimension baseline to
+within 0.004 prec. It also shrinks whatever index this eventually feeds.
+
+Also fixed: Accelerate's BLAS raises spurious divide-by-zero / overflow FP flags
+on Apple Silicon. Verified against a float64 einsum reference (max abs diff
+1e-5, relative 8e-7) and silenced with a SCOPED errstate, so a genuine
+non-finite value elsewhere still surfaces.
