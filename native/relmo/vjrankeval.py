@@ -89,6 +89,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tags", required=True)
     ap.add_argument("--phase", default="rcasa_train")
+    ap.add_argument("--arc", type=float, default=-1.0)
     ap.add_argument("--rec-root", default="",
                     help="override the records generation; default "
                          "is whatever each checkpoint was trained on")
@@ -101,24 +102,30 @@ def main():
     # records are loaded PER ARM, under the phase setting that arm was trained
     # with. Scoring a phase-retaining model on phase-corrected records (or the
     # reverse) measures a mismatch, not the model.
+    from relmo.vjmatch import ARC_DS
+    arcv = ARC_DS if a.arc < 0 else a.arc
     cache = {}
-    def records(name, root):
+    def records(name, root, arc=None):
         name = name if root != "vjrec4" else ""   # v4 records carry no `step`
-        if (name, root) not in cache:
+        arc = arcv if arc is None else arc
+        arc = 0.0 if root == "vjrec4" else arc
+        if (name, root, arc) not in cache:
             ph = None
             if name:
                 from relmo.vjphase import load as load_phase
                 ph = load_phase(name)
-            cache[(name, root)] = (recs_for("rcasa", phase=ph, root=root),
-                                   recs_for("rcasa_eval", phase=ph, root=root))
-        return cache[(name, root)]
+            cache[(name, root, arc)] = (
+                recs_for("rcasa", phase=ph, root=root, arc=arc),
+                recs_for("rcasa_eval", phase=ph, root=root, arc=arc))
+        return cache[(name, root, arc)]
 
     rows = []
     for t in [x.strip() for x in a.tags.split(",") if x.strip()]:
         model, ck = load_ckpt(t)
         held = ck.get("hold", [])
         root = a.rec_root or ck.get("rec_root", "vjrec4")
-        Rin, Rood = records(ck.get("phase", a.phase), root)
+        Rin, Rood = records(ck.get("phase", a.phase), root,
+                            ck.get("arc", 0.0))
         allr = dict(Rin)
         allr.update(Rood)
         val = [i for i in sorted(sp["val"]) if i in Rin]

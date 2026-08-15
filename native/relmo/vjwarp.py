@@ -1,155 +1,319 @@
-"""Is the experience record invariant to HOW FAST the event happened?
+"""Duration invariance, isolated. The metric this work is actually optimising.
 
-The owner's point, which the design has to survive: a door thrown open in half
-a second and a fridge easing open over four seconds are the same experience.
-And the stretch is not uniform - things start slow and finish fast, stall in
-the middle, snap shut at the end. If the descriptor only matches events that
-happen on the same clock, it is matching timing, not experience.
+WHY NOT precision@support. On rcasa, duration is itself a group CUE - group
+trace lengths are 8-16 steps for Close/sliding and 112-160 for Stack/hinged,
+and a ranker using ONLY duration and no pixels scores 0.315 against a chance of
+0.215. So a change that makes the system duration-INVARIANT removes a shortcut
+the aggregate metric is currently rewarding, and the aggregate can fall while
+the system gets more correct. Judged by precision@support alone, the right
+change looks like a regression.
 
-This takes ONE episode, re-renders its own footage under several time warps,
-and asks whether the warped clip still retrieves the ORIGINAL above all 400+
-other clips in the corpus. Nothing is labelled: the correct answer is "itself",
-which is known without any annotation.
+THE TEST, which needs no labels. Take one recording and replay its own footage
+at a different speed, then ask whether it still retrieves the ORIGINAL out of
+the whole corpus. The right answer is "itself" and is known without annotation.
+Nothing else about the recording changes - same scene, same camera, same
+object, same event, same lighting. Only duration.
 
-WARPS  output frame i takes source frame w(i/N) * T
-  identity   w(u)=u            the reference
-  ease_in    w(u)=u^2          slow at the start, fast at the end
-  ease_out   w(u)=1-(1-u)^2    fast at the start, slow at the end
-  sigmoid    slow-fast-slow    the natural shape of a hinge swinging
-  zoom       middle 60% only   the whole event stretched ~1.7x slower
+    factor 0.5   twice as fast
+    factor 1.0   control - must be rank 1, and is the check that the harness
+                 itself is sound
+    factor 2.0   twice as slow
+    factor 3.0   three times as slow
 
-Global duration is ALREADY normalised upstream (64 frames across the whole
-episode, so a 3 s and a 14 s clip share a time base). These warps therefore
-test the part that is NOT free: the differential speed profile within a clip.
+Reported as rank-1 accuracy and mean reciprocal rank of the source recording.
+A system with duration invariance holds MRR near 1.0 across factors; one
+without it degrades as the factor moves away from 1.
 
-COMPARED THREE WAYS, because the choice of comparison is the thing under test
-  pooled  cosine of the time-averaged trace - order destroyed
-  direct  step t against step t - ordered, but assumes a shared clock
-  dtw     warped alignment - ordered, tolerates a changing clock
+This differs from relmo/vjtime, which warps the PROFILE inside a clip
+(ease_in/ease_out/sigmoid) while holding total duration fixed. Under v4 global
+duration was free by construction - sample_clip spread a fixed frame count over
+whatever the episode's length was - so there was nothing to measure. Under
+stream time there is.
 
-READ IT AS: rank of the true original among all corpus records. Rank 1 is
-perfect. If dtw holds rank 1 under ease_in/ease_out while direct does not, the
-alignment is earning its cost. If pooled also holds rank 1, the ordering is
-doing no work and the extra machinery is unjustified.
-
-    python -m relmo.vjwarp --episodes 8
+    python -m relmo.vjwarp --ingest --episodes 16
+    python -m relmo.vjwarp --arms time,arc
 """
 from __future__ import annotations
 
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from relmo import registry as R  # noqa: E402
-from relmo.vjs import (GRID, MODEL, TUBELET, forward_pair, probe_dims,  # noqa: E402
-                       read_frames)
-from relmo.vjeval import REC, dtw_batch, l2  # noqa: E402
-from relmo.vjrec2 import OUT2, build_record  # noqa: E402
+from relmo import vjrel  # noqa: E402
+from relmo.vjeval import REC, l2  # noqa: E402
+from relmo.vjmatch import arc_resample, dtw  # noqa: E402
+from relmo.vjrec6 import OUT6, episode_paths, record_stream  # noqa: E402
+from relmo.vjsplit import load as load_split  # noqa: E402
+from relmo.vjzeval import PAD_COST, _pad  # noqa: E402
 
-WARPS = {
-    "identity": lambda u: u,
-    "ease_in": lambda u: u ** 2,
-    "ease_out": lambda u: 1 - (1 - u) ** 2,
-    "sigmoid": lambda u: 0.5 - 0.5 * np.cos(np.pi * u),
-    "zoom": lambda u: 0.2 + 0.6 * u,
-}
+OUTW = R.BASE / "vjwarp"
+# Factors must NOT sit on the rate ladder. With rates 8 / 4 / 8-3 fps the
+# achievable exact ratios are {1/3, 1/2, 2/3, 1, 3/2, 2, 3}, and a factor drawn
+# from that set makes the test DEGENERATE: a 2x-slow clip encoded at 4 fps
+# resamples the identical source frames as the original at 8 fps, so multi-rate
+# scores rank-1 1.000 by numerical identity rather than by invariance. That is
+# what the first run measured. These factors fall between rungs, so a rate pair
+# can only ever get close, never exact.
+FACTORS = (1.0, 1.25, 1.75, 2.5)
+# (stream_fps, hop_s, suffix). Window spans 32/fps seconds, so the coarse rates
+# only exist for recordings long enough to hold one window - which is exactly
+# when a coarse rate is what a short query needs to match against.
+RATES = ((8.0, 2.0, ""), (4.0, 4.0, "_f4"), (8.0 / 3.0, 6.0, "_f3"))
 
 
-def warped_clip(F, n, fn):
-    u = np.linspace(0.0, 1.0, n)
-    idx = np.clip((fn(u) * (len(F) - 1)).round().astype(int), 0, len(F) - 1)
-    return F[idx]
+def warp_index(n_frames, factor):
+    """Frame indices that replay n_frames over factor*n_frames of wall time."""
+    m = max(2, int(round(n_frames * factor)))
+    return np.linspace(0, n_frames - 1, m).round().astype(int)
 
 
-def describe(model, torch, dev, clip, n_frames, cal, layer=6):
-    """v2 construction (relmo/vjrec2.build_record) on a supplied clip.
+def gate_of(z):
+    return z["where_map"].reshape(len(z["step"]), -1).sum(1)
 
-    v1 pooled the layer-24 residual by its OWN magnitude. That descriptor
-    broke badly under a differential time warp (rank 52.5 under ease_out)
-    because the residual scales with apparent motion speed, so replaying an
-    event faster changed the trace's CONTENT rather than merely its timing.
-    v2 gates on early-layer CHANGE instead, which is a different quantity and
-    may not carry that speed dependence - which is exactly what this re-run
-    is for."""
-    return build_record(model, torch, dev, clip, n_frames, cal, layer)[1]
+
+def ingest(args):
+    import torch
+    from tqdm import tqdm
+    from transformers import VJEPA2Model
+    from relmo.vjs import MODEL, probe_dims, read_frames
+    from relmo.vjsig import RES
+
+    sp = load_split()
+    eps = [e for e in episode_paths(args.dataset) if e[0] in sp["val"]]
+    # short recordings only: a 3x warp of a 40 s clip is 120 s, and the DTW
+    # cost is quadratic in trace length. Selection is on DURATION, which is
+    # visible without any label.
+    lens = {}
+    for eid, _, _ in eps:
+        f = OUT6 / f"{args.dataset}_L6" / f"{eid}.npz"
+        if f.exists():
+            lens[eid] = len(np.load(f)["step"])
+    eps = [e for e in eps if lens.get(e[0], 999) <= args.max_steps]
+    eps = eps[:args.episodes]
+    if not eps:
+        raise SystemExit("no short-enough val recordings found")
+
+    z = np.load(REC / args.dataset / "_calib.npz")
+    cal = (float(z["alpha"]), z["b"].astype(np.float32))
+    dev = "mps" if torch.backends.mps.is_available() else "cpu"
+    dt_t = torch.float16
+    print(f"loading {MODEL} onto {dev} in fp16...", flush=True)
+    vj = VJEPA2Model.from_pretrained(MODEL, dtype=dt_t).to(dev).eval()
+    from transformers import AutoModel
+    from relmo.vjsig import MODEL as SIGM
+    sig = AutoModel.from_pretrained(SIGM, dtype=torch.float16).to(dev).eval()
+    print(f"  loaded both | {len(eps)} recordings x {len(FACTORS)} factors",
+          flush=True)
+    mean = torch.tensor([0.5, 0.5, 0.5]).view(1, 3, 1, 1)
+    std = torch.tensor([0.5, 0.5, 0.5]).view(1, 3, 1, 1)
+
+    OUTW.mkdir(parents=True, exist_ok=True)
+    todo = [(e, f, r) for e in eps for f in FACTORS for r in RATES
+            if not (OUTW / f"{e[0]}__f{f:g}{r[2]}.npz").exists()]
+    t0, done = time.time(), 0
+    cache = {}
+    for (eid, mp4, src_fps), f, (fps_r, hop_r, sfx) in tqdm(
+            todo, unit="clip", desc="warp"):
+        if eid not in cache:
+            cache.clear()
+            w_, h_ = probe_dims(mp4)
+            cache[eid] = read_frames(mp4, w_, h_)
+        Fw = cache[eid][warp_index(len(cache[eid]), f)]
+        rec = record_stream(vj, torch, dev, Fw, src_fps, cal, 6, dt_t,
+                            stream_fps=fps_r, hop_s=hop_r)
+        if rec is None:
+            continue
+        sel = Fw[np.clip(rec["frame0"].astype(int), 0, len(Fw) - 1)]
+        V = []
+        for s in range(0, len(sel), 64):
+            x = torch.tensor(sel[s:s + 64]).permute(0, 3, 1, 2).float().div_(255.)
+            x = torch.nn.functional.interpolate(x, size=(RES, RES),
+                                                mode="bilinear",
+                                                align_corners=False)
+            with torch.no_grad():
+                V.append(sig.get_image_features(
+                    pixel_values=((x - mean) / std).to(dev, torch.float16)
+                ).float().cpu().numpy())
+        rec["sig"] = np.concatenate(V).astype(np.float32)
+        rec["factor"] = np.float32(f)
+        rec["source"] = eid
+        rec["rate"] = np.float32(fps_r)
+        np.savez_compressed(OUTW / f"{eid}__f{f:g}{sfx}.npz", **rec)
+        done += 1
+    print(f"\nVERIFIED on disk: {len(list(OUTW.glob('*.npz')))} warped clips "
+          f"({done} written this run, {(time.time()-t0)/60:.1f} min)")
+    R.log("vjwarp_ingest", dataset=args.dataset, episodes=len(eps),
+          factors=list(FACTORS), written=done)
+
+
+def evaluate(args):
+    from relmo import vjz
+    from relmo.vjood import recs_for
+
+    sp = load_split()
+    arms = [x.strip() for x in args.arms.split(",") if x.strip()]
+    want_rates = [r for r in RATES if r[2] in ("",) or "multi" in arms]
+
+    # ---- pool, one dict per rate. A recording absent at a rate is None ----
+    pool_rate, raw_rate = {}, {}
+    for _, _, sfx in RATES:
+        rec = OUT6 / f"{args.dataset}_L6{sfx}"
+        if not rec.exists():
+            continue
+        ids = sorted(p.stem for p in rec.glob("*.npz")
+                     if not p.name.startswith("."))
+        d = vjz.gather(ids, args.dataset, rec_dir=rec,
+                       sig_dir=R.BASE / "vjsig6" / f"{args.dataset}{sfx}",
+                       arc=args.ds if args.tag else 0.0)
+        pool_rate[sfx] = d
+        raw_rate[sfx] = {i: np.load(rec / f"{i}.npz") for i in d}
+    pool_ids = sorted(pool_rate[""])
+    warped = sorted(OUTW.glob("*.npz"))
+    if not warped:
+        raise SystemExit("no warped clips - run --ingest first")
+
+    ds = args.ds
+    if ds <= 0:
+        tr = sorted(sp["train"] & set(pool_rate[""]))
+        ds = float(np.median(np.concatenate([gate_of(raw_rate[""][i])
+                                             for i in tr])))
+        print(f"ds not given; using the train median gate energy {ds:.2f}")
+
+    model = None
+    if args.tag:
+        from relmo import vjrank
+        model, _ = vjrank.load_ckpt(args.tag)
+        print(f"trained arm: {args.tag} - records are gathered pre-arced and "
+              f"encoded to z, then matched by the same anchored DTW")
+
+    def prep(a, gate, arm):
+        if "arc" not in arm or model is not None:
+            return a                       # gather() already arced for a tag
+        return arc_resample(a, gate, ds, max_len=256)[0]
+
+    def to_z(rec):
+        """dict(a,g,sig) -> the trained z sequence."""
+        import torch
+        a_, m_ = vjrank.pad([rec["a"]], "cpu", torch)
+        g_, _ = vjrank.pad([rec["g"]], "cpu", torch)
+        s_, _ = vjrank.pad([rec["sig"]], "cpu", torch)
+        with torch.no_grad():
+            return model.encode(a_, g_, s_, m_)[0].numpy()
+
+    # ---- queries, grouped by (source, factor) across rates ----
+    Q = {}
+    for w in warped:
+        z = np.load(w, allow_pickle=True)
+        # clips written before multi-rate carry no `rate`; they were all 8 fps
+        rate = round(float(z["rate"]), 4) if "rate" in z.files else 8.0
+        sfx = {8.0: "", 4.0: "_f4"}.get(rate, "_f3")
+        a, g = vjz.channels(z)
+        gate = gate_of(z)
+        sg = z["sig"] if "sig" in z.files else None
+        Q.setdefault((str(z["source"]), float(z["factor"])), {})[sfx] = \
+            (a, gate, g, sg)
+
+    print(f"pool {len(pool_ids)} recordings | rates on disk "
+          f"{[k or '_f8' for k in sorted(pool_rate)]} | "
+          f"{len(Q)} warped queries | chance MRR "
+          f"{np.mean([1/(k+1) for k in range(len(pool_ids))]):.4f}")
+
+    for arm in arms:
+        rates = list(pool_rate) if "multi" in arm else [""]
+        # cache the padded pool per rate
+        PP = {}
+        for sfx in rates:
+            d = pool_rate[sfx]
+            present = np.array([i in d for i in pool_ids])
+            dim = model.d if model is not None else 1024
+            desc = [(to_z(d[i]) if model is not None
+                     else prep(d[i]["a"], gate_of(raw_rate[sfx][i]), arm))
+                    if i in d else np.zeros((2, dim), np.float32)
+                    for i in pool_ids]
+            P, ok = _pad([l2(x) for x in desc])
+            PP[sfx] = (P, ok, np.array([len(x) for x in desc]), present)
+
+        rows = {}
+        for (src, fac), per_rate in Q.items():
+            if src not in pool_ids:
+                continue
+            best = np.full(len(pool_ids), np.inf)
+            mism = np.full(len(pool_ids), np.inf)
+            for qsfx, (qa, qg, qgg, qsg) in per_rate.items():
+                if "multi" not in arm and qsfx != "":
+                    continue
+                if model is not None:
+                    from relmo.vjmatch import arc_resample as _ar
+                    aa, rest = _ar(qa, qg, ds, aux=[qgg, qsg], max_len=256)
+                    q = l2(to_z(dict(a=aa, g=rest[0], sig=rest[1])))
+                else:
+                    q = l2(prep(qa, qg, arm))
+                if len(q) < 2:
+                    continue
+                for sfx in rates:
+                    P, ok, L, present = PP[sfx]
+                    if not present.any():
+                        continue
+                    C = 1.0 - np.einsum("sd,nkd->nsk", q, P[present])
+                    C = np.where(ok[present][:, None, :], C, PAD_COST)
+                    d = dtw(C, False, L[present])
+                    idx = np.where(present)[0]
+                    if args.mr_mode == "min":
+                        best[idx] = np.minimum(best[idx], d)
+                    else:
+                        mm = np.abs(np.log(len(q) / np.maximum(L[present], 1)))
+                        t = mm < mism[idx]
+                        best[idx[t]] = d[t]
+                        mism[idx[t]] = mm[t]
+            order = np.argsort(best)
+            rank = 1 + int(np.where(np.array(pool_ids)[order] == src)[0][0])
+            rows.setdefault(fac, []).append(rank)
+
+        print(f"\n  arm = {arm}")
+        print(f"  {'factor':>7s} {'n':>4s} {'rank-1':>7s} {'top-5':>7s} "
+              f"{'MRR':>7s} {'med rank':>9s}")
+        for fac in sorted(rows):
+            r = np.array(rows[fac], float)
+            print(f"  {fac:7.1f} {len(r):4d} {float((r==1).mean()):7.3f} "
+                  f"{float((r<=5).mean()):7.3f} {float((1/r).mean()):7.3f} "
+                  f"{int(np.median(r)):9d}")
+        allr = np.concatenate([np.array(v, float) for k, v in rows.items()
+                               if k != 1.0]) if len(rows) > 1 else np.array([])
+        if len(allr):
+            print(f"  {'WARPED':>7s} {len(allr):4d} {float((allr==1).mean()):7.3f}"
+                  f" {float((allr<=5).mean()):7.3f} {float((1/allr).mean()):7.3f}"
+                  f"   <- excludes the 1.0 control")
+            R.log("vjwarp", arm=arm, ds=round(ds, 3),
+                  mrr_warped=round(float((1 / allr).mean()), 4),
+                  rank1_warped=round(float((allr == 1).mean()), 4))
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="rcasa")
-    ap.add_argument("--episodes", type=int, default=8)
-    ap.add_argument("--frames", type=int, default=64)
-    ap.add_argument("--layer", type=int, default=6)
+    ap.add_argument("--ingest", action="store_true")
+    ap.add_argument("--episodes", type=int, default=16)
+    ap.add_argument("--max-steps", type=int, default=40)
+    ap.add_argument("--factors", default="")
+    ap.add_argument("--mr-mode", default="min", choices=["min","match"])
+    ap.add_argument("--tag", default="", help="ranker checkpoint; "
+                    "encodes to trained z instead of raw a_t")
+    ap.add_argument("--arms", default="time,arc")
+    ap.add_argument("--ds", type=float, default=-1.0)
     a = ap.parse_args()
-
-    import torch
-    from tqdm import tqdm
-    from transformers import VJEPA2Model
-
-    d = REC / a.dataset
-    files = sorted(p for p in d.glob("*.npz") if not p.name.startswith("_"))
-    if len(files) < 100:
-        raise SystemExit(f"only {len(files)} records - let vjcache finish first")
-    d2 = OUT2 / f"{a.dataset}_L{a.layer}"
-    files = [p for p in files if (d2 / f"{p.stem}.npz").exists()]
-    SEQ = l2(np.stack([np.load(d2 / f"{p.stem}.npz")["what_seq"]
-                       for p in files]))
-    POOL = l2(SEQ.mean(1))
-    names = [p.stem for p in files]
-    z = np.load(d / "_calib.npz")
-    cal = (float(z["alpha"]), z["b"])
-
-    dev = "mps" if torch.backends.mps.is_available() else "cpu"
-    print(f"loading {MODEL} onto {dev}...", flush=True)
-    model = VJEPA2Model.from_pretrained(MODEL, dtype=torch.float32).to(dev).eval()
-    print(f"  loaded | corpus {len(files)} records", flush=True)
-
-    rng = np.random.default_rng(0)
-    pick = rng.choice(len(files), min(a.episodes, len(files)), replace=False)
-    acc = {w: {"pooled": [], "direct": [], "dtw": []} for w in WARPS}
-
-    for i in tqdm(pick, unit="ep", desc="warp"):
-        ep = R.dataset_dir(a.dataset) / "shard_0000" / names[i] / "frames.mp4"
-        if not ep.exists():
-            continue
-        w_, h_ = probe_dims(ep)
-        F = read_frames(ep, w_, h_)
-        if len(F) < a.frames:
-            continue
-        for wname, fn in WARPS.items():
-            q = describe(model, torch, dev, warped_clip(F, a.frames, fn),
-                         a.frames, cal, a.layer)
-            qn = l2(q)
-            s_pool = POOL @ l2(q.mean(0))
-            s_dir = np.einsum("sd,nsd->n", qn, SEQ) / qn.shape[0]
-            s_dtw = dtw_batch(qn, SEQ)
-            for k, s in (("pooled", s_pool), ("direct", s_dir), ("dtw", s_dtw)):
-                # rank of the TRUE original, 1 = best
-                acc[wname][k].append(int((s > s[i]).sum()) + 1)
-
-    print("\n" + "=" * 64)
-    print(f"rank of the true original among {len(files)} clips "
-          f"(1 = perfect), median")
-    print(f"{'warp':12s} {'pooled':>10s} {'direct':>10s} {'dtw':>10s}")
-    print("-" * 64)
-    out = {}
-    for w in WARPS:
-        r = {k: float(np.median(v)) if v else float("nan")
-             for k, v in acc[w].items()}
-        print(f"{w:12s} {r['pooled']:10.1f} {r['direct']:10.1f} "
-              f"{r['dtw']:10.1f}")
-        out.update({f"{w}_{k}": round(v, 2) for k, v in r.items()})
-    print("=" * 64)
-    print("identity should be rank 1 everywhere - it is the same clip.")
-    print("ease_in / ease_out / sigmoid are the differential-speed cases:")
-    print("  dtw rank 1 and direct worse -> alignment is earning its cost")
-    print("  pooled also rank 1          -> ordering is doing no work")
-    R.log("vjwarp", dataset=a.dataset, episodes=len(pick),
-          corpus=len(files), **out)
+    if a.factors:
+        global FACTORS
+        FACTORS = tuple(float(x) for x in a.factors.split(','))
+    if a.ingest:
+        ingest(a)
+    else:
+        evaluate(a)
 
 
 if __name__ == "__main__":

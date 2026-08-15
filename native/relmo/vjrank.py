@@ -212,6 +212,9 @@ def main():
                     help="vjrec6 = stream time (default), vjrec4 = clip time")
     ap.add_argument("--phase", default="rcasa_train",
                     help="vjphase model to subtract; '' disables it")
+    ap.add_argument("--arc", type=float, default=-1.0,
+                    help="arc-length increment; <0 uses vjmatch.ARC_DS, "
+                         "0 keeps the trace indexed by TIME")
     ap.add_argument("--rec-suffix", default="",
                     help="compression variant: _fp16, _fp16f32, ...")
     ap.add_argument("--dim", type=int, default=128)
@@ -242,8 +245,10 @@ def main():
     if a.phase:
         from relmo.vjphase import load as load_phase
         ph = load_phase(a.phase)
+    from relmo.vjmatch import ARC_DS
+    arc = ARC_DS if a.arc < 0 else a.arc
     D = vjz.gather(sp["train"] | sp["val"] | sp["test"],
-                   rec_dir=rec_dir, sig_dir=sig_dir, phase=ph)
+                   rec_dir=rec_dir, sig_dir=sig_dir, phase=ph, arc=arc)
     D = {i: v for i, v in D.items() if v["sig"] is not None
          and len(v["sig"]) == len(v["a"])}
     meta = vjrel.meta_table(a.dataset)
@@ -345,7 +350,7 @@ def main():
     tag = a.tag or f"rank_d{a.dim}_s{a.seed}"
     torch.save(dict(state=model.state_dict(), dim=a.dim, use_sig=not a.no_sig,
                     use_scorer=not a.no_scorer, rec_root=a.rec_root,
-                    phase=a.phase,
+                    phase=a.phase, arc=arc,
                     hold=sorted(hold), params=npar), CKPT / f"{tag}.pt")
     print(f"\nbest val NDCG {nd:.4f}  precision@support {pr:.4f}  "
           f"(epoch {best_ep})  -> {CKPT / (tag + '.pt')}")

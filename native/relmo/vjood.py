@@ -38,14 +38,15 @@ from relmo.vjsplit import load as load_split  # noqa: E402
 from relmo.vjzeval import evaluate, report  # noqa: E402
 
 
-def recs_for(dataset, ids=None, suffix="", root="vjrec6", phase=None):
+def recs_for(dataset, ids=None, suffix="", root="vjrec6", phase=None,
+              arc=0.0):
     rec, sig = vjz.dirs(root, dataset, suffix=suffix)
     have = sorted(p.stem for p in rec.glob("*.npz")
                   if not p.name.startswith("."))
     if ids is not None:
         have = [i for i in have if i in ids]
     d = vjz.gather(have, dataset, want_y=False, rec_dir=rec, sig_dir=sig,
-                   phase=phase)
+                   phase=phase, arc=arc)
     # a record without its aligned SigLIP companion cannot be encoded; drop it
     # here rather than letting it fail deep inside a batch
     return {i: v for i, v in d.items()

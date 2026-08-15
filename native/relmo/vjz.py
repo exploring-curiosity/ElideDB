@@ -71,7 +71,7 @@ def channels(z, phase=None):
 
 
 def gather(ids, dataset="rcasa", want_y=False, rec_dir=None, sig_dir=None,
-           phase=None):
+           phase=None, arc=0.0):
     """{id: dict(a, g, sig)}. `want_y` is accepted and ignored - there are no
     targets any more; the parameter stays so existing callers keep working."""
     rec_dir = rec_dir or REC4
@@ -81,9 +81,22 @@ def gather(ids, dataset="rcasa", want_y=False, rec_dir=None, sig_dir=None,
         f = rec_dir / f"{i}.npz"
         if not f.exists():
             continue
-        a, g = channels(np.load(f), phase)
+        z = np.load(f)
+        a, g = channels(z, phase)
         s = sig_dir / f"{i}.npz"
-        out[i] = dict(a=a, g=g,
-                      sig=np.load(s)["sig"].astype(np.float32)
-                      if s.exists() else None)
+        v = np.load(s)["sig"].astype(np.float32) if s.exists() else None
+        if arc > 0 and "where_map" in z:
+            # re-index by CUMULATIVE CHANGE so a fast and a slow execution of
+            # one event emit the same number of steps. All three channels ride
+            # the same grid or they stop describing the same instants.
+            from relmo.vjmatch import arc_resample
+            gate = z["where_map"].reshape(len(a), -1).sum(1)
+            aux = [g] + ([v] if v is not None and len(v) == len(a) else [])
+            a, rest = arc_resample(a, gate, arc, aux=aux, max_len=256)
+            g = rest[0]
+            if len(rest) > 1:
+                v = rest[1]
+            elif v is not None:
+                v = None
+        out[i] = dict(a=a, g=g, sig=v)
     return out

@@ -34,6 +34,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from relmo.vjeval import group_key, l2, parse  # noqa: E402
 from relmo.vjeval5 import dtw_from_cost  # noqa: E402
+from relmo.vjmatch import dtw as dtw_sym2  # noqa: E402
+from relmo import vjmatch  # noqa: E402
 
 
 PAD_COST = 1e6            # unreachable, so padded columns never win the argmin
@@ -55,21 +57,46 @@ def _pad(seqs):
     return out, m
 
 
+MATCHERS = {
+    # both endpoints anchored, symmetric2 weights, exact 1/(Q+R) normalisation.
+    # THE DEFAULT: the free-end variant scores candidates by how LONG they are
+    # (Spearman +0.685 with candidate length, positive on 65/65 queries).
+    "full": lambda C, L: dtw_sym2(C, False, L),
+    # free start and end on the reference - span localisation, a different
+    # question. Still length-biased (+0.624); use it to FIND a span, not to
+    # decide which recording is the same event.
+    "sub": lambda C, L: dtw_sym2(C, True, L),
+    # the pre-2026-08-15 matcher, kept so old numbers stay reproducible
+    "legacy": lambda C, L: dtw_from_cost(C),
+}
+
+
 def evaluate(desc, query_ids, pool_ids, min_support=5, boot=0, seed=0,
-             qdesc=None):
+             qdesc=None, matcher="full", multirate=False, mr_mode="match"):
     """-> dict(overall, per_group, per_task, chance, n_queries).
 
     desc: {episode_id: (T, D)}. Sequences are matched with subsequence DTW on
     cosine cost, exactly as the shipped read path does.
     """
     qdesc = qdesc if qdesc is not None else desc
-    pool = [i for i in sorted(pool_ids) if i in desc]
-    qry = [i for i in sorted(query_ids) if i in qdesc]
+    # multirate: desc is {rate_suffix: {id: (T,D)}} and a candidate is scored by
+    # the BEST-explaining rate pair. A recording too short to hold one window at
+    # a coarse rate simply does not compete there.
+    base = (desc.get("", next(iter(desc.values()))) if multirate else desc)
+    qbase = (qdesc.get("", next(iter(qdesc.values()))) if multirate else qdesc)
+    pool = [i for i in sorted(pool_ids) if i in base]
+    qry = [i for i in sorted(query_ids) if i in qbase]
     if not pool or not qry:
         raise SystemExit("empty pool or query set")
     meta = {i: parse(i) for i in set(pool) | set(qry)}
     grp = {i: group_key(meta[i]) for i in meta}
-    P, P_ok = _pad([l2(desc[i]) for i in pool])          # (N, Tmax, D)
+    if multirate:
+        packed = vjmatch.pack({r: {i: l2(v[i]) for i in v}
+                               for r, v in desc.items()}, pool)
+    else:
+        P, P_ok = _pad([l2(base[i]) for i in pool])       # (N, Tmax, D)
+        P_len = np.array([len(base[i]) for i in pool])
+    match = MATCHERS[matcher]
     pool_grp = np.array([grp[i] for i in pool])
     pool_ep = np.array([_epid(i) for i in pool])
 
@@ -82,9 +109,15 @@ def evaluate(desc, query_ids, pool_ids, min_support=5, boot=0, seed=0,
         sup = int(sv.sum())
         if sup < min_support:
             continue
-        C = 1.0 - np.einsum("sd,nkd->nsk", l2(qdesc[q]), P[keep])
-        C = np.where(P_ok[keep][:, None, :], C, PAD_COST)
-        s = -dtw_from_cost(C)
+        if multirate:
+            qb = {r: l2(v[q]) for r, v in qdesc.items() if q in v}
+            s = -vjmatch.score_rates(qb, packed, keep,
+                                     free_ends=(matcher == "sub"),
+                                     mode=mr_mode)
+        else:
+            C = 1.0 - np.einsum("sd,nkd->nsk", l2(qbase[q]), P[keep])
+            C = np.where(P_ok[keep][:, None, :], C, PAD_COST)
+            s = -match(C, P_len[keep])
         hit = int(sv[np.argsort(-s)[:sup]].sum())
         per_q.append((meta[q]["task"], grp[q], hit, sup,
                       sup * sup / int(keep.sum())))

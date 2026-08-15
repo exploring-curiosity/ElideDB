@@ -510,3 +510,177 @@ python -m relmo.vjrankeval --tags rk6_ns_s0            # val / test / ood_val
 python -m relmo.vjrec6 --dataset rcasa --fp16 --splits val --offset 1.0 --suffix _off1
 python -m relmo.vjgrid --tags rk6_ns_s0                # grid-alignment control
 ```
+
+---
+
+# v7 — duration invariance: a 7 s and a 20 s instance are the same event
+
+Owner: *"a 7 s and 20s instance of one event is the same and it should be
+graded true."*
+
+## What was actually wrong, found before building anything
+
+The v6 read path was not failing at invariance first. It was ranking by length.
+
+| measurement, v6 frozen, val | value |
+|---|---|
+| Spearman(DTW score, **candidate trace length**) | **+0.710**, positive on **65/65** queries |
+| a **duration-only** ranker — no pixels at all | **0.315** |
+| the v6 frozen **content** matcher | **0.314** |
+| chance | 0.215 |
+
+`vjeval5.dtw_from_cost` has free endpoints and divides by the QUERY length only,
+so a longer candidate offers more sub-spans to find a cheap match in at no extra
+cost. Under v4 every trace was 24 steps and the bias cancelled; stream time
+exposed it. A no-pixel baseline tied the content channel.
+
+Duration mismatch was *also* real — missed true positives sit further apart in
+duration than retrieved ones, median ratio 1.33x vs 1.25x, 8.4% vs 3.2% beyond
+2x, Mann-Whitney p = 2e-28 — but second in line.
+
+## Why precision@support cannot be the target
+
+Duration is a group CUE on rcasa: Close/sliding runs 8-16 steps, Open/hinged
+32-80, Stack/hinged 112-160. Making the system duration-INVARIANT deletes a
+shortcut the aggregate rewards, so the aggregate can fall while the system gets
+more correct. `relmo/vjwarp` is the metric that isn't contaminated: replay a
+recording's own footage at another speed and ask whether it still retrieves the
+ORIGINAL out of 447. The answer is known without any label.
+
+The first run of that test scored 1.000 everywhere and was **wrong** — the warp
+factors (0.5, 2, 3) sat exactly on the rate ladder, so a 2x-slow clip encoded at
+4 fps resamples the identical source frames as the original at 8 fps. Numerical
+identity, not invariance. Every number below uses off-ladder factors
+(1.25, 1.75, 2.5), which no rate pair can hit exactly.
+
+## Three fixes, in the order they were found
+
+**1. Anchored symmetric2 DTW** (`relmo/vjmatch`). Step weights 2/1/1 make every
+complete path accumulate exactly Q+R, so dividing by Q+R is an exact
+normalisation with no `pen` to tune, and anchoring both ends removes the
+cherry-picked sub-span. Verified against brute force on 60 random cases. Free —
+no re-ingest.
+
+**2. Arc-length reparameterisation** (`relmo/vjmatch.arc_resample`). Re-index the
+trace by cumulative layer-6 gate energy instead of by time: emit a descriptor
+every fixed increment of *how much happened*. A fast and a slow execution then
+emit the same number of steps, idle stretches compress, and order is preserved —
+which matters, since `vjtime` had already established that surviving a warp by
+discarding order solves nothing. `ds` was selected on TRAIN only (0.8/1.0/1.3/
+1.7/2.2x of the train median gave 0.388/0.401/0.392/0.382/0.361 vs 0.349 for
+none). Free — no re-ingest.
+
+**3. Multi-rate encoding.** Rates 8 / 4 / 8-3 fps, windows 4 / 8 / 12 s, each
+tiling. A recording only exists at a rate whose window fits inside it (447 /
+389 / 205 for rcasa), which is not a gap: coarse rates exist exactly for the
+long recordings a short query needs to match. Candidates are scored under the
+best rate pair. Costs an ingest.
+
+Multi-rate is not cosmetic. Arc-length alone cannot fix this because the
+descriptor IS a rate: at 8 fps a 2.5x-slow event moves 40% as far per step, so
+V-JEPA's one-step forecast is a different quantity, not the same one sampled
+differently.
+
+## Duration invariance — the primary metric
+
+Warp factors 1.25 / 1.75 / 2.5x, query = the recording's own footage replayed,
+pool = all 447, correct answer = itself. Chance MRR 0.0149. Factor 1.0 is the
+harness control and is rank-1 1.000 in every arm.
+
+| arm | rank-1 | top-5 | MRR | rank-1 at 1.25 / 1.75 / 2.5x |
+|---|---|---|---|---|
+| frozen, time-indexed | 0.083 | 0.229 | 0.151 | 0.250 / 0.000 / 0.000 |
+| frozen, + arc | 0.292 | 0.500 | 0.384 | 0.750 / 0.125 / 0.000 |
+| frozen, + multi-rate | 0.521 | 0.667 | 0.596 | 0.562 / 0.625 / 0.375 |
+| frozen, + multi-rate + arc | 0.688 | 0.854 | 0.759 | 0.688 / 0.688 / 0.688 |
+| **trained, + multi-rate + arc** | **0.750** | **0.938** | **0.838** | 0.812 / 0.750 / 0.688 |
+
+**MRR 0.151 -> 0.838, and flat in the warp factor** — the degradation stops
+growing with how much the duration changed, which is what invariance means.
+Selecting the length-matched rate pair instead of the minimum was tried and
+lost on both metrics (MRR 0.737, aggregate 0.371 vs 0.389).
+
+## Aggregate precision@support — the contaminated metric, reported anyway
+
+FROZEN:
+
+| config | val | test | ood_val |
+|---|---|---|---|
+| v6 as shipped (legacy matcher, time) | 0.314 | — | 0.542 |
+| + anchored symmetric2 | 0.354 | — | 0.523 |
+| + arc-length | **0.414** | **0.419** | **0.554** |
+| + multi-rate | 0.391 | 0.388 | 0.536 |
+| v4 clip-time reference | 0.463 | — | 0.518 |
+
+TRAINED, 3 seeds:
+
+| config | val | test | ood_val |
+|---|---|---|---|
+| v6 time-indexed | 0.793 ± 0.092 | 0.763 ± 0.041 | 0.502 ± 0.067 |
+| **v6 + arc, own scorer** | 0.758 ± 0.029 | **0.787 ± 0.019** | **0.651 ± 0.022** |
+| v6 + arc + multi-rate DTW | 0.670 ± 0.066 | 0.662 ± 0.005 | 0.533 ± 0.061 |
+| v4 clip-time reference | 0.924 ± 0.014 | 0.894 ± 0.018 | 0.730 ± 0.026 |
+
+Training on arc-resampled traces moved test 0.763 -> 0.787 and ood_val
+0.502 -> 0.651, and cut seed variance roughly in half on test and by two thirds
+on ood. The gap to v4 clip-time narrowed from 0.13 / 0.23 to 0.11 / 0.08.
+
+## Where the trade actually lands
+
+Recall of true positives, split by how far apart the two durations are
+(val+test queries, k = support):
+
+| duration ratio | n pairs | arc only | + multi-rate |
+|---|---|---|---|
+| < 1.25x | 1180 | 0.704 | 0.571 |
+| 1.25 - 1.75x | 1870 | 0.433 | 0.394 |
+| **> 1.75x** | 1132 | **0.091** | **0.192** |
+| all | 4182 | 0.417 | 0.389 |
+
+Multi-rate **doubles** recall on the far-duration pairs — the case the owner
+named — and pays for it on the near-duration pairs, where matching lengths were
+doing work that content now has to do alone. 0.091 is a system that does not
+answer the question at all; 0.192 is one that sometimes does. That is the trade,
+and it is a monotone one: pushing invariance harder (length-matched rate
+selection) took >1.75x to 0.231 and the aggregate down to 0.371.
+
+## Cost
+
+| stage | rate |
+|---|---|
+| 8 fps records (base) | 3.58x real-time |
+| + 4 fps records | 9.5 min for 389 recordings |
+| + 8/3 fps records | 5.3 min for 205 recordings |
+| all three rates, one stream, fp16, incl. decode | **~1.8x real-time** |
+
+Windows per second of video go 0.5 -> 0.917, so multi-rate is 1.83x the base
+ingest. Still faster than real time on one stream.
+
+## Open
+
+1. **The two matchers disagree about which is better.** The trained model's own
+   pooled-cosine scorer beats anchored DTW on z (test 0.787 vs 0.662), but only
+   DTW currently supports multi-rate. A multi-rate-aware learned scorer is not
+   built, and it is the obvious next gain.
+2. **Near-duration recall dropped 0.133** under multi-rate. Some of that is the
+   deleted shortcut and some is real loss from comparing at a coarser rate than
+   necessary; those have not been separated.
+3. **The rate ladder is hand-set** at 8 / 4 / 8-3. It covers ratios up to 3x.
+   Beyond that there is nothing, and the warp curve is flat only inside the
+   ladder's span.
+4. **`ds` is one number for the whole corpus.** A per-recording arc increment
+   would be adaptive and is untested.
+
+## Reproduce
+
+```bash
+python -m relmo.vjrec6 --dataset rcasa --fp16 --stream-fps 4 --hop 4 --suffix _f4
+python -m relmo.vjsig6 --dataset rcasa --suffix _f4
+python -m relmo.vjrec6 --dataset rcasa --fp16 --stream-fps 2.667 --hop 6 --suffix _f3
+python -m relmo.vjsig6 --dataset rcasa --suffix _f3
+python -m relmo.vjwarp --ingest --episodes 16 --max-steps 40   # off-ladder warps
+python -m relmo.vjwarp --arms time,arc,multi,multi_arc         # the primary metric
+python -m relmo.vjwarp --arms multi_arc --tag rk7_arc_s2       # trained arm
+python -m relmo.vjrank --no-scorer --tag rk7_arc_s0            # trains on arc traces
+python -m relmo.vjrankeval --tags rk7_arc_s0,rk7_arc_s1,rk7_arc_s2
+```
