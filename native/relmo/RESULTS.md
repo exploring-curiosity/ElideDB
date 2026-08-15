@@ -1408,3 +1408,70 @@ arbitrary language. The honest split:
 * **needs more than this data**: a general text encoder. 250 templated words
   cannot teach compositional language, and adding more RoboCasa will add
   episodes without adding linguistic variety.
+
+---
+
+# Making it shippable: read and write against a production robot
+
+Owner: *"a robot is querying its memory realtime but has to wait 4.5 sec before
+getting the memory... I cant ship those on production where there are multiple
+camera."*
+
+## The 4.5 s was a benchmark artefact, not the read cost
+
+Of that 4742 ms, **3989 ms was encoding the query clip**. A robot querying its
+own memory is ALREADY ingesting its current stream - the query is "what I am
+seeing now", which the write path has encoded anyway. That encode is not a read
+cost in production; it is the write cost, already paid. The real read cost is
+search.
+
+Prune-then-rank: mean-pool each z sequence to one 128-d vector, take an exact
+cosine top-K (a single matmul), run DTW on the survivors only.
+
+| method | ms/query | prec@support | recall vs exact |
+|---|---|---|---|
+| exact DTW over all 474 | 368.8 | 0.871 | 1.000 |
+| **prefilter K=128 then DTW** | **116.9** | **0.873** | **0.997** |
+| prefilter K=64 then DTW | 75.4 | 0.779 | 0.883 |
+| prefilter K=32 then DTW | 58.1 | 0.500 | 0.580 |
+| prefilter alone | 0.03 | - | - |
+
+K=128 is free: precision is unchanged (0.873 against 0.871) and 99.7% of the
+exact top-k survives. And the structure matters more than the 3.2x - **DTW now
+runs on a fixed 128 candidates regardless of corpus size**, so search stops
+scaling. Only the prefilter matmul grows, at ~0.06 ms per 1000 recordings:
+
+    474 recordings      0.03 ms prefilter + 117 ms DTW = 117 ms
+    100,000 recordings  ~6 ms   prefilter + 117 ms DTW = ~123 ms
+
+**Read is ~117 ms, near-constant in corpus size.** The residual 117 ms is a
+Python DP loop over (query x reference) steps - an implementation artefact, not
+an algorithmic floor.
+
+## Write: 3.9x measured, and where the rest has to come from
+
+| configuration | compute-min / video-hour | x real-time |
+|---|---|---|
+| **as shipped today** | **26.0** | **2.3x** |
+| merge the duplicate encoder pass | 14.8 | 4.1x |
+| + 192px instead of 256px | 6.8 | 8.8x |
+| + 64-frame window (6 s hop) | 6.7 | 9.0x |
+
+**3.9x is available from two changes**, neither of which touches the model: the
+encoder currently runs twice per window (`vjrec6` for pooled channels, `vjrec7`
+for tokens), and the input resolution is 256px where 192px costs 2.2x less.
+That is 9 concurrent camera streams per machine instead of 2.
+
+Batching was measured and gives NOTHING - 0.95-1.00x from batch 1 to 8 at every
+configuration, because a single 4096-8192 token forward already saturates the
+GPU. Worth recording so nobody tries it again.
+
+The remaining gap to 10x has to come from the backbone. V-JEPA 2 ViT-L is 92% of
+write time; nothing else in the pipeline is worth optimising. A distilled
+student at a quarter of the compute would reach ~1.7 compute-min per video-hour
+(~35x real-time), which is the standing "distil heavyweight teachers" rule
+applied to the one stage that actually costs anything.
+
+**Caveat that must not be lost:** the 192px number is a SPEED measurement. The
+accuracy cost of 256 -> 192 has not been measured, and it must be before the
+change ships.

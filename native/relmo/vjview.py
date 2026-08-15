@@ -137,8 +137,13 @@ def main():
 
     vd = R.BASE / "viewer"
     vd.mkdir(parents=True, exist_ok=True)
+    # inline the data. A sibling results.json + fetch() is blocked by the
+    # file:// origin policy, which is why the page rendered its header and an
+    # empty #app - the script threw before it ever wrote any content. Inlining
+    # makes the page work by double-clicking it, with no server.
+    (vd / "index.html").write_text(
+        HTML.replace("/*__RESULTS__*/[]", json.dumps(out)))
     (vd / "results.json").write_text(json.dumps(out))
-    (vd / "index.html").write_text(HTML)
     print(f"wrote {len(out)} queries -> {vd/'index.html'}")
     print(f"{'query':22s} {'support':>8s} {'prec@sup':>9s} {'NDCG@sup':>9s} "
           f"{'cross rec':>10s} {'1st cross-obj':>14s}")
@@ -151,7 +156,10 @@ def main():
           f"protocol; test-split numbers are in RESULTS.md)")
 
 
-HTML = r"""<meta charset="utf-8"><title>ElideDB - cross-object retrieval</title>
+HTML = r"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ElideDB - when did something like this happen?</title>
 <style>
 :root{--bg:#fff;--fg:#111;--dim:#666;--line:#e3e3e3;--ok:#1a7f37;--no:#c0392b;--same:#7a7a7a;--card:#fafafa}
 @media (prefers-color-scheme:dark){:root{--bg:#111;--fg:#eee;--dim:#999;--line:#2c2c2c;--ok:#3fb950;--no:#f85149;--same:#8b8b8b;--card:#1a1a1a}}
@@ -191,8 +199,10 @@ Green additionally means a <em>different object</em>, the harder case.
 The ranking never sees these labels. Each result also shows its duration and its duration
 <em>ratio</em> to the query &mdash; the ground truth decays relevance as that ratio grows, because a
 much slower replay is a different moment, not a near miss.</p>
-<div id="app"></div>
+</head><body>
+<div id="app">loading&hellip;</div>
 <script>
+const DATA = /*__RESULTS__*/[];
 function spark(t){const w=138,h=22,n=t.length;
  const d=t.map((v,i)=>`${i?'L':'M'}${(i/(n-1)*w).toFixed(1)},${(h-v*(h-2)-1).toFixed(1)}`).join(' ');
  return `<svg width="${w}" height="${h}"><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.4" opacity=".7"/></svg>`}
@@ -204,14 +214,14 @@ function card(c){
  ${c.rank?`<span class="rk">#${c.rank}</span>`:''}
  <div class="n"><span class="lab">${c.verb}</span><span class="dim">${c.obj}</span>
  <span class="dim"> &middot; ${c.dur}s${c.ratio?` &middot; ${c.ratio}\u00d7`:''}</span></div>${spark(c.trace)}</div>`}
-fetch('results.json').then(r=>r.json()).then(qs=>{
+(function(qs){
  document.getElementById('app').innerHTML=qs.map(q=>`<div class="q">
  <div class="qh">${card(q.query)}
  <div><div class="lab" style="font-size:17px">${q.verb} ${q.obj}</div>
  <div class="dim">query clip &middot; ranked over all ${q.pool} other clips</div>
  <div class="stat">${q.n_cross} clips in the corpus are <b>${q.verb}</b> on a different object.</div>
- <div class="stat">precision at k=support(${q.support}):
- <b>${q.prec}</b> &middot; chance 0.222 &mdash; correct = same event, any object</div>
+ <div class="stat">prec@support(${q.support}) <b>${q.prec}</b> &middot;
+ NDCG@support <b>${q.ndcg}</b> &middot; random floor 0.217 / 0.150</div>
  <div class="stat">of those, cross-object recall <b>${q.recall}</b> &middot;
  first different object at rank <b>${q.first??'&mdash;'}</b></div></div></div>
  <div class="arm">top of the ranking &mdash; unfiltered</div>
@@ -221,8 +231,8 @@ fetch('results.json').then(r=>r.json()).then(qs=>{
  const io=new IntersectionObserver((es)=>{es.forEach(e=>{const v=e.target;
    if(e.isIntersecting){if(!v.src){v.src=v.dataset.src}v.play().catch(()=>{})}
    else{v.pause()}})},{rootMargin:'240px'});
- document.querySelectorAll('video').forEach(v=>io.observe(v))})
-</script>"""
+ document.querySelectorAll('video').forEach(v=>io.observe(v))})(DATA);
+</script></body></html>"""
 
 
 if __name__ == "__main__":
