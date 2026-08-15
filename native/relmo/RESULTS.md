@@ -942,3 +942,63 @@ can be believed.
     wAUC           the whole ranking, position-uniform   floor 0.502
 
 `vjzeval.evaluate` returns all three and `report()` prints them.
+
+---
+
+# Why clip-time beats stream-time: four hypotheses, one survivor
+
+All measured frozen, whole corpus, anchored symmetric2 matcher, updated GT.
+
+| hypothesis | test | verdict |
+|---|---|---|
+| per-step SNR / sampling rate | re-score the same 229 recordings at 0.25 / 0.50 / 0.75 s steps | **refuted** - prec 0.527 / 0.520 / 0.491, coarsening HURTS |
+| extent normalisation (event phase) | resample stream traces to a fixed 12 / 24 / 48 steps | **refuted** - prec 0.375 -> 0.318 / 0.338 / 0.368, all worse |
+| differencing baseline (derivative vs displacement) | integrate a_t over k steps to recover v4's anchored form | **refuted** - 0.375 -> 0.395 peak at k=6, collapse to 0.323 at k=8; wAUC falls monotonically 0.791 -> 0.632 |
+| encoder receptive field | v6 at 64 frames / 8 s window = v4's structure exactly | **largely refuted** - prec +0.035, NDCG@sup -0.019, wAUC -0.013 |
+
+Receptive-field arm, on the 416 recordings every arm covers:
+
+| arm | steps | prec@sup | NDCG@sup | wAUC |
+|---|---|---|---|---|
+| v4 clip-time (whole episode) | 24 | **0.546** | **0.620** | **0.800** |
+| v6 32f / 4 s window | 40 | 0.386 | 0.523 | 0.785 |
+| **v6 32f / 4 s + arc** | 44 | **0.440** | **0.561** | **0.797** |
+| v6 64f / 8 s window | 24 | 0.421 | 0.504 | 0.772 |
+| v6 64f / 8 s + arc | 31 | 0.433 | 0.531 | 0.790 |
+
+## The survivor: the PREDICTION HORIZON must scale with the event
+
+v4 spreads 64 frames over the whole episode, so its tubelet - and therefore its
+prediction horizon - is a FRACTION of the event, not a fixed number of seconds:
+
+    11 s episode -> 5.8 fps -> tubelet 0.34 s -> context 2.8 s, horizon 0.3-1.4 s
+    30 s episode -> 2.1 fps -> tubelet 0.94 s -> context 7.5 s, horizon 0.9-3.8 s
+
+v6 asks "what happens in the next 0.25 s" of every event regardless of its
+timescale. v4 asks "what happens next, at this event's own tempo". That is a
+different and better-posed question, and it is the one thing none of the four
+tests above changes: resampling the TRACE cannot alter a horizon already baked
+into the descriptor, and a longer fixed window keeps the horizon fixed.
+
+The supporting evidence is already in the table. Arc-length reparameterisation -
+re-indexing by cumulative change instead of by time - is the post-hoc, trace-
+level approximation of exactly this, and it is the single largest v6 gain
+anywhere in this file: +0.054 prec, +0.038 NDCG@support, +0.012 wAUC. It closes
+roughly a third of the gap using only the descriptors that already exist.
+
+## What this means for continuous video
+
+Clip-time is undeployable on a stream: it needs the episode extent. But the
+survivor hypothesis says the extent is not what matters - the TEMPO is, and
+tempo is estimable from content without any boundary:
+
+    adapt the encoder's frame stride per window so each window spans a roughly
+    constant amount of CHANGE rather than a constant amount of TIME
+
+That is arc-length applied at the encoder INPUT rather than to the output trace.
+It is boundary-free, label-free, and streaming-compatible. Untested.
+
+The alternatives, if that fails: multi-span hypothesis indexing (emit traces
+over several candidate extents at each position, index all) or label-free
+change-point segmentation. Both re-introduce an extent decision that the tempo
+route avoids.
