@@ -76,6 +76,20 @@ def build(task, split=None, kind=None, cams=CAMS, limit=0, name=None):
                         sorted((root / "meta" / "episodes").glob("*/*.parquet"))])
         rows = df.to_dict("records")
 
+    def scene_of(idx):
+        """RoboCasa ships layout_id / style_id per episode in extras/. They are
+        the same fields the replayed rcasa manifest carried as `scene`, and the
+        graded relevance has a scene term, so leaving them out silently made
+        every pair look same-kitchen."""
+        f = root / "extras" / f"episode_{idx:06d}" / "ep_meta.json"
+        if not f.exists():
+            return None, None
+        try:
+            m = json.loads(f.read_text())
+            return m.get("layout_id"), m.get("style_id")
+        except Exception:                                      # noqa: BLE001
+            return None, None
+
     def find_mp4(cam, idx):
         for ch in sorted((root / "videos").glob("chunk-*")):
             f = ch / f"observation.images.{cam}" / f"episode_{idx:06d}.mp4"
@@ -89,11 +103,14 @@ def build(task, split=None, kind=None, cams=CAMS, limit=0, name=None):
         t = r.get("tasks") or r.get("task")
         instr = str(t[0]) if hasattr(t, "__len__") and not isinstance(t, str) \
             else str(t)
+        lay, sty = scene_of(idx)
         for cam in cams:
             mp4 = find_mp4(cam, idx)
             if mp4 is None:
                 continue
             episodes.append(dict(
+                layout_id=lay, style_id=sty,
+                scene=(f"{lay}_{sty}" if lay is not None else "?"),
                 id=f"{task}_episode_{idx:06d}__{cam}", task=task, camera=cam,
                 rollout=f"{task}#{idx:06d}", instruction=instr,
                 length=int(r.get("length", 0)),
