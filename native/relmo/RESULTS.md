@@ -684,3 +684,94 @@ python -m relmo.vjwarp --arms multi_arc --tag rk7_arc_s2       # trained arm
 python -m relmo.vjrank --no-scorer --tag rk7_arc_s0            # trains on arc traces
 python -m relmo.vjrankeval --tags rk7_arc_s0,rk7_arc_s1,rk7_arc_s2
 ```
+
+---
+
+# v8 — duration is content: marginal invariance, and the GT that says so
+
+Owner, 2026-08-15: *"dont make the warps too strong. I want 7s and 10s episode
+to be linked but not ranked 1. time invariance is a moment. for example a
+speeding car is not the same as a driving car. make the moment invariances
+marginal. a 7s and 10s can be the same but a 7s and 20 are different."*
+
+v7 optimised for total duration invariance. That was wrong. Under this
+definition a duration ratio is not a nuisance — past a point it is a DIFFERENT
+EVENT, and a system that retrieves a 2.5x-slower replay at rank 1 has failed.
+
+## The GT
+
+The cut is not chosen by taste. It is the geometric mean of the owner's own two
+examples, 10/7 = 1.429 (same) and 20/7 = 2.857 (different):
+
+    R_CUT = sqrt(1.429 * 2.857) = 2.02  ->  2.0
+
+    weight(ratio) = max(0.25, 1 - log(ratio)/log(2.0))   for ratio < 2.0
+                  = 0                                     for ratio >= 2.0
+
+    1.00x -> 1.000   identical duration
+    1.43x -> 0.484   7 v 10 s: linked, and ranked BELOW a duration match
+    1.80x -> 0.250   still the same moment, at the floor
+    2.86x -> 0.000   7 v 20 s: a different moment
+
+It multiplies the WHOLE graded relevance, not just the event floor — past the
+cut, nothing about a shared object or kitchen brings it back. The binary
+positive class used by precision@support is gated the same way: same event AND
+same moment. Duration comes from the manifest, never from the trace, so the GT
+cannot move when the encoder does.
+
+On rcasa this is a light touch: 4056 of 4232 positives survive (95.8%), 176 are
+demoted. The corpus rarely stretches an event past 2x — which is why this had to
+be specified rather than discovered.
+
+## The warp metric becomes two-sided
+
+Same warped clips, reinterpreted — no re-ingest. 1.25x and 1.75x are INSIDE the
+band and must still retrieve the source; 2.5x is BEYOND it and must NOT.
+
+    MARGIN = in-band rank-1  -  beyond-band rank-1
+
+| arm | in-band rank-1 | beyond rank-1 | **margin** |
+|---|---|---|---|
+| frozen, time-indexed | 0.125 | 0.000 | +0.125 |
+| frozen, **+ arc-length** | **0.438** | **0.000** | **+0.438** |
+| frozen, + multi-rate + arc | 0.688 | 0.688 | **+0.000** |
+
+**Multi-rate scores zero.** It retrieves a 2.5x replay exactly as readily as a
+1.25x one — perfectly invariant, and therefore unable to tell a moment from a
+different moment. v7 shipped it as the headline; under the corrected definition
+it is the worst arm, and the owner's instinct that the warps were "too strong"
+is the whole finding. **Arc-length alone is the right amount of invariance**: it
+recovers in-band retrieval 0.125 -> 0.438 while still rejecting every
+beyond-band replay.
+
+## Frozen encoder, time-indexed, under the new GT
+
+v6 records, no arc, no multi-rate. Anchored symmetric2 matcher.
+
+| split | frozen content | duration-only control | chance |
+|---|---|---|---|
+| val | **0.354** [0.31, 0.39] | 0.338 | 0.212 |
+| test PRIMARY | **0.388** [0.36, 0.42] | **0.396** | 0.208 |
+| test DEPLOYMENT | **0.403** [0.38, 0.43] | 0.395 | 0.208 |
+| ood_val | **0.581** [0.48, 0.68] | 0.500 | 0.177 |
+
+With the pre-v7 legacy matcher, val is 0.297.
+
+**On test, the frozen time-indexed encoder does not beat a ranker that looks at
+no pixels at all** — 0.388 against 0.396 for duration-only. Gating positives on
+duration necessarily strengthens that control, so it has to be quoted next to
+every number or the content figure cannot be read. Only `ood_val` shows a clear
+content margin (0.581 vs 0.500), and that is the split where durations are long
+and varied enough that length alone stops being informative.
+
+Per-group, val: PickPlace 0.465, Open/hinged 0.327, Close/sliding 0.275,
+Open/sliding 0.235, Close/hinged 0.195 (chance 0.095-0.270).
+
+## Open
+
+1. **Frozen + time-indexed is at the duration-only baseline on test.** That is
+   the honest state of the frozen encoder under this GT.
+2. **Every v7 number needs re-reading**, since v7 selected arms on total
+   invariance. arc-length survives the correction; multi-rate does not.
+3. **The trained arms have not been re-scored under the new GT or the two-sided
+   warp metric.**

@@ -60,6 +60,10 @@ OUTW = R.BASE / "vjwarp"
 # scores rank-1 1.000 by numerical identity rather than by invariance. That is
 # what the first run measured. These factors fall between rungs, so a rate pair
 # can only ever get close, never exact.
+# 1.0 is the harness control. 1.25 and 1.75 sit INSIDE vjrel.R_CUT = 2.0 and
+# must still retrieve the source - same moment. 2.5 sits BEYOND it and must NOT:
+# under the owner's definition a 2.5x-slower replay is a different moment, so
+# rank-1 there is a FAILURE, not a success. The metric is two-sided.
 FACTORS = (1.0, 1.25, 1.75, 2.5)
 # (stream_fps, hop_s, suffix). Window spans 32/fps seconds, so the coarse rates
 # only exist for recordings long enough to hold one window - which is exactly
@@ -283,15 +287,32 @@ def evaluate(args):
             print(f"  {fac:7.1f} {len(r):4d} {float((r==1).mean()):7.3f} "
                   f"{float((r<=5).mean()):7.3f} {float((1/r).mean()):7.3f} "
                   f"{int(np.median(r)):9d}")
-        allr = np.concatenate([np.array(v, float) for k, v in rows.items()
-                               if k != 1.0]) if len(rows) > 1 else np.array([])
-        if len(allr):
-            print(f"  {'WARPED':>7s} {len(allr):4d} {float((allr==1).mean()):7.3f}"
-                  f" {float((allr<=5).mean()):7.3f} {float((1/allr).mean()):7.3f}"
-                  f"   <- excludes the 1.0 control")
+        from relmo.vjrel import R_CUT
+        inb = [np.array(v, float) for k, v in rows.items()
+               if k != 1.0 and max(k, 1 / k) < R_CUT]
+        out = [np.array(v, float) for k, v in rows.items()
+               if max(k, 1 / k) >= R_CUT]
+        if inb:
+            a_ = np.concatenate(inb)
+            print(f"  {'IN-BAND':>7s} {len(a_):4d} {float((a_==1).mean()):7.3f} "
+                  f"{float((a_<=5).mean()):7.3f} {float((1/a_).mean()):7.3f}"
+                  f"   <- same moment, WANT rank 1")
+        if out:
+            b_ = np.concatenate(out)
+            print(f"  {'BEYOND':>7s} {len(b_):4d} {float((b_==1).mean()):7.3f} "
+                  f"{float((b_<=5).mean()):7.3f} {float((1/b_).mean()):7.3f}"
+                  f"   <- different moment, want NOT rank 1 "
+                  f"(reject {float((b_>1).mean()):.3f})")
+        if inb and out:
+            a_, b_ = np.concatenate(inb), np.concatenate(out)
+            sep = float((a_ == 1).mean()) - float((b_ == 1).mean())
+            print(f"  {'MARGIN':>7s}      {sep:+7.3f}"
+                  f"                       <- in-band rank-1 minus beyond rank-1;"
+                  f" this is the number")
             R.log("vjwarp", arm=arm, ds=round(ds, 3),
-                  mrr_warped=round(float((1 / allr).mean()), 4),
-                  rank1_warped=round(float((allr == 1).mean()), 4))
+                  inband_rank1=round(float((a_ == 1).mean()), 4),
+                  beyond_rank1=round(float((b_ == 1).mean()), 4),
+                  margin=round(sep, 4))
 
 
 def main():

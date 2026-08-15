@@ -56,6 +56,8 @@ def grade(S, q_ids, p_ids, meta, min_support=5):
     """k=support precision under group_key + NDCG under the graded relevance."""
     gq = np.array([meta[i]["event"] for i in q_ids])
     gp = np.array([meta[i]["event"] for i in p_ids])
+    dq = np.array([meta[i].get("dur", 0.0) for i in q_ids])
+    dp = np.array([meta[i].get("dur", 0.0) for i in p_ids])
     rq = np.array([meta[i]["rollout"] for i in q_ids])
     rp = np.array([meta[i]["rollout"] for i in p_ids])
     hit = sup = 0.0
@@ -70,7 +72,9 @@ def grade(S, q_ids, p_ids, meta, min_support=5):
                 np.array([pos[j] for j in p_ids])[None, :]]
     for a in range(len(q_ids)):
         keep = rp != rq[a]
-        sv = gp[keep] == gq[a]
+        ratio = (np.maximum(dp[keep], dq[a])
+                 / np.maximum(np.minimum(dp[keep], dq[a]), 1e-9))
+        sv = (gp[keep] == gq[a]) & vjrel.same_moment(ratio)
         k = int(sv.sum())
         if k < min_support:
             continue

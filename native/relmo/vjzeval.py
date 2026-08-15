@@ -36,6 +36,7 @@ from relmo.vjeval import group_key, l2, parse  # noqa: E402
 from relmo.vjeval5 import dtw_from_cost  # noqa: E402
 from relmo.vjmatch import dtw as dtw_sym2  # noqa: E402
 from relmo import vjmatch  # noqa: E402
+from relmo import vjrel  # noqa: E402
 
 
 PAD_COST = 1e6            # unreachable, so padded columns never win the argmin
@@ -90,6 +91,12 @@ def evaluate(desc, query_ids, pool_ids, min_support=5, boot=0, seed=0,
         raise SystemExit("empty pool or query set")
     meta = {i: parse(i) for i in set(pool) | set(qry)}
     grp = {i: group_key(meta[i]) for i in meta}
+    # A positive is now the same event AND the same MOMENT. Owner, 2026-08-15:
+    # "a 7s and 10s can be the same but a 7s and 20 are different." Duration
+    # comes from the manifest, never from the trace, so the GT cannot shift
+    # when the encoder does.
+    dur = {i: vjrel.all_meta().get(i, {}).get("dur", 0.0) for i in meta}
+    pool_dur = np.array([dur[i] for i in pool])
     if multirate:
         packed = vjmatch.pack({r: {i: l2(v[i]) for i in v}
                                for r, v in desc.items()}, pool)
@@ -105,7 +112,9 @@ def evaluate(desc, query_ids, pool_ids, min_support=5, boot=0, seed=0,
         keep = pool_ep != _epid(q)
         if keep.sum() < min_support:
             continue
-        sv = pool_grp[keep] == grp[q]
+        ratio = (np.maximum(pool_dur[keep], dur[q])
+                 / np.maximum(np.minimum(pool_dur[keep], dur[q]), 1e-9))
+        sv = (pool_grp[keep] == grp[q]) & vjrel.same_moment(ratio)
         sup = int(sv.sum())
         if sup < min_support:
             continue
