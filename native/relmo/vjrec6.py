@@ -121,6 +121,47 @@ def geometry(win_frames=WIN_FRAMES, stream_fps=STREAM_FPS, hop_s=HOP_S,
     return dt, n_t, desc, int(hop_steps)
 
 
+def frame_change(frames, grid=48):
+    """Per-frame change magnitude from PIXELS ONLY. No model, no labels, and
+    causal enough to run on a live stream. Downsampled hard because only the
+    coarse rate of change matters, not its content."""
+    st = max(1, frames.shape[1] // grid)
+    F = frames[:, ::st, ::st].astype(np.float32).mean(-1)
+    d = np.abs(np.diff(F.reshape(len(F), -1), axis=0)).mean(1)
+    return np.concatenate([[0.0], d])
+
+
+def windows_tempo(frames, ds_win, win_frames=WIN_FRAMES, ctx=CTX,
+                  n_t=None):
+    """TEMPO-ADAPTIVE grid: each window spans a constant amount of CHANGE
+    rather than a constant amount of TIME.
+
+    This is the surviving hypothesis from the clip-vs-stream mechanism hunt.
+    v4 spread a fixed frame budget over the whole episode, so its prediction
+    horizon was a FRACTION of the event and scaled with the event's tempo; a
+    fixed-rate stream asks "what happens in the next 0.25 s" of every event
+    regardless. Arc-length reparameterisation is the post-hoc approximation of
+    tempo adaptation and is the largest single frozen gain measured; this
+    applies it at the ENCODER INPUT instead, where it can also change what the
+    predictor is asked to forecast.
+
+    Unlike v4 it needs no episode extent - the change curve is available from
+    the pixels of a running stream - so it is deployable on continuous video.
+    """
+    n_t = n_t or win_frames // TUBELET
+    desc = n_t - ctx
+    hop_ds = ds_win * desc / n_t        # descriptors cover the last `desc` steps
+    c = np.cumsum(frame_change(frames))
+    total = float(c[-1])
+    out, u = [], 0.0
+    while u + ds_win <= total:
+        tgt = u + np.linspace(0.0, ds_win, win_frames)
+        idx = np.interp(tgt, c, np.arange(len(c))).round().astype(int)
+        out.append((u, np.clip(idx, 0, len(frames) - 1)))
+        u += hop_ds
+    return out
+
+
 def windows(n_frames, src_fps, win_frames=WIN_FRAMES, stream_fps=STREAM_FPS,
             hop_s=HOP_S, offset_s=0.0):
     """-> [(t0_s, frame_indices)] at a FIXED sample rate.
@@ -179,12 +220,16 @@ def encode_window(model, torch, dev, clip, cal, layer, n_t, dt_torch):
 
 def record_stream(model, torch, dev, frames, src_fps, cal, layer, dt_torch,
                   win_frames=WIN_FRAMES, stream_fps=STREAM_FPS, hop_s=HOP_S,
-                  offset_s=0.0):
-    """A whole recording -> one continuous, time-indexed trace."""
+                  offset_s=0.0, tempo_ds=0.0):
+    """A whole recording -> one continuous trace, indexed by TIME or by CHANGE."""
     dt, n_t, desc, hop_steps = geometry(win_frames, stream_fps, hop_s)
-    wins = windows(len(frames), src_fps, win_frames, stream_fps, hop_s,
-                   offset_s)
-    off_steps = int(round(offset_s / dt))
+    if tempo_ds > 0:
+        wins = windows_tempo(frames, tempo_ds, win_frames, CTX, n_t)
+        off_steps = 0
+    else:
+        wins = windows(len(frames), src_fps, win_frames, stream_fps, hop_s,
+                       offset_s)
+        off_steps = int(round(offset_s / dt))
     if not wins:
         return None
     A, B, G, step, frame0 = [], [], [], [], []
@@ -239,6 +284,9 @@ def main():
     ap.add_argument("--hop", type=float, default=HOP_S)
     ap.add_argument("--calib", default="rcasa")
     ap.add_argument("--fp16", action="store_true")
+    ap.add_argument("--tempo-ds", type=float, default=0.0,
+                    help="tempo-adaptive grid: change-units per window. >0 "
+                         "replaces the fixed-rate time grid entirely.")
     ap.add_argument("--offset", type=float, default=0.0,
                     help="shift the window GRID by this many seconds - the "
                          "grid-alignment leakage test")
@@ -291,7 +339,7 @@ def main():
             F = read_frames(mp4, w_, h_)
             rec = record_stream(model, torch, dev, F, src_fps, cal, a.layer,
                                 dt_torch, a.win_frames, a.stream_fps, a.hop,
-                                a.offset)
+                                a.offset, a.tempo_ds)
         except Exception as e:                                # noqa: BLE001
             tqdm.write(f"  {eid}: {type(e).__name__}: {e}")
             failed += 1

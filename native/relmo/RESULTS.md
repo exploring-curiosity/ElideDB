@@ -1209,3 +1209,47 @@ was WRONG and is withdrawn. Decomposing b = b_par + b_perp against a, the error
 is a - b = (a - b_par) - b_perp, so b_perp is literally a component of the
 error. Feeding it in is matching on the model's surprise, which is the barred
 channel arriving through the back door.
+
+## Tempo-adaptive encoder stride — refuted, and the reason is informative
+
+The last surviving hypothesis. Each window is placed so it spans a constant
+amount of CHANGE rather than a constant amount of TIME: a per-frame change
+signal is taken from the pixels alone (downsampled frame differencing, no model,
+no labels, streaming-compatible), integrated, and window starts are placed at
+equal increments of that integral. `ds_win` was calibrated on TRAIN as the
+change accumulated in 4 s at the median tempo. Change-per-second varies 3.5x
+across the corpus (p90/p10), so the grid genuinely moves.
+
+Held out, TEST queries, train-disjoint pool, the 419 recordings every arm covers:
+
+| grid | steps | prec@sup | NDCG@sup | wAUC |
+|---|---|---|---|---|
+| **TIME grid + arc-length** | 44 | **0.552** | **0.667** | 0.827 |
+| TIME grid, no arc | 40 | 0.522 | 0.666 | **0.828** |
+| TEMPO grid, no arc | 32 | 0.529 | 0.615 | 0.805 |
+| TEMPO grid + arc | 39 | 0.528 | 0.620 | 0.803 |
+
+It costs 1.38x the encode and drops 55 of 447 recordings (their total change is
+under one window's worth), and it buys nothing: on par with the plain time grid
+for precision and clearly worse on both ranking metrics.
+
+**Why this is interesting rather than just negative.** Arc-length - the SAME
+normalisation applied to the output trace - is worth +0.030 prec. Applied at the
+encoder INPUT it is worth nothing. So the gain from tempo normalisation lives in
+the MATCHING, not in what the encoder is shown. The likely reason is that
+V-JEPA 2 was pretrained on fixed-stride clips; a variable-stride window is a
+distribution shift, and whatever the tempo alignment buys is spent paying for
+it. The corollary is practical: normalise tempo where it is free (on the trace),
+not where it perturbs the encoder.
+
+## The mechanism hunt is out of hypotheses
+
+Five structural explanations for clip-time's advantage, all refuted by
+measurement: per-step SNR, extent normalisation, differencing baseline, encoder
+receptive field, tempo-adaptive stride. The frozen stream-time path stands at
+**0.552 / 0.667 / 0.827** held out on the common set (0.532 / 0.645 / 0.832 on
+the full test protocol), against a random floor of 0.217 / 0.150 / 0.502.
+
+What is left for the frozen path has no hypothesis attached, only the
+possibility of a lucky hyperparameter: the encoder layer the descriptor is read
+from, and the spatial pooling. Both need a re-encode.
