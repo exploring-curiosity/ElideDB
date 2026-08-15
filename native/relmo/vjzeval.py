@@ -16,6 +16,13 @@ TWO POOLS, both always reported:
 
 Callers pass {episode_id: (T, D) float32}. That is the only contract, so the
 frozen baseline and a trained recurrence go through identical code.
+
+T MAY DIFFER PER EPISODE. Under stream-time records (relmo/vjrec6) the trace
+length is proportional to duration, so the pool is ragged. Candidates are
+right-padded with an unreachable cost rather than stacked, which leaves
+subsequence DTW's free endpoints intact: a padded column can never be the
+argmin, and padding sits only at the right end so it cannot shorten a path
+through real columns either. Verified against a per-item loop.
 """
 from __future__ import annotations
 
@@ -29,24 +36,40 @@ from relmo.vjeval import group_key, l2, parse  # noqa: E402
 from relmo.vjeval5 import dtw_from_cost  # noqa: E402
 
 
+PAD_COST = 1e6            # unreachable, so padded columns never win the argmin
+
+
 def _epid(name):
     m = parse(name)
     return f"{m['task']}#{m['epnum']}"
 
 
-def evaluate(desc, query_ids, pool_ids, min_support=5, boot=0, seed=0):
+def _pad(seqs):
+    """[(T_i,D)] -> (N,Tmax,D) padded, (N,Tmax) bool valid."""
+    tmax = max(len(s) for s in seqs)
+    out = np.zeros((len(seqs), tmax, seqs[0].shape[-1]), np.float32)
+    m = np.zeros((len(seqs), tmax), bool)
+    for i, s in enumerate(seqs):
+        out[i, :len(s)] = s
+        m[i, :len(s)] = True
+    return out, m
+
+
+def evaluate(desc, query_ids, pool_ids, min_support=5, boot=0, seed=0,
+             qdesc=None):
     """-> dict(overall, per_group, per_task, chance, n_queries).
 
     desc: {episode_id: (T, D)}. Sequences are matched with subsequence DTW on
     cosine cost, exactly as the shipped read path does.
     """
+    qdesc = qdesc if qdesc is not None else desc
     pool = [i for i in sorted(pool_ids) if i in desc]
-    qry = [i for i in sorted(query_ids) if i in desc]
+    qry = [i for i in sorted(query_ids) if i in qdesc]
     if not pool or not qry:
         raise SystemExit("empty pool or query set")
     meta = {i: parse(i) for i in set(pool) | set(qry)}
     grp = {i: group_key(meta[i]) for i in meta}
-    P = np.stack([l2(desc[i]) for i in pool])            # (N, T, D)
+    P, P_ok = _pad([l2(desc[i]) for i in pool])          # (N, Tmax, D)
     pool_grp = np.array([grp[i] for i in pool])
     pool_ep = np.array([_epid(i) for i in pool])
 
@@ -59,7 +82,8 @@ def evaluate(desc, query_ids, pool_ids, min_support=5, boot=0, seed=0):
         sup = int(sv.sum())
         if sup < min_support:
             continue
-        C = 1.0 - np.einsum("sd,nkd->nsk", l2(desc[q]), P[keep])
+        C = 1.0 - np.einsum("sd,nkd->nsk", l2(qdesc[q]), P[keep])
+        C = np.where(P_ok[keep][:, None, :], C, PAD_COST)
         s = -dtw_from_cost(C)
         hit = int(sv[np.argsort(-s)[:sup]].sum())
         per_q.append((meta[q]["task"], grp[q], hit, sup,

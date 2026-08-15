@@ -30,43 +30,44 @@ from relmo.vjood import recs_for  # noqa: E402
 from relmo.vjsplit import load as load_split  # noqa: E402
 
 
-def load_ckpt(tag):
-    import torch
-    import torch.nn as nn
-    ck = torch.load(vjrank.CKPT / f"{tag}.pt", weights_only=False,
-                    map_location="cpu")
-    m = vjrank.build(torch, nn, ck["dim"], use_sig=ck["use_sig"])
-    m.load_state_dict(ck["state"])
-    m.eval()
-    return m, ck
+load_ckpt = vjrank.load_ckpt
 
 
-def score_matrix(model, recs, q_ids, p_ids):
+def score_matrix(model, recs, q_ids, p_ids, chunk=64, qrecs=None):
+    """Stream-time traces are ragged, so encode padded + masked, and chunk the
+    pool: the (Nq,Nc,T,S) similarity tensor is quadratic in trace length."""
     import torch
-    def enc(ids):
+    def enc(ids, src):
+        a, m = vjrank.pad([src[i]["a"] for i in ids], "cpu", torch)
+        g, _ = vjrank.pad([src[i]["g"] for i in ids], "cpu", torch)
+        s, _ = vjrank.pad([src[i]["sig"] for i in ids], "cpu", torch)
         with torch.no_grad():
-            return model.encode(
-                torch.tensor(np.stack([recs[i]["a"] for i in ids])),
-                torch.tensor(np.stack([recs[i]["g"] for i in ids])),
-                torch.tensor(np.stack([recs[i]["sig"] for i in ids])))
-    Zq, Zp = enc(q_ids), enc(p_ids)
-    with torch.no_grad():
-        return model.score(Zq, Zp).numpy()
+            return model.encode(a, g, s, m), m
+    Zq, mq = enc(q_ids, qrecs if qrecs is not None else recs)
+    out = []
+    for c in range(0, len(p_ids), chunk):
+        Zp, mp = enc(p_ids[c:c + chunk], recs)
+        with torch.no_grad():
+            out.append(vjrank.tile_score(model, Zq, mq, Zp, mp, torch).numpy())
+    return np.concatenate(out, 1)
 
 
 def grade(S, q_ids, p_ids, meta, min_support=5):
     """k=support precision under group_key + NDCG under the graded relevance."""
-    gq = np.array([group_key(parse(i)) for i in q_ids])
-    gp = np.array([group_key(parse(i)) for i in p_ids])
+    gq = np.array([meta[i]["event"] for i in q_ids])
+    gp = np.array([meta[i]["event"] for i in p_ids])
     rq = np.array([meta[i]["rollout"] for i in q_ids])
     rp = np.array([meta[i]["rollout"] for i in p_ids])
     hit = sup = 0.0
     rnd = 0.0
     nd = []
-    relq = np.zeros((len(q_ids), len(p_ids)), np.float32)
-    for a, i in enumerate(q_ids):
-        for b, j in enumerate(p_ids):
-            relq[a, b] = vjrel.relevance([i, j], meta)[0][0, 1]
+    # one relevance call over the union, then index - the old per-pair loop was
+    # O(N^2) calls and gave the identical matrix
+    uni = list(dict.fromkeys(list(q_ids) + list(p_ids)))
+    pos = {i: k for k, i in enumerate(uni)}
+    full, _ = vjrel.relevance(uni, meta)
+    relq = full[np.array([pos[i] for i in q_ids])[:, None],
+                np.array([pos[j] for j in p_ids])[None, :]]
     for a in range(len(q_ids)):
         keep = rp != rq[a]
         sv = gp[keep] == gq[a]
@@ -87,25 +88,44 @@ def grade(S, q_ids, p_ids, meta, min_support=5):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tags", required=True)
+    ap.add_argument("--phase", default="rcasa_train")
+    ap.add_argument("--rec-root", default="",
+                    help="override the records generation; default "
+                         "is whatever each checkpoint was trained on")
     a = ap.parse_args()
 
     sp = load_split()
-    Rin, Rood = recs_for("rcasa"), recs_for("rcasa_eval")
     meta = vjrel.meta_table("rcasa")
     meta.update(vjrel.meta_table("rcasa_eval"))
-    allr = dict(Rin)
-    allr.update(Rood)
 
-    val = [i for i in sorted(sp["val"]) if i in Rin]
-    tst = [i for i in sorted(sp["test"]) if i in Rin]
-    inpool = sorted(set(val) | set(tst))
-    ood_q = sorted(Rood)
-    ood_pool = sorted(set(inpool) | set(ood_q))
+    # records are loaded PER ARM, under the phase setting that arm was trained
+    # with. Scoring a phase-retaining model on phase-corrected records (or the
+    # reverse) measures a mismatch, not the model.
+    cache = {}
+    def records(name, root):
+        name = name if root != "vjrec4" else ""   # v4 records carry no `step`
+        if (name, root) not in cache:
+            ph = None
+            if name:
+                from relmo.vjphase import load as load_phase
+                ph = load_phase(name)
+            cache[(name, root)] = (recs_for("rcasa", phase=ph, root=root),
+                                   recs_for("rcasa_eval", phase=ph, root=root))
+        return cache[(name, root)]
 
     rows = []
     for t in [x.strip() for x in a.tags.split(",") if x.strip()]:
         model, ck = load_ckpt(t)
         held = ck.get("hold", [])
+        root = a.rec_root or ck.get("rec_root", "vjrec4")
+        Rin, Rood = records(ck.get("phase", a.phase), root)
+        allr = dict(Rin)
+        allr.update(Rood)
+        val = [i for i in sorted(sp["val"]) if i in Rin]
+        tst = [i for i in sorted(sp["test"]) if i in Rin]
+        inpool = sorted(set(val) | set(tst))
+        ood_q = sorted(Rood)
+        ood_pool = sorted(set(inpool) | set(ood_q))
         r = {}
         r["val"] = grade(score_matrix(model, Rin, val, val), val, val, meta)
         r["test"] = grade(score_matrix(model, Rin, tst, inpool), tst, inpool,
@@ -117,12 +137,13 @@ def main():
             if len(hq) >= 5:
                 r["fam"] = grade(score_matrix(model, Rin, hq, inpool), hq,
                                  inpool, meta)
-        rows.append((t, held, r))
+        rows.append((t, held, r,
+                     "" if root == "vjrec4" else ck.get("phase", a.phase)))
 
     cols = ["val", "test", "ood_val", "fam"]
     print(f"{'arm':22s} " + " ".join(f"{c:>22s}" for c in cols))
     print("-" * (22 + 23 * len(cols)))
-    for t, held, r in rows:
+    for t, held, r, phn in rows:
         cells = []
         for c in cols:
             if c not in r:
@@ -135,9 +156,11 @@ def main():
     print("\ncells are  precision@support / NDCG")
     print(f"chance (prec): " + "  ".join(
         f"{c} {rows[0][2][c]['chance']:.3f}" for c in cols if c in rows[0][2]))
+    print("phase correction per arm: " + ", ".join(
+        f"{t}={'ON' if phn else 'off'}" for t, _, _, phn in rows))
     R.log("vjrankeval", tags=a.tags,
           **{f"{t}_{c}": round(r[c]["prec"], 4)
-             for t, _, r in rows for c in r})
+             for t, _, r, _ in rows for c in r})
 
 
 if __name__ == "__main__":

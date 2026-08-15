@@ -33,31 +33,45 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from relmo import registry as R  # noqa: E402
-from relmo import vjz  # noqa: E402
+from relmo import vjrank, vjz  # noqa: E402
 from relmo.vjsplit import load as load_split  # noqa: E402
 from relmo.vjzeval import evaluate, report  # noqa: E402
 
 
-def recs_for(dataset, ids=None, suffix=""):
-    rec = R.BASE / "vjrec4" / f"{dataset}_L6{suffix}"
-    sig = R.BASE / "vjsig" / f"{dataset}{suffix}"
-    have = sorted(p.stem for p in rec.glob("*.npz"))
+def recs_for(dataset, ids=None, suffix="", root="vjrec6", phase=None):
+    rec, sig = vjz.dirs(root, dataset, suffix=suffix)
+    have = sorted(p.stem for p in rec.glob("*.npz")
+                  if not p.name.startswith("."))
     if ids is not None:
         have = [i for i in have if i in ids]
-    return vjz.gather(have, dataset, want_y=False, rec_dir=rec, sig_dir=sig)
+    d = vjz.gather(have, dataset, want_y=False, rec_dir=rec, sig_dir=sig,
+                   phase=phase)
+    # a record without its aligned SigLIP companion cannot be encoded; drop it
+    # here rather than letting it fail deep inside a batch
+    return {i: v for i, v in d.items()
+            if v["sig"] is not None and len(v["sig"]) == len(v["a"])}
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tags", default="s_rec0.1,s_rec1,s_sig,s_d256,s_d128_long")
+    ap.add_argument("--tags", default="")
+    ap.add_argument("--rec-root", default="vjrec6")
+    ap.add_argument("--phase", default="rcasa_train",
+                    help="vjphase model to subtract; '' disables it")
     ap.add_argument("--boot", type=int, default=2000)
     ap.add_argument("--test", action="store_true",
                     help="also read the untouched test split - do this ONCE")
     a = ap.parse_args()
 
     sp = load_split()
-    Rin = recs_for("rcasa")
-    Rood = recs_for("rcasa_eval")
+    ph = None
+    if a.phase:
+        from relmo.vjphase import load as load_phase
+        ph = load_phase(a.phase)
+        print(f"window-phase correction: {a.phase} (fitted on TRAIN only, "
+              f"travels to ood unchanged)")
+    Rin = recs_for("rcasa", root=a.rec_root, phase=ph)
+    Rood = recs_for("rcasa_eval", root=a.rec_root, phase=ph)
     print(f"records: rcasa {len(Rin)} | rcasa_eval {len(Rood)}")
 
     base = {i: Rin[i]["a"] for i in Rin}
@@ -78,19 +92,23 @@ def main():
                                            set(Rin), boot=a.boot)
         return rows
 
-    results = {"frozen baseline": run("frozen baseline", base)}
+    results = {"frozen a_t": run("frozen a_t", base)}
     for tag in [t for t in a.tags.split(",") if t.strip()]:
+        tag = tag.strip()
         try:
-            model, ck = vjz.load_ckpt(tag.strip())
+            model, _ = vjrank.load_ckpt(tag)
         except FileNotFoundError:
             print(f"  no checkpoint {tag} - skipped")
             continue
-        d = vjz.encode(model, ck, Rin)
-        d.update(vjz.encode(model, ck, Rood))
+        # the TRAINED representation through the UNTRAINED matcher. Held next
+        # to the frozen row this separates the two things training could have
+        # bought: a better descriptor, or a better comparison of descriptors.
+        d = vjrank.encode_all(model, Rin)
+        d.update(vjrank.encode_all(model, Rood))
         if len(d) < len(base) * 0.9:
             print(f"  {tag}: only {len(d)}/{len(base)} encodable "
                   f"(missing siglip records?)")
-        results[tag.strip()] = run(tag, d)
+        results[f"{tag} z+dtw"] = run(tag, d)
 
     cols = ["val", "ood_val"] + (["test_primary", "test_deploy"] if a.test
                                  else [])
@@ -104,23 +122,22 @@ def main():
             cells.append(f"{r['overall']:.3f} [{ci[0]:.2f},{ci[1]:.2f}]")
         print(f"{name:16s} " + " ".join(f"{c:>22s}" for c in cells))
     print(f"\nchance: " + "  ".join(
-        f"{c} {results['frozen baseline'][c]['chance']:.3f}" for c in cols))
+        f"{c} {results['frozen a_t'][c]['chance']:.3f}" for c in cols))
 
-    best = max((k for k in results if k != "frozen baseline"),
+    best = max((k for k in results if k != "frozen a_t"),
                key=lambda k: results[k]["ood_val"]["overall"], default=None)
     if best:
         print(f"\nSELECTED ON ood_val: {best}")
         report(f"{best} - ood_val (unseen tasks vs in-domain distractors)",
                results[best]["ood_val"])
-        report("frozen baseline - ood_val",
-               results["frozen baseline"]["ood_val"])
+        report("frozen a_t - ood_val", results["frozen a_t"]["ood_val"])
         if a.test:
             report(f"{best} - test PRIMARY (train-disjoint pool)",
                    results[best]["test_primary"])
             report(f"{best} - test DEPLOYMENT (full index)",
                    results[best]["test_deploy"])
-            report("frozen baseline - test PRIMARY",
-                   results["frozen baseline"]["test_primary"])
+            report("frozen a_t - test PRIMARY",
+                   results["frozen a_t"]["test_primary"])
     R.log("vjood", tags=a.tags, touched_test=bool(a.test),
           **{f"{k}_{c}": round(v[c]["overall"], 4)
              for k, v in results.items() for c in cols})

@@ -361,3 +361,152 @@ python -m relmo.vjtime  --episodes 10        # warp invariance
 python -m relmo.vjspan  --episodes 8         # span localisation, stitched
 python -m relmo.vjview  --queries 18         # viewer -> data/relmo/viewer
 ```
+
+---
+
+# v6 — stream time: `t` is absolute time, not a position in a clip
+
+The owner's correction: *"t doesnt make sense with this logic at all. t means
+time. this doesnt signify any history. just an variable length encoder of
+smaller vs bigger window. I am saying t should come from the fixed rate
+windows. 0-8, 4-12 etc."*
+
+That was right, and the defect was structural. v4 sampled a fixed number of
+frames across the WHOLE episode, so the sample rate was a function of duration
+(4.6 fps for a 7 s clip, 0.53 fps for a 60 s one), and `z` was re-initialised
+to zero for every clip — so the recurrence `z_t = f(z_{t-1}, …)` had no history
+to carry.
+
+## The redefinition
+
+    dt = TUBELET / STREAM_FPS = 0.25 s        t is an absolute stream index
+    window   32 frames @ 8 fps = 4.0 s        context 2.0 s, descriptors 2.0 s
+    hop      2.0 s  ==  descriptor span       so windows TILE: no gap, no overlap
+
+    a_t = x^_t - x^_{t-1}    expected one-step change, forecast vs forecast
+    b_t = x_t  - x_{t-1}     the change that occurred
+    g_t = [cos(a_t,b_t), log(|b_t|/|a_t|)]    reality enters as 2 scalars
+    z_t = (1-g)*z_{t-1} + g*c_t               initialised ONCE PER RECORDING
+
+Tiling is what makes concatenation legal, and it is asserted at runtime, not
+assumed. `j(T) = T//8 - 1` is the unique window describing step T.
+
+Geometry chosen against the corpus, not by taste: at 8 s / 4 s (the literal
+"0-8, 4-12"), 58 of 447 rcasa episodes are shorter than one window and would be
+silently dropped, and 242 of 447 would yield a single window — so the one thing
+v6 exists to test, carrying `z` across a boundary, would never happen for most
+of the corpus. At 4 s / 2 s nothing is dropped and the median recording spans
+4 windows. Cost: 2× the windows per second of video.
+
+## Two defects found by measurement, not inspection
+
+**Mixed differences.** The first draft referenced each block's opening step to
+the observed anchor, since no forecast of the preceding step existed. |a| then
+spiked ~2× at every block start — a period-4 sawtooth locked to the grid, the
+exact artefact the rewrite existed to remove. Forecast and observation are not
+interchangeable. Fixed by predicting one extra step per block so every `a_t` is
+forecast-minus-forecast. Costs nothing.
+
+**Window phase.** With a cubic trend in episode time removed and phase permuted
+*within* each recording as the null, window phase explains **67.7%** of `a_t`'s
+direction variance and 27.4% of `b_t`'s (null 0.1%, p<0.005). Two sources, both
+structural: V-JEPA's temporal position embeddings (which is why `b_t`, pure
+observation, shows it at all), and two prediction blocks per window at horizons
+1–5. Under v4 this cancelled as common mode because every clip sat on an
+identical grid.
+
+`relmo/vjphase` removes it — per-phase mean of the unit descriptor, fitted on
+TRAIN only, label-free, same category as the affine predictor calibration.
+Held-out phase R² **0.696 → 0.023** (val), **0.724 → 0.019** (test).
+
+## Numbers — precision@support, k=support, group_key grading, 3 seeds
+
+| arm | val | test | ood_val |
+|---|---|---|---|
+| v4 clip-time, frozen `a_t` + DTW | 0.463 | — | 0.518 |
+| v6 stream, frozen `a_t` + DTW | 0.314 | — | 0.542 |
+| v6 stream, frozen, phase removed | 0.289 | — | 0.516 |
+| v4 clip-time, trained `z` | **0.924** ± 0.014 | **0.894** ± 0.018 | **0.730** ± 0.026 |
+| v6 stream, trained `z` | 0.793 ± 0.092 | 0.763 ± 0.041 | 0.502 ± 0.067 |
+| v6 stream, trained `z`, phase removed | 0.738 ± 0.083 | 0.752 ± 0.066 | 0.610 ± 0.108 |
+| v6 stream, trained `z` + CNN scorer (1 seed) | 0.768 | 0.736 | 0.655 |
+
+chance: val 0.205, test 0.216, ood_val 0.214. Same evaluator, same splits, same
+pools throughout — the only change is which records the arm reads.
+
+**Stream time costs 0.13 on test and 0.12–0.23 on ood_val.** It is worse, and
+the reason is visible in the frozen row: v4's whole-episode normalisation gave
+duration invariance for free — a 7 s and a 20 s instance of one event landed on
+the same 24 steps. A fixed rate does not. v6 wins only where v4's sampling was
+degenerate: `ood_val`'s recordings have a median of 41.9 s, which v4 sampled at
+1.5 fps, and the frozen row moves 0.518 → 0.542 there.
+
+That trade is not optional. v4's advantage comes from being handed episode
+boundaries, and the production input has none — *"all the frames will be
+timestamp attached sitting in a parquet file only with time differences to show
+episodic different"*. v4 cannot run on that input at all; v6 can. The 0.13 is
+the price of the missing piece, and the missing piece is named: **duration
+invariance, which has to come back from encoding at several rates** and letting
+the matcher align across them. Not built.
+
+## The phase correction is neutral in-domain and helps out of domain
+
+test 0.763 → 0.752 (inside seed noise), ood_val 0.502 → **0.610** (+0.108, ~1
+SD). Direction is as expected: the grid signature is corpus-specific, so
+removing it costs nothing at home and helps transfer. An earlier single-seed
+read said the correction *hurt*; that was seed noise, which is why the
+seed-aggregate rule exists.
+
+## Grid-alignment control — the models learned the event, not the grid
+
+Every episode file starts at its demonstration's onset, so the window grid is
+locked to event onset — a coincidence production does not supply. Re-ingesting
+the 65 val queries with the grid shifted 1 s and scoring against the ordinary
+pool:
+
+| arm | aligned | shifted | delta |
+|---|---|---|---|
+| frozen `a_t` | 0.300 | 0.313 | +0.013 |
+| frozen, phase removed | 0.298 | 0.271 | −0.027 |
+| trained `z` × 3 seeds | 0.804 / 0.766 / 0.741 | 0.797 / 0.759 / 0.756 | −0.006 / −0.006 / +0.015 |
+| trained, phase removed × 3 | 0.737 / 0.656 / 0.801 | 0.751 / 0.587 / 0.796 | +0.014 / −0.069 / −0.006 |
+
+Worst case −0.069, typical ±0.015. The 68% phase variance is a nuisance the
+matcher was already robust to, which is also why removing it changes so little.
+
+## Cost, fp16, end to end including ffmpeg decode
+
+| stage | rate |
+|---|---|
+| `vjrec6` V-JEPA records | 3.58× real-time |
+| `vjsig6` SigLIP | 47.1× real-time |
+| **combined, one stream** | **3.33× real-time** |
+
+447 + 27 recordings, 23,744 stream steps, 98.9 video-minutes described. Nothing
+dropped: 0 too-short, 0 failed.
+
+## Open
+
+1. **Duration invariance is gone and nothing replaces it.** This is the whole
+   0.13. Multi-rate encoding is the named fix and is not built.
+2. **Seed variance tripled** — ±0.09 on val against ±0.014 under v4. Ragged
+   batches shrink to fit the pair budget, so effective batch size varies; that
+   is the first thing to check.
+3. **`z` has no leak term.** The recurrence now runs a whole recording, but
+   nothing bounds how far back it reaches. On 5–56 s recordings this never
+   binds; on an hour it will.
+4. **Only rcasa.** bridge (`ood_test`) untouched, and the 63-task / 26,674-
+   episode ingest remains held pending confirmation.
+
+## Reproduce
+
+```bash
+python -m relmo.vjrec6 --dataset rcasa --fp16          # stream records (~24 min)
+python -m relmo.vjsig6 --dataset rcasa                 # aligned SigLIP (~2 min)
+python -m relmo.vjphase --fit                          # phase model + held-out R2
+python -m relmo.vjood                                  # frozen arms
+python -m relmo.vjrank --no-scorer --tag rk6_ns_s0     # train (~2.5 min)
+python -m relmo.vjrankeval --tags rk6_ns_s0            # val / test / ood_val
+python -m relmo.vjrec6 --dataset rcasa --fp16 --splits val --offset 1.0 --suffix _off1
+python -m relmo.vjgrid --tags rk6_ns_s0                # grid-alignment control
+```

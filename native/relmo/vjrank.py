@@ -3,6 +3,23 @@
     z_t   = f(z_{t-1}, a_t, g_t, sig_t)          recurrence, trainable
     s     = S(Z_query, Z_candidate)              scorer, trainable
 
+t IS ABSOLUTE STREAM TIME (relmo/vjrec6), one step every 0.25 s, running the
+length of the RECORDING. It is not a position inside an encoded clip. Under v4
+it was, and the consequence was that `z` was re-initialised to zero at every
+clip boundary - so the recurrence above had no history to carry and was, in the
+owner's words, "just an variable length encoder of smaller vs bigger window".
+
+Two things follow, and both are load-bearing here:
+
+  * z is initialised ONCE PER RECORDING. Windows tile the stream, their
+    descriptor blocks concatenate into one trace, and the recurrence crosses
+    those boundaries without noticing them.
+  * T therefore VARIES with duration. Batches are right-padded and every
+    operation is masked: z must not advance past the end of a recording, and a
+    padded step must not contribute to a similarity. On this corpus the median
+    recording spans 4 windows, so the boundary crossing is exercised by most
+    of the training set rather than by a tail of long clips.
+
 INPUTS ARE LATENTS ONLY. a_t is V-JEPA's expectation pred(t+1)-act(t); g_t is
 its realised change compressed to two scalars; sig_t is SigLIP appearance.
 Nothing describes the event. The model is never asked to predict a verb, an
@@ -45,9 +62,15 @@ from relmo.vjeval import group_key, parse  # noqa: E402
 from relmo.vjsplit import load as load_split  # noqa: E402
 
 CKPT = R.BASE / "models" / "vjrank"
+# The step-similarity tensor is (Nq,Nc,T,S) - QUADRATIC in trace length, which
+# under stream time varies from 16 to 216 steps. A 48x48 batch of the longest
+# recordings would allocate 430 MB for that tensor alone (and ~1.7 GB more for
+# the CNN's first feature map), so both scoring and training tile against a
+# fixed element budget instead of a fixed item count.
+PAIR_BUDGET = 24_000_000
 
 
-def build(torch, nn, d=128, d_a=1024, d_s=768, use_sig=True):
+def build(torch, nn, d=128, d_a=1024, d_s=768, use_sig=True, use_scorer=True):
     class Ranker(nn.Module):
         def __init__(self):
             super().__init__()
@@ -69,8 +92,15 @@ def build(torch, nn, d=128, d_a=1024, d_s=768, use_sig=True):
             self.head = nn.Linear(32, 1)
             self.w_cos = nn.Parameter(torch.tensor(4.0))   # start = cosine
             self.d = d
+            self.use_scorer = use_scorer
 
-        def encode(self, a, g, sig):
+        def encode(self, a, g, sig, m):
+            """(N,T,*) padded + (N,T) bool valid -> (N,T,d).
+
+            z is zeroed once, at t=0 of the RECORDING, and then carried. Past
+            the end of a recording it is frozen rather than updated, so padding
+            cannot leak into the state.
+            """
             u = self.drop(nn.functional.gelu(self.pa(self.na(a))))
             if self.use_sig:
                 v = nn.functional.gelu(self.ps(self.ns(sig)))
@@ -81,20 +111,83 @@ def build(torch, nn, d=128, d_a=1024, d_s=768, use_sig=True):
                 ut = u[:, t]
                 gt = torch.sigmoid(self.gate(torch.cat([z, ut, g[:, t]], -1)))
                 ct = torch.tanh(self.cand(torch.cat([z, ut], -1)))
-                z = (1 - gt) * z + gt * ct
+                z = torch.where(m[:, t:t + 1], (1 - gt) * z + gt * ct, z)
                 Z.append(z)
             return torch.stack(Z, 1)
 
-        def score(self, Zq, Zc):
-            """(Nq,T,d) x (Nc,T,d) -> (Nq,Nc). Full pairwise."""
-            Q = nn.functional.normalize(Zq, dim=-1)
-            C = nn.functional.normalize(Zc, dim=-1)
-            M = torch.einsum("qtd,csd->qcts", Q, C)         # (Nq,Nc,T,T)
-            nq, nc, T, _ = M.shape
-            base = M.mean((2, 3)) * self.w_cos              # pooled cosine
-            f = self.cnn(M.reshape(nq * nc, 1, T, T)).flatten(1)
-            return base + self.head(f).reshape(nq, nc)
+        def score(self, Zq, mq, Zc, mc):
+            """(Nq,T,d),(Nq,T) x (Nc,S,d),(Nc,S) -> (Nq,Nc). Full pairwise."""
+            Q = nn.functional.normalize(Zq, dim=-1) * mq.unsqueeze(-1)
+            C = nn.functional.normalize(Zc, dim=-1) * mc.unsqueeze(-1)
+            M = torch.einsum("qtd,csd->qcts", Q, C)         # (Nq,Nc,T,S)
+            nq, nc, T, S = M.shape
+            # a pair (t,s) counts only if both steps are real
+            W = (mq[:, None, :, None] * mc[None, :, None, :]).to(M.dtype)
+            MW = M * W
+            base = MW.sum((2, 3)) / W.sum((2, 3)).clamp(min=1.0)
+            if not self.use_scorer:
+                # the CNN is the dominant cost at T=216; when it is ablated
+                # off, do not pay for it
+                return base * self.w_cos
+            f = self.cnn(MW.reshape(nq * nc, 1, T, S)).flatten(1)
+            return base * self.w_cos + self.head(f).reshape(nq, nc)
     return Ranker()
+
+
+def tile_score(model, Zq, mq, Zc, mc, torch, budget=PAIR_BUDGET):
+    """model.score over arbitrarily many items, tiled to a memory budget."""
+    per = max(1, int((budget / max(1, Zq.shape[1] * Zc.shape[1])) ** 0.5))
+    rows = []
+    for i in range(0, len(Zq), per):
+        cols = [model.score(Zq[i:i + per], mq[i:i + per],
+                            Zc[j:j + per], mc[j:j + per])
+                for j in range(0, len(Zc), per)]
+        rows.append(torch.cat(cols, 1))
+    return torch.cat(rows, 0)
+
+
+def load_ckpt(tag):
+    """-> (model, ck). Lives here so evaluators can share it without importing
+    each other."""
+    import torch
+    import torch.nn as nn
+    ck = torch.load(CKPT / f"{tag}.pt", weights_only=False,
+                    map_location="cpu")
+    m = build(torch, nn, ck["dim"], use_sig=ck["use_sig"],
+              use_scorer=ck.get("use_scorer", True))
+    m.load_state_dict(ck["state"])
+    m.eval()
+    return m, ck
+
+
+def encode_all(model, recs, ids=None, chunk=64):
+    """{id: (T_i, d)} trained z sequences, trimmed back to their real lengths."""
+    import torch
+    ids = sorted(ids if ids is not None else recs,
+                 key=lambda i: (len(recs[i]["a"]), i))
+    out = {}
+    for c in range(0, len(ids), chunk):
+        b = ids[c:c + chunk]
+        a, m = pad([recs[i]["a"] for i in b], "cpu", torch)
+        g, _ = pad([recs[i]["g"] for i in b], "cpu", torch)
+        s, _ = pad([recs[i]["sig"] for i in b], "cpu", torch)
+        with torch.no_grad():
+            Z = model.encode(a, g, s, m).numpy()
+        for k, i in enumerate(b):
+            out[i] = Z[k, :len(recs[i]["a"])]
+    return out
+
+
+def pad(seqs, dev, torch):
+    """[(T_i,D)] -> padded (N,Tmax,D) tensor and (N,Tmax) bool mask."""
+    tmax = max(len(s) for s in seqs)
+    x = np.zeros((len(seqs), tmax, seqs[0].shape[-1]), np.float32)
+    m = np.zeros((len(seqs), tmax), bool)
+    for i, s in enumerate(seqs):
+        x[i, :len(s)] = s
+        m[i, :len(s)] = True
+    return (torch.tensor(x, device=dev),
+            torch.tensor(m, device=dev))
 
 
 def lambda_rank(s, rel, valid, torch):
@@ -115,6 +208,10 @@ def lambda_rank(s, rel, valid, torch):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="rcasa")
+    ap.add_argument("--rec-root", default="vjrec6",
+                    help="vjrec6 = stream time (default), vjrec4 = clip time")
+    ap.add_argument("--phase", default="rcasa_train",
+                    help="vjphase model to subtract; '' disables it")
     ap.add_argument("--rec-suffix", default="",
                     help="compression variant: _fp16, _fp16f32, ...")
     ap.add_argument("--dim", type=int, default=128)
@@ -140,30 +237,41 @@ def main():
     torch.manual_seed(a.seed)
     np.random.seed(a.seed)
     sp = load_split()
+    rec_dir, sig_dir = vjz.dirs(a.rec_root, a.dataset, suffix=a.rec_suffix)
+    ph = None
+    if a.phase:
+        from relmo.vjphase import load as load_phase
+        ph = load_phase(a.phase)
     D = vjz.gather(sp["train"] | sp["val"] | sp["test"],
-                   rec_dir=R.BASE / "vjrec4" / f"rcasa_L6{a.rec_suffix}",
-                   sig_dir=R.BASE / "vjsig" / f"rcasa{a.rec_suffix}")
+                   rec_dir=rec_dir, sig_dir=sig_dir, phase=ph)
+    D = {i: v for i, v in D.items() if v["sig"] is not None
+         and len(v["sig"]) == len(v["a"])}
     meta = vjrel.meta_table(a.dataset)
     hold = {h.strip() for h in a.hold_families.split(",") if h.strip()}
     tr = [i for i in sorted(sp["train"]) if i in D
           and parse(i)["task"] not in hold]
     va = [i for i in sorted(sp["val"]) if i in D]
     dev = "mps" if torch.backends.mps.is_available() else "cpu"
-    print(f"train {len(tr)} | val {len(va)} | dev {dev}"
+    lens = np.array([len(D[i]["a"]) for i in tr])
+    print(f"train {len(tr)} | val {len(va)} | dev {dev} | records {rec_dir.name}"
+          f" | steps/recording min {lens.min()} med {int(np.median(lens))} "
+          f"max {lens.max()}"
           + (f" | HELD OUT of training: {sorted(hold)}" if hold else ""),
           flush=True)
 
     def tens(ids):
-        return (torch.tensor(np.stack([D[i]["a"] for i in ids]), device=dev),
-                torch.tensor(np.stack([D[i]["g"] for i in ids]), device=dev),
-                torch.tensor(np.stack([D[i]["sig"] for i in ids]), device=dev))
+        a_, m_ = pad([D[i]["a"] for i in ids], dev, torch)
+        g_, _ = pad([D[i]["g"] for i in ids], dev, torch)
+        s_, _ = pad([D[i]["sig"] for i in ids], dev, torch)
+        return a_, g_, s_, m_
     TR, VA = tens(tr), tens(va)
     rel_tr, val_tr = vjrel.relevance(tr, meta)
     rel_va, val_va = vjrel.relevance(va, meta)
     RT = torch.tensor(rel_tr, device=dev)
     VT = torch.tensor(val_tr, device=dev)
 
-    model = build(torch, nn, a.dim, use_sig=not a.no_sig).to(dev)
+    model = build(torch, nn, a.dim, use_sig=not a.no_sig,
+                  use_scorer=not a.no_scorer).to(dev)
     if a.no_scorer:
         for p_ in list(model.cnn.parameters()) + list(model.head.parameters()):
             p_.requires_grad_(False)
@@ -181,7 +289,7 @@ def main():
         model.eval()
         with torch.no_grad():
             Z = model.encode(*VA)
-            S = model.score(Z, Z).cpu().numpy()
+            S = tile_score(model, Z, VA[3], Z, VA[3], torch).cpu().numpy()
         np.fill_diagonal(S, -1e9)
         nd = vjrel.ndcg(S, rel_va, val_va)
         hit = sup = 0
@@ -195,13 +303,23 @@ def main():
             sup += k
         return nd, (hit / sup if sup else float("nan"))
 
-    best, best_state, best_ep = -1.0, None, -1
+    best, best_state, best_ep, n_shrunk = -1.0, None, -1, 0
     bar = tqdm(range(a.epochs), unit="ep", desc="vjrank")
     for ep in bar:
         model.train()
         idx = torch.randperm(len(tr), device=dev)[:a.bs]
-        Z = model.encode(TR[0][idx], TR[1][idx], TR[2][idx])
-        S = model.score(Z, Z)
+        # a batch of long recordings must shrink: the pair tensor is bs^2*T^2
+        tmax = int(TR[3][idx].sum(1).max())
+        n_ok = max(4, min(a.bs, int(PAIR_BUDGET ** 0.5) // max(1, tmax)))
+        if n_ok < len(idx):
+            idx = idx[:n_ok]
+            n_shrunk += 1
+        # TR is padded to the GLOBAL max (216 steps); running the recurrence
+        # that far for a batch whose longest recording is 32 is pure waste
+        mb = TR[3][idx][:, :tmax]
+        Z = model.encode(TR[0][idx][:, :tmax], TR[1][idx][:, :tmax],
+                         TR[2][idx][:, :tmax], mb)
+        S = model.score(Z, mb, Z, mb)
         # valid drops the diagonal and every same-rollout (cross-view) pair
         loss = lambda_rank(S, RT[idx][:, idx], VT[idx][:, idx], torch)
         opt.zero_grad()
@@ -217,12 +335,17 @@ def main():
             bar.set_postfix(loss=f"{float(loss):.3f}", ndcg=f"{nd:.3f}",
                             prec=f"{pr:.3f}", best=f"{best:.3f}")
     bar.close()
+    if n_shrunk:
+        print(f"  {n_shrunk}/{a.epochs} batches shrunk below --bs {a.bs} to "
+              f"stay inside the pair budget (long recordings)")
 
     model.load_state_dict(best_state)
     nd, pr = eval_val()
     CKPT.mkdir(parents=True, exist_ok=True)
     tag = a.tag or f"rank_d{a.dim}_s{a.seed}"
     torch.save(dict(state=model.state_dict(), dim=a.dim, use_sig=not a.no_sig,
+                    use_scorer=not a.no_scorer, rec_root=a.rec_root,
+                    phase=a.phase,
                     hold=sorted(hold), params=npar), CKPT / f"{tag}.pt")
     print(f"\nbest val NDCG {nd:.4f}  precision@support {pr:.4f}  "
           f"(epoch {best_ep})  -> {CKPT / (tag + '.pt')}")
