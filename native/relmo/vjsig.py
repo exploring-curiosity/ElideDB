@@ -73,11 +73,14 @@ def main():
     from transformers import AutoModel
 
     d = REC / a.dataset
-    shard = {}
+    shard, vid = {}, {}
     if a.from_manifest:
         man = R.read_manifest(a.dataset)
         files = [Path(e["id"] + ".npz") for e in man["episodes"]]
         shard = {e["id"]: e["shard"] for e in man["episodes"]}
+        # a LeRobot-sourced manifest points straight at the shipped mp4 -
+        # there is no per-episode directory and nothing was re-rendered
+        vid = {e["id"]: e["video"] for e in man["episodes"] if e.get("video")}
     else:
         files = [p for p in sorted(d.glob("*.npz"))
                  if not p.name.startswith("_")]
@@ -100,7 +103,8 @@ def main():
     print(f"{len(files)} episodes, {len(todo)} to do", flush=True)
     t0, done, failed = time.time(), 0, 0
     for p in tqdm(todo, unit="ep", desc="siglip"):
-        ep = (R.dataset_dir(a.dataset) / shard.get(p.stem, "shard_0000")
+        ep = (Path(vid[p.stem]) if p.stem in vid else
+              R.dataset_dir(a.dataset) / shard.get(p.stem, "shard_0000")
               / p.stem / "frames.mp4")
         if not ep.exists():
             failed += 1

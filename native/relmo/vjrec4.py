@@ -129,10 +129,13 @@ def main():
         man = R.read_manifest(a.dataset)
         files = [Path(e["id"] + ".npz") for e in man["episodes"]]
         shard = {e["id"]: e["shard"] for e in man["episodes"]}
+        # a LeRobot-sourced manifest points straight at the shipped mp4 -
+        # there is no per-episode directory and nothing was re-rendered
+        vid = {e["id"]: e["video"] for e in man["episodes"] if e.get("video")}
     else:
         files = [p for p in sorted(d.glob("*.npz"))
                  if not p.name.startswith("_")]
-        shard = {}
+        shard, vid = {}, {}
     if a.limit:
         files = files[:a.limit]
     z = np.load(REC / a.calib / "_calib.npz")
@@ -153,7 +156,8 @@ def main():
           f"{len(todo)} to do (~{len(todo)*11/60:.0f} min)", flush=True)
     t0, done, failed = time.time(), 0, 0
     for p in tqdm(todo, unit="ep", desc=f"v4/L{a.layer}"):
-        ep = (R.dataset_dir(a.dataset) / shard.get(p.stem, "shard_0000")
+        ep = (Path(vid[p.stem]) if p.stem in vid else
+              R.dataset_dir(a.dataset) / shard.get(p.stem, "shard_0000")
               / p.stem / "frames.mp4")
         if not ep.exists():
             failed += 1
