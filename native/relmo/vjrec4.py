@@ -62,9 +62,10 @@ WIN = 4             # target steps per split
 CHANNELS = ("pred_change", "obs_change")
 
 
-def record(model, torch, dev, clip, n_frames, cal, layer):
+def record(model, torch, dev, clip, n_frames, cal, layer, dt=None):
     n_t, n_sp = n_frames // TUBELET, GRID * GRID
-    px = to_tensor(clip, torch, dev, torch.float32)
+    # input dtype must match the model's, or an fp16 model gets fp32 in
+    px = to_tensor(clip, torch, dev, dt or torch.float32)
     alpha, b = cal
     bT = torch.tensor(b, device=dev)
     with torch.no_grad():
@@ -112,6 +113,11 @@ def main():
     # source calibration travels unchanged.
     ap.add_argument("--from-manifest", action="store_true")
     ap.add_argument("--calib", default="rcasa")
+    # COMPRESSION. fp16 is ~1.9x on MPS and expected near-lossless; --frames
+    # below 64 shortens the trace (64 -> 24 steps, 32 -> 8) and is a real
+    # quality trade that has to be measured, not assumed.
+    ap.add_argument("--fp16", action="store_true")
+    ap.add_argument("--suffix", default="")
     a = ap.parse_args()
 
     import torch
@@ -133,13 +139,14 @@ def main():
     cal = (float(z["alpha"]), z["b"].astype(np.float32))
     dev = "mps" if torch.backends.mps.is_available() else "cpu"
     print(f"loading {MODEL} onto {dev}...", flush=True)
-    model = VJEPA2Model.from_pretrained(MODEL, dtype=torch.float32).to(dev).eval()
+    dt = torch.float16 if a.fp16 else torch.float32
+    model = VJEPA2Model.from_pretrained(MODEL, dtype=dt).to(dev).eval()
     n_t = a.frames // TUBELET
     steps = len(range(CTX, n_t, WIN)) * WIN
     print(f"  loaded | v4: fixed context {CTX} steps, {steps} trace steps, "
           f"channels {CHANNELS}", flush=True)
 
-    out = OUT4 / f"{a.dataset}_L{a.layer}"
+    out = OUT4 / f"{a.dataset}_L{a.layer}{a.suffix}"
     out.mkdir(parents=True, exist_ok=True)
     todo = [p for p in files if not (out / f"{p.stem}.npz").exists()]
     print(f"{len(files)} episodes, {len(files)-len(todo)} cached, "
@@ -158,7 +165,7 @@ def main():
                 failed += 1
                 continue
             rec = record(model, torch, dev, sample_clip(F, a.frames),
-                         a.frames, cal, a.layer)
+                         a.frames, cal, a.layer, dt)
         except Exception as e:                                # noqa: BLE001
             tqdm.write(f"  {p.stem}: {type(e).__name__}: {e}")
             failed += 1

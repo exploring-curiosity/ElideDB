@@ -38,9 +38,9 @@ from relmo.vjsplit import load as load_split  # noqa: E402
 from relmo.vjzeval import evaluate, report  # noqa: E402
 
 
-def recs_for(dataset, ids=None):
-    rec = R.BASE / "vjrec4" / f"{dataset}_L6"
-    sig = R.BASE / "vjsig" / dataset
+def recs_for(dataset, ids=None, suffix=""):
+    rec = R.BASE / "vjrec4" / f"{dataset}_L6{suffix}"
+    sig = R.BASE / "vjsig" / f"{dataset}{suffix}"
     have = sorted(p.stem for p in rec.glob("*.npz"))
     if ids is not None:
         have = [i for i in have if i in ids]

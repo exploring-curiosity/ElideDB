@@ -60,6 +60,8 @@ def main():
     ap.add_argument("--frames", type=int, default=64)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--model", default=MODEL)
+    ap.add_argument("--suffix", default="",
+                    help="output dir suffix - the trace length depends\n                          on --frames, so 32-frame records (8 steps)\n                          must not overwrite 64-frame ones (24 steps)")
     ap.add_argument("--from-manifest", action="store_true",
                     help="enumerate the dataset manifest instead of a prior "
                          "vjrec pass - needed for OOD corpora, which have none")
@@ -92,7 +94,7 @@ def main():
 
     mean = torch.tensor([0.5, 0.5, 0.5]).view(1, 3, 1, 1)
     std = torch.tensor([0.5, 0.5, 0.5]).view(1, 3, 1, 1)
-    out = OUT / a.dataset
+    out = OUT / (a.dataset + a.suffix)
     out.mkdir(parents=True, exist_ok=True)
     todo = [p for p in files if not (out / f"{p.stem}.npz").exists()]
     print(f"{len(files)} episodes, {len(todo)} to do", flush=True)

@@ -115,6 +115,8 @@ def lambda_rank(s, rel, valid, torch):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="rcasa")
+    ap.add_argument("--rec-suffix", default="",
+                    help="compression variant: _fp16, _fp16f32, ...")
     ap.add_argument("--dim", type=int, default=128)
     ap.add_argument("--epochs", type=int, default=400)
     ap.add_argument("--lr", type=float, default=1e-3)
@@ -138,7 +140,9 @@ def main():
     torch.manual_seed(a.seed)
     np.random.seed(a.seed)
     sp = load_split()
-    D = vjz.gather(sp["train"] | sp["val"] | sp["test"])
+    D = vjz.gather(sp["train"] | sp["val"] | sp["test"],
+                   rec_dir=R.BASE / "vjrec4" / f"rcasa_L6{a.rec_suffix}",
+                   sig_dir=R.BASE / "vjsig" / f"rcasa{a.rec_suffix}")
     meta = vjrel.meta_table(a.dataset)
     hold = {h.strip() for h in a.hold_families.split(",") if h.strip()}
     tr = [i for i in sorted(sp["train"]) if i in D
