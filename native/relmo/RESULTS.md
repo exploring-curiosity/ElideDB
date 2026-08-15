@@ -30,7 +30,56 @@ video ──► V-JEPA 2 encoder (frozen)
 Nothing is labelled at write time. The corpus family names are parsed in
 `vjeval.py` only, for scoring.
 
-## Numbers — trained recurrence (2026-08-14)
+## Numbers - learned ranker on latents (2026-08-14, current)
+
+No hand-written event channels anywhere. Inputs are V-JEPA `a_t`, its realised
+change as two scalars, and SigLIP `sig_t`. Labels supervise a head over those
+latents as a graded RANKING (relmo/vjrel.py); the model never predicts a verb,
+object, scene or camera - given two clips it emits one number. 337k params,
+3 seeds, precision@support under group_key.
+
+| stage | val | test | ood_val (unseen tasks) |
+|---|---|---|---|
+| frozen encoder | 0.463 | 0.526 | 0.518 |
+| physics-supervised recurrence | 0.732 | 0.703 | 0.694 |
+| **learned ranker** | **0.924 +/-0.011** | **0.894 +/-0.015** | **0.730 +/-0.021** |
+| chance | 0.205 | 0.216 | 0.214 |
+
+### The limit, from family holdout
+
+Whole task families removed from training labels, then queried:
+
+| held out | prec on held-out families | chance |
+|---|---|---|
+| Microwave (cabinet remains - same event group) | **0.816** | 0.194 |
+| Microwave + StackBowls | 0.648 | 0.194 |
+| Drawer (nothing sliding remains) | **0.215** | **0.194** |
+
+**An unseen OBJECT inside a trained event type generalises (0.816). An unseen
+event type that is CONFUSABLE with a trained one collapses to chance (0.215).**
+A held-out drawer opening gets absorbed into the "hinged open" category the
+model did learn, because nothing ever taught it that sliding is a different
+event.
+
+Novelty alone is not the problem. On ood_val, `ArrangeTea` - a wholly novel
+multi-step task - still self-clusters at 0.569 against 0.067 chance, 8.5x,
+because it resembles nothing in training. `OpenFridge` reaches 0.776 because
+hinged doors are all over rcasa. The failure mode is confusability, not
+unfamiliarity.
+
+### The learned scorer is refuted
+
+The owner asked for a similarity scorer rather than cosine, so the ranker
+scores the full 24x24 matrix of step-to-step similarities with a small CNN - a
+learned generalisation of DTW. At identical parameter count, encoder and loss
+it is WORSE everywhere: val 0.836 vs 0.924, ood_val 0.607 vs 0.730. The
+learning belongs in the encoder; the comparison should stay cheap. That also
+makes the later approximate-index stage tractable.
+
+Size vs value: d64 148k -> 0.834, **d128 337k -> 0.924**, d256 862k -> 0.856.
+Bigger is worse, not merely wasteful.
+
+## Numbers — trained recurrence (2026-08-14, superseded)
 
 The frozen numbers below are the ceiling of a frozen encoder. A trained
 `z_t = f(z_{t-1}, a_t, g_t)`, supervised only on **relational physics** read
