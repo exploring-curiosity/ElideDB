@@ -40,47 +40,42 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from relmo import registry as R  # noqa: E402
-from relmo.vjeval import REC, group_key, l2, parse  # noqa: E402
-from relmo.vjeval4 import subseq_batch  # noqa: E402
-from relmo.vjrec4 import OUT4  # noqa: E402
+from relmo import vjrank2, vjrel  # noqa: E402
+from relmo.vjeval import group_key, l2, parse  # noqa: E402
+from relmo.vjmatch import dtw  # noqa: E402
+from relmo.vjzeval import PAD_COST, _pad  # noqa: E402
 
 SHOW = 6
+CKPT = "p1_reg_low_s0"
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="rcasa")
     ap.add_argument("--queries", type=int, default=12)
-    ap.add_argument("--layer", type=int, default=6)
+    ap.add_argument("--ckpt", default=CKPT)
     a = ap.parse_args()
 
-    d = REC / a.dataset
-    # v4 + pred_change + span ranking: 0.525 [0.508,0.540], 2.37x chance.
-    d2 = OUT4 / f"{a.dataset}_L{a.layer}"
-    files = [p for p in sorted(d.glob("*.npz"))
-             if not p.name.startswith("_") and (d2 / f"{p.stem}.npz").exists()]
-    meta, seq, traces = [], [], []
-    for p in files:
-        meta.append(parse(p.stem))
-        z2 = np.load(d2 / f"{p.stem}.npz")
-        # pred_change = pred(t+k) - actual(t). The error channel is BARRED
-        # (owner, absolute): it is a function of (event, model prior), so the
-        # same event yields different descriptors as the prior shifts and an
-        # index built from it drifts against itself. Scoring higher on one
-        # frozen checkpoint is evidence about the checkpoint, not the design.
-        seq.append(z2["pred_change"])
-        m = z2["where_map"]
-        t = np.clip(m, 0, None).reshape(len(m), -1).mean(1)
-        traces.append((t / (t.max() + 1e-9)).round(3).tolist())
-    SEQ = l2(np.stack(seq))
-    # GROUP-AWARE truth, matching the headline metric. Verb-only grading
-    # counts a drawer as a door, which penalised the system for a distinction
-    # it draws correctly (drawers matched hinged doors at rank ~100, hinged
-    # doors matched each other at ~12-20).
+    AM = vjrel.all_meta()
+    print(f"loading per-token corpus and {a.ckpt}...", flush=True)
+    D = vjrank2.load_corpus()
+    model, _ = vjrank2.load_ckpt(a.ckpt)
+    Z = vjrank2.encode_all(model, D)
+    names = [i for i in sorted(Z) if i in AM and parse(i)]
+    meta = [parse(i) for i in names]
     verb = np.array([group_key(m) for m in meta])
     obj = np.array([m["obj"] for m in meta])
-    epid = np.array([f"{m['task']}#{m['epnum']}" for m in meta])
-    names = [p.stem for p in files]
+    epid = np.array([AM[i]["rollout"] for i in names])
+    dur = np.array([AM[i]["dur"] for i in names])
+    P, ok = _pad([l2(Z[i]) for i in names])
+    L = np.array([len(Z[i]) for i in names])
+    REL, _ = vjrel.relevance(names, AM)
+
+    # per-step activity for the sparkline, from the gate the pooling head sees
+    traces = []
+    for i in names:
+        g = D[i]["gate"].sum(1)
+        traces.append((g / (g.max() + 1e-9)).round(3).tolist())
 
     rng = np.random.default_rng(0)
     combos = sorted({(v, o) for v, o in zip(verb, obj)
@@ -93,24 +88,26 @@ def main():
                                              replace=False)]
     picks = picks[:a.queries]
 
-    def card(j, rank=None, qv=None, qo=None):
-        # CORRECT = same verb, object irrelevant (owner's definition).
-        # Cross-object is still marked separately because it is the harder
-        # case and worth seeing, but it is not a different grade.
+    def card(j, rank=None, qv=None, qo=None, qd=None):
         kind = ("q" if qv is None else
                 "cross" if (verb[j] == qv and obj[j] != qo) else
                 "same" if verb[j] == qv else "wrong")
+        # the GT now decays relevance with the DURATION RATIO, so show it:
+        # a match at 2.9x duration is a different moment, not a near miss
+        ratio = (max(dur[j], qd) / max(min(dur[j], qd), 1e-9)) if qd else None
         return dict(verb=meta[j]["verb"], obj=meta[j]["obj"], kind=kind,
-                    rank=rank, trace=traces[j],
-                    src=f"../datasets/{a.dataset}/shard_0000/{names[j]}/frames.mp4")
+                    rank=rank, trace=traces[j], dur=round(float(dur[j]), 1),
+                    ratio=(round(float(ratio), 2) if ratio else None),
+                    src=f"../datasets/{a.dataset}/shard_0000/{names[j]}"
+                        f"/frames.mp4")
 
     out = []
     for i in picks:
-        full = np.where(epid != epid[i])[0]
-        # rank by BEST-SPAN cost, not whole-sequence cosine: measured
-        # +0.0088 [+0.0041,+0.0136] and it is what makes the descriptor
-        # warp-invariant (rank 1.0 on every warp vs 85.5 for cosine).
-        s = -subseq_batch(SEQ[i], SEQ[full])
+        keep = epid != epid[i]
+        full = np.where(keep)[0]
+        C = 1.0 - np.einsum("sd,nkd->nsk", l2(Z[names[i]]), P[keep])
+        C = np.where(ok[keep][:, None, :], C, PAD_COST)
+        s = -dtw(C, False, L[keep])
         order = full[np.argsort(-s)]
         rank_of = {int(j): r + 1 for r, j in enumerate(order)}
         sv = verb[order] == verb[i]
@@ -118,35 +115,40 @@ def main():
         sup = int(sv.sum())
         if sup < 5 or cx.sum() < 3:
             continue
-        diff = [int(j) for j in order if obj[j] != obj[i]][:SHOW]
-        # recall of cross-object same-verb at k = support - the honest cut.
-        # A fixed k=10 cannot show this at all; see the module docstring.
-        # precision at k = support, correct = SAME VERB (any object)
+        rel = REL[i][order]
+        k = sup
+        disc = 1 / np.log2(np.arange(2, k + 2))
+        nd = float((rel[:k] * disc).sum()
+                   / max((np.sort(rel)[::-1][:k] * disc).sum(), 1e-9))
         prec = float(sv[:sup].sum() / sup)
         rec = float(cx[:sup].sum() / max(cx.sum(), 1))
         first = next((rank_of[int(j)] for j in order
                       if obj[j] != obj[i] and verb[j] == verb[i]), None)
+        diff = [int(j) for j in order if obj[j] != obj[i]][:SHOW]
         out.append(dict(
             query=card(i), verb=meta[i]["verb"], obj=meta[i]["obj"],
-            support=sup, n_cross=int(cx.sum()),
-            prec=round(prec, 3), recall=round(rec, 3), first=first,
-            pool=len(full),
-            top=[card(int(j), rank_of[int(j)], verb[i], obj[i])
+            support=sup, n_cross=int(cx.sum()), prec=round(prec, 3),
+            ndcg=round(nd, 3), recall=round(rec, 3), first=first,
+            pool=int(keep.sum()),
+            top=[card(int(j), rank_of[int(j)], verb[i], obj[i], dur[i])
                  for j in order[:SHOW]],
-            cross=[card(j, rank_of[j], verb[i], obj[i]) for j in diff]))
+            cross=[card(j, rank_of[j], verb[i], obj[i], dur[i])
+                   for j in diff]))
 
     vd = R.BASE / "viewer"
     vd.mkdir(parents=True, exist_ok=True)
     (vd / "results.json").write_text(json.dumps(out))
     (vd / "index.html").write_text(HTML)
     print(f"wrote {len(out)} queries -> {vd/'index.html'}")
-    print(f"{'query':22s} {'support':>8s} {'prec@sup':>9s} {'cross rec':>10s} "
-          f"{'1st cross-obj':>14s}")
+    print(f"{'query':22s} {'support':>8s} {'prec@sup':>9s} {'NDCG@sup':>9s} "
+          f"{'cross rec':>10s} {'1st cross-obj':>14s}")
     for q in out:
         print(f"{q['verb']+q['obj']:22s} {q['support']:8d} {q['prec']:9.3f} "
-              f"{q['recall']:10.3f} {str(q['first']):>14s}")
-    print(f"\nmean precision@support (correct = same event, any object): "
-          f"{np.mean([q['prec'] for q in out]):.3f}   chance 0.222")
+              f"{q['ndcg']:9.3f} {q['recall']:10.3f} {str(q['first']):>14s}")
+    print(f"\nmean prec@support {np.mean([q['prec'] for q in out]):.3f}  "
+          f"mean NDCG@support {np.mean([q['ndcg'] for q in out]):.3f}  "
+          f"(this page is a DEMO over the full corpus, not the held-out "
+          f"protocol; test-split numbers are in RESULTS.md)")
 
 
 HTML = r"""<meta charset="utf-8"><title>ElideDB - cross-object retrieval</title>
@@ -173,15 +175,22 @@ svg{display:block;margin-top:4px}
 .key{font-size:12px;color:var(--dim);margin-bottom:18px}
 b.ok{color:var(--ok)}b.no{color:var(--no)}b.sm{color:var(--same)}
 </style>
-<h1>When did I open a door? &mdash; cabinet, fridge or microwave</h1>
-<p class="sub">Ranked over the <em>whole</em> corpus, exactly as a real query would be. The top of the
-list is dominated by the query's own object &mdash; that is correct, another clip of the same cabinet
-opening really is the nearest moment. The question is whether the <em>analogies</em> are found at all,
-and how deep you have to look. That is what the second row shows.</p>
+<h1>When did something like this happen? &mdash; cabinet, fridge or microwave</h1>
+<p class="sub">Learned 256-token pooling over V-JEPA&nbsp;2 plus SigLIP&nbsp;2 appearance, matched by
+anchored symmetric2 DTW over a 128-d state. Ranked across the <em>whole</em> corpus, exactly as a real
+query would be. The top of the list is dominated by the query's own object &mdash; that is correct,
+another clip of the same cabinet opening really is the nearest moment. The question is whether the
+<em>analogies</em> are found at all and how deep you have to look, which is what the second row shows.</p>
+<p class="sub"><b>This page is a demo over the full corpus and includes training recordings, so it reads
+higher than the real numbers.</b> Held out, on test queries against a train-disjoint pool:
+prec@support&nbsp;0.856&nbsp;&plusmn;&nbsp;0.014, NDCG@support&nbsp;0.741, wAUC&nbsp;0.943 &mdash;
+against a random floor of 0.217&nbsp;/&nbsp;0.150&nbsp;/&nbsp;0.502.</p>
 <p class="key"><b class="ok">Green</b> and <b class="sm">grey</b> are both <b>correct</b> &mdash; same kind of event.
 Green additionally means a <em>different object</em>, the harder case.
 <b class="no">Red</b> is wrong: a different kind of event. Badge = rank in the full ranking.
-The ranking never sees these labels.</p>
+The ranking never sees these labels. Each result also shows its duration and its duration
+<em>ratio</em> to the query &mdash; the ground truth decays relevance as that ratio grows, because a
+much slower replay is a different moment, not a near miss.</p>
 <div id="app"></div>
 <script>
 function spark(t){const w=138,h=22,n=t.length;
@@ -193,7 +202,8 @@ function card(c){
  // cap, every request queues, and the whole page renders as black rectangles.
  return `<div class="c ${c.kind}"><video data-src="${c.src}" muted loop playsinline preload="none"></video>
  ${c.rank?`<span class="rk">#${c.rank}</span>`:''}
- <div class="n"><span class="lab">${c.verb}</span><span class="dim">${c.obj}</span></div>${spark(c.trace)}</div>`}
+ <div class="n"><span class="lab">${c.verb}</span><span class="dim">${c.obj}</span>
+ <span class="dim"> &middot; ${c.dur}s${c.ratio?` &middot; ${c.ratio}\u00d7`:''}</span></div>${spark(c.trace)}</div>`}
 fetch('results.json').then(r=>r.json()).then(qs=>{
  document.getElementById('app').innerHTML=qs.map(q=>`<div class="q">
  <div class="qh">${card(q.query)}

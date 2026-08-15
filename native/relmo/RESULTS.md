@@ -1327,3 +1327,84 @@ not rest on the selection.
 Per-token records are 0.95 GB for rcasa and 0.16 GB for rcasa_eval at 96-d
 fp16, from one extra encode pass (~13 min). Training is ~12 min per seed. The
 model is 384k parameters and emits a 128-d descriptor per step.
+
+---
+
+# System cost, measured
+
+`relmo/vjcost` times the shipped path end to end. Model loading is excluded (paid
+once per process); ffmpeg decode, V-JEPA, SigLIP, the pooling head and the
+recurrence are all inside the clock.
+
+## Write
+
+| stage | share of write time | x real-time |
+|---|---|---|
+| ffmpeg decode | 2.9% | 102x |
+| **V-JEPA 2** | **92.0%** | **3.2x** |
+| SigLIP 2 | 5.1% | 58x |
+| pooling head + f | 0.1% | 3454x |
+
+V-JEPA is essentially the entire write cost. Per window (2 s of stream):
+
+| | ms/window | compute-min per video-hour | x real-time |
+|---|---|---|---|
+| encoder only | 369 | - | - |
+| encoder + predictor | 499 | 15.0 | 4.0x |
+| **as currently implemented** | **868** | **26.0** | **2.3x** |
+
+**The current implementation runs the V-JEPA encoder TWICE per window** - once in
+`vjrec6` for the pooled channels and again in `vjrec7` for the tokens. Merging
+them into one pass is a code change with no model change and recovers **1.74x**:
+26.0 -> 15.0 compute-minutes per video-hour for V-JEPA, so roughly **17
+compute-minutes per hour of video, ~3.5x real-time**, or 3-4 simultaneous camera
+streams on this machine. The predictor is only 26% of a full pass; the encoder
+is the rest.
+
+## Read
+
+Index of 474 recordings, 26,959 steps, 128-d per step.
+
+| stage | ms | scales with |
+|---|---|---|
+| encode a 12 s query clip | 3989 | query LENGTH only |
+| search the whole index | 753 | corpus size, LINEARLY |
+| **total per query** | **4742** | |
+
+Two things follow. **Query encoding dominates** - it costs exactly what writing
+that clip would, so the merged single pass halves it too (~2.3 s). And **search
+is 1.59 s per 1000 recordings**, which is exact brute-force subsequence DTW
+against every candidate; at 100k recordings that is 159 s. This is the
+approximate-index stage that has always been deferred, and these are the numbers
+it has to beat.
+
+# Text queries: does this corpus suffice?
+
+The earlier text-to-z attempt memorised its targets rather than learning a
+direction. That was diagnosed as a data problem, and it is worth checking
+against what is now on disk rather than repeating the assumption:
+
+| corpus | episodes | distinct instructions | distinct words |
+|---|---|---|---|
+| rcasa (the trained corpus) | 447 | 54 | 80 |
+| rcasa_atomic_full | 2250 | 156 | 144 |
+| rcasa_composite_full | 1152 | 108 | **207** |
+
+The composite instructions are also structurally different - multi-clause and
+compositional ("select a croissant and place it on the cutting board, then
+retrieve a jar of jam from the cabinet...") rather than the atomic template
+("Close the cabinet door.").
+
+So: **more corpus is available and it materially changes the regime** - 264
+distinct instructions over ~250 words against the 54 over 80 that produced the
+memorisation. But it does not make the problem general. The vocabulary is
+kitchen-specific and machine-generated from templates, so what could be trained
+on it is a text encoder that works inside this domain, not one that transfers to
+arbitrary language. The honest split:
+
+* **works on this data**: routing a text query to the right EVENT FAMILY, since
+  SigLIP 2's text tower already shares a space with the `sig` channel, and `sig`
+  is one of the three inputs to z. A text->sig->z path needs no new corpus.
+* **needs more than this data**: a general text encoder. 250 templated words
+  cannot teach compositional language, and adding more RoboCasa will add
+  episodes without adding linguistic variety.
