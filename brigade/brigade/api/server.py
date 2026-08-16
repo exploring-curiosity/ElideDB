@@ -130,26 +130,24 @@ def create_app(runner: SimRunner, memory=None, agent=None) -> FastAPI:
 
     @app.post("/api/door")
     def door(req: DoorRequest):
+        """Ask the ROBOT to open/close a door. There is no state-write path.
+
+        Doors move when the gripper moves them, so this enqueues a high-priority
+        task for the agent rather than touching the hinge. The old direct
+        endpoint was removed deliberately — a door swinging with nobody near it
+        is the fakery this project was told to remove.
+        """
         _require_running()
         if req.action not in ("open", "close"):
             raise HTTPException(400, "action must be open or close")
-
-        def _do(env):
-            fxtr = env.fixtures.get(req.fixture)
-            if fxtr is None:
-                raise KeyError(req.fixture)
-            if not hasattr(fxtr, "open_door"):
-                raise ValueError(f"{req.fixture} has no door")
-            (fxtr.open_door if req.action == "open" else fxtr.close_door)(env)
-            env.sim.forward()
-            return dict(fixture=req.fixture, is_open=bool(fxtr.is_open(env)))
-
-        try:
-            return runner.call(_do)
-        except KeyError as exc:
-            raise HTTPException(404, f"no fixture {exc}") from exc
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+        if memory is None:
+            raise HTTPException(503, "memory offline — the robot cannot take jobs")
+        tid = memory.enqueue(
+            f"{req.action} the {req.fixture}", origin="user", priority=8,
+            subject=req.fixture,
+            payload=dict(door=req.fixture, action=req.action),
+        )
+        return dict(kind="task", task_id=tid, note="queued for the robot to do by hand")
 
     @app.post("/api/jog")
     def jog(req: JogRequest):

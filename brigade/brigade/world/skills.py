@@ -147,7 +147,10 @@ def _drive(target_xy, standoff: float, max_steps: int, what: str):
 
             R = T.quat2mat(np.array(o["robot0_base_quat"]))[:2, :2]
             err_base = R.T @ to_target
-            cmd = err_base / max(float(np.linalg.norm(err_base)), 1e-6) * _BASE_CMD
+            # Taper near the goal: a constant-magnitude command orbits the
+            # target forever instead of entering the acceptance radius.
+            mag = _BASE_CMD * min(1.0, (dist - standoff + 0.05) / 0.30)
+            cmd = err_base / max(float(np.linalg.norm(err_base)), 1e-6) * max(mag, 0.12)
             a = np.zeros(env.action_dim)
             a[7:9] = cmd
             a[11] = -1.0  # base control mode
@@ -336,17 +339,25 @@ def pick(instance_id: str, strategy: str = "top"):
 
 
 def place(instance_id: str, fixture_name: str):
-    """Put whatever is held onto/into a fixture. Judged by where it ends up."""
+    """Put whatever is held onto/into a fixture. Judged by where it ends up.
+
+    Does NOT open doors — doors are the door module's job, physically, and the
+    agent sequences that before placing. If the target is a closed container
+    this fails honestly with "door shut" rather than teleporting the hinge.
+    """
 
     def controller(env):
+        from . import doors as D
+
         fxtr = env.fixtures[fixture_name]
-        if hasattr(fxtr, "open_door"):
-            try:
-                if not fxtr.is_open(env):
-                    fxtr.open_door(env)
-                    env.sim.forward()
-            except Exception:
-                pass
+        if D.openable(env, fixture_name):
+            norms = D.door_norms(env, fixture_name)
+            if norms and max(norms.values()) < D.SEE_INSIDE:
+                return SkillResult(
+                    False, "place", 0.0, "overhead",
+                    f"{fixture_name} door is shut ({max(norms.values()):.2f}); open it first",
+                    dict(door_shut=True, fixture=fixture_name, instance_id=instance_id),
+                )
 
         try:
             regions = fxtr.get_reset_regions(env=env)
@@ -399,63 +410,77 @@ def place(instance_id: str, fixture_name: str):
     return controller
 
 
-def open_fixture(name: str):
-    """Open a door. The robot drives to it; the latch itself is actuated.
+def open_fixture(name: str, side: str = "right"):
+    """Open a cabinet door BY HAND — crack the handle, sweep the slab.
 
-    Being explicit: the door opening is programmatic (`fixture.open_door`), not
-    a learned manipulation. The robot really does travel to the fixture first,
-    and the result says `assisted` so nothing downstream can mistake this for a
-    grasped door handle.
+    Pure contact physics (see doors.py for the measured recipe). Anything
+    without that handle geometry — fridge, microwave — honestly fails with
+    "cannot open", and the agent must route around it.
     """
 
     def controller(env):
-        fxtr = env.fixtures.get(name)
-        if fxtr is None or not hasattr(fxtr, "open_door"):
-            return SkillResult(False, "open", 0.0, "assisted", f"{name} has no door")
-        yield from drive_to(name)(env)
-        fxtr.open_door(env)
-        env.sim.forward()
-        for _ in range(10):
-            yield None
-        return SkillResult(bool(fxtr.is_open(env)), "open", 0.0, "assisted", f"opened {name}")
+        from . import doors as D
+
+        if not D.openable(env, name):
+            return SkillResult(False, "open", 0.0, "hand",
+                               f"{name} has no door this hand can work")
+        yield from D.open_door(name, side)(env)
+        got = D.door_norms(env, name).get(f"{side}_door", 0.0)
+        deg = got * D.FULL_RAD * 57.3
+        return SkillResult(got >= D.OPEN_ENOUGH, "open", 0.0, "hand",
+                           f"{name}/{side} pulled to {deg:.0f}° by contact",
+                           dict(fixture=name, side=side, angle_norm=got))
 
     return controller
 
 
-def close_fixture(name: str):
+def close_fixture(name: str, side: str = "right"):
     def controller(env):
-        fxtr = env.fixtures.get(name)
-        if fxtr is None or not hasattr(fxtr, "close_door"):
-            return SkillResult(False, "close", 0.0, "assisted", f"{name} has no door")
-        fxtr.close_door(env)
-        env.sim.forward()
-        for _ in range(10):
-            yield None
-        return SkillResult(not fxtr.is_open(env), "close", 0.0, "assisted", f"closed {name}")
+        from . import doors as D
+
+        if not D.openable(env, name):
+            return SkillResult(False, "close", 0.0, "hand", f"{name} has no door")
+        yield from D.close_door(name, side)(env)
+        got = D.door_norms(env, name).get(f"{side}_door", 1.0)
+        return SkillResult(got <= D.CLOSED_ENOUGH * 1.5, "close", 0.0, "hand",
+                           f"{name}/{side} pushed to {got:.2f}",
+                           dict(fixture=name, side=side, angle_norm=got))
 
     return controller
 
 
 def survey(fixture_name: str):
-    """Go and look inside something. This is how exploration happens.
+    """Go and look inside something — which means physically opening it first.
 
-    Returns what was found in `payload["found"]` — the list of object instances
-    now locatable in that fixture. An empty list is a real answer: the robot
-    looked and there was nothing there.
+    Contents are reported ONLY if the door is actually ajar past SEE_INSIDE.
+    A closed cabinet the hand failed to open reports failure and no contents,
+    because a robot cannot see through a door, and pretending otherwise is the
+    exact fakery this project was told to remove.
     """
 
     def controller(env):
-        yield from drive_to(fixture_name)(env)
-        fxtr = env.fixtures.get(fixture_name)
+        from . import doors as D
+
+        if not D.openable(env, fixture_name):
+            return SkillResult(False, "survey", 0.0, "look",
+                               f"cannot open {fixture_name} with this hand",
+                               dict(fixture=fixture_name, found=[], labels={}))
         opened = False
-        if fxtr is not None and hasattr(fxtr, "open_door"):
-            try:
-                if not fxtr.is_open(env):
-                    fxtr.open_door(env)
-                    env.sim.forward()
-                    opened = True
-            except Exception:
-                pass
+        norms = D.door_norms(env, fixture_name)
+        if not norms or max(norms.values()) < D.SEE_INSIDE:
+            yield from D.open_door(fixture_name, "right")(env)
+            opened = True
+            norms = D.door_norms(env, fixture_name)
+        if norms and max(norms.values()) < D.SEE_INSIDE:
+            # The right handle would not yield; the left door is a different
+            # bar with fresh geometry — a real second chance, not a rerun.
+            yield from D.open_door(fixture_name, "left")(env)
+            norms = D.door_norms(env, fixture_name)
+        ajar = bool(norms) and max(norms.values()) >= D.SEE_INSIDE
+        if not ajar:
+            return SkillResult(False, "survey", 0.0, "look",
+                               f"{fixture_name}: door would not open enough to see inside",
+                               dict(fixture=fixture_name, found=[], labels={}, opened=opened))
         for _ in range(12):  # dwell so the cameras actually see the inside
             yield None
         snap = env.world_snapshot()

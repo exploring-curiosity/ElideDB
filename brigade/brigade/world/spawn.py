@@ -91,17 +91,12 @@ def teleport(runner: SimRunner, instance_id: str, fixture_name: str, seed: int |
         if target is None:
             target = np.asarray(fixture.pos, dtype=float)
 
-        # An openable fixture must be open or the object lands inside a closed
-        # door and the scene is nonsense. Opening it is a world change, so it is
-        # reported back and the caller writes it to memory.
+        # Doors are NEVER touched here. This is the demo god-hand: an object may
+        # materialise inside a closed cabinet (that is where "someone put the
+        # mugs away last week" comes from), but a door swinging with nobody near
+        # it is exactly the fakery this project was told to remove. Only the
+        # robot's gripper moves doors (world/doors.py).
         opened = False
-        if hasattr(fixture, "open_door"):
-            try:
-                if not fixture.is_open(env):
-                    fixture.open_door(env)
-                    opened = True
-            except Exception:
-                pass
 
         joint = env.objects[instance_id].joints[0]
         qpos = np.array(env.sim.data.get_joint_qpos(joint), dtype=float)

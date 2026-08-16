@@ -236,8 +236,25 @@ class Agent:
 
     def _do_task(self, task: dict) -> None:
         goal = task["goal"]
-        iid = (task.get("payload") or {}).get("instance_id") or task.get("subject")
-        label = (task.get("payload") or {}).get("label")
+        payload = task.get("payload") or {}
+
+        # A door job from a human: "open the cab_2". Done by hand like everything.
+        if payload.get("door"):
+            name, action = payload["door"], payload.get("action", "open")
+            self._beat("act", f"{action} {_short(name)} by hand", "asked by the user")
+            skill = skills.open_fixture if action == "open" else skills.close_fixture
+            res = self._run_skill(skill(name, "right"), action, name, timeout_s=240.0)
+            self.mem.remember(
+                f"{action}ed {name} by hand — {'success' if res.ok else 'failure'} — {res.detail}",
+                kind="outcome", subject=name, outcome="success" if res.ok else "failure",
+                task_id=str(task["id"]),
+            )
+            self.mem.finish(task["id"], res.ok, res.detail)
+            self.stats["tasks_done" if res.ok else "tasks_failed"] += 1
+            return
+
+        iid = payload.get("instance_id") or task.get("subject")
+        label = payload.get("label")
         t0 = time.time()
 
         if iid is None:
@@ -332,8 +349,26 @@ class Agent:
             self._beat("learn", f"gave up on the {label}", got.detail, ok=False)
             return
 
+        # If home is a cabinet whose doors are shut, the robot opens one BY HAND
+        # before placing. If one door's opening is not enough for the object to
+        # land inside, it opens the second and tries again — adaptation, not
+        # teleportation.
         self._run_skill(skills.drive_to(home), "drive_to", home)
-        put = self._run_skill(skills.place(iid, home), "place", iid)
+        from ..world import doors as D
+
+        needs_door = self.runner.call(lambda env: D.openable(env, home))
+        if needs_door:
+            norms = self.runner.call(lambda env: D.door_norms(env, home))
+            if not norms or max(norms.values()) < D.SEE_INSIDE:
+                self._beat("act", f"opening {_short(home)} by hand", "crack the handle, sweep the door")
+                self._run_skill(skills.open_fixture(home, "right"), "open", home, timeout_s=240.0)
+        put = self._run_skill(skills.place(iid, home), "place", iid, timeout_s=120.0)
+        if not put.ok and needs_door and (put.payload or {}).get("door_shut") is not True:
+            self._beat("learn", "did not land inside; opening the other door", "", ok=False)
+            self._run_skill(skills.open_fixture(home, "left"), "open", home, timeout_s=240.0)
+            got2 = self._run_skill(skills.pick(iid, strategy), "pick", iid, strategy)
+            if got2.ok:
+                put = self._run_skill(skills.place(iid, home), "place", iid, timeout_s=120.0)
 
         # ---- LEARN ---------------------------------------------------------
         seconds = time.time() - t0
@@ -382,11 +417,19 @@ class Agent:
         # Nearest first. Searching in dictionary order makes the robot criss-cross
         # the kitchen, which is both slow and reads as aimless on camera; a person
         # looking for bowls checks the cupboard they are standing next to.
+        # Only fixtures the HAND can open count: exploration means physically
+        # pulling doors now, so a fridge this gripper cannot work is not a place
+        # the robot can look, and pretending to see inside it would be fake.
         def _by_distance(env):
             import numpy as np
 
+            from ..world import doors as D
+
             here = np.array(env._get_observations()["robot0_base_pos"])[:2]
-            cands = [t["name"] for t in env.placement_targets() if t["kind"] == "container"]
+            cands = [
+                t["name"] for t in env.placement_targets()
+                if t["kind"] == "container" and D.openable(env, t["name"])
+            ]
             return sorted(
                 cands,
                 key=lambda n: float(np.linalg.norm(np.array(env.fixtures[n].pos)[:2] - here)),
@@ -397,8 +440,16 @@ class Agent:
         for name in targets:
             if self._stop.is_set():
                 return None
-            self._beat("act", f"looking in {_short(name)}", "searching for a match")
-            res = self._run_skill(skills.survey(name), "survey", name)
+            self._beat("act", f"looking in {_short(name)}",
+                       "driving over and pulling the door open")
+            res = self._run_skill(skills.survey(name), "survey", name, timeout_s=240.0)
+            if not res.ok:
+                # Could not get the door open enough to see. Real answer; move on.
+                self.mem.remember(
+                    f"could not see inside {name}: {res.detail}",
+                    kind="observation", subject=name, outcome="failure",
+                )
+                continue
             opened += 1
             labels = (res.payload or {}).get("labels", {})
             match = [i for i, lab in labels.items() if lab == label]
@@ -424,8 +475,9 @@ class Agent:
     # ---- helpers ------------------------------------------------------------
 
     def _run_skill(self, controller, name: str, subject: str = "",
-                   strategy: str = "default") -> SkillResult:
-        res = self.runner.run_skill(name, controller, subject=subject, strategy=strategy)
+                   strategy: str = "default", timeout_s: float | None = None) -> SkillResult:
+        res = self.runner.run_skill(name, controller, subject=subject, strategy=strategy,
+                                    timeout_s=timeout_s)
         self._beat("act", f"{name} {_short(subject)}".strip(), res.detail, ok=res.ok)
         return res
 
