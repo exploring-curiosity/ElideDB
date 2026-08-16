@@ -70,6 +70,14 @@ def build_reps(Z, D, have, k_white=256):
             i: np.concatenate([apply_w(D[i]["fix"].astype(np.float32), wf),
                                apply_w(D[i]["sig"].astype(np.float32), ws)], -1)
             for i in have},
+        # THE CONTROL. The frozen baseline is whitened+512d while the fusion
+        # is z-scored+2048d, so a fusion win could be the normalisation and
+        # the kept dimensions rather than z. This row holds everything fixed
+        # except z's presence.
+        "fix+sig zscored NOz": {
+            i: np.concatenate([zs(D[i]["fix"].astype(np.float32)),
+                               zs(D[i]["sig"].astype(np.float32))], -1)
+            for i in have},
         "z + fix + sig (z-scored)": {
             i: np.concatenate([zs(Z[i]), zs(D[i]["fix"].astype(np.float32)),
                                zs(D[i]["sig"].astype(np.float32))], -1)

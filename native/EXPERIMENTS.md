@@ -66,8 +66,33 @@ Columns: what was tried / the number / the reading.
 | **whitening on target corpus** | **sig unseen 0.258→0.293 (+14%)** | fits itself to any corpus; carries no rcasa |
 | **fix+sig whitened** | **0.312/0.312/0.312** | ZERO seen-vs-unseen gap. Fully frozen |
 | **head+fix+sig fused** | **unseen 0.248→0.314 (+27%)** | best overall 0.341; channels complementary off-domain |
-| **ssl-z + fix + sig, z-scored, SEALED corpus** | **0.404 ALL / 0.406 unseen** | **CURRENT BEST.** Beats frozen-only (0.376) by +9% rel. A z weak ALONE (0.211) still adds when fused — pattern repeats on both corpora |
+| **frozen fix+sig, Z-SCORED, 1792d, SEALED corpus** | **0.398 ALL / 0.400 unseen** | **CURRENT BEST, and it is UNTRAINED.** The gain over whitened-512d (0.376) is normalisation + retained dimensions |
 | mined cross-video positives | 94.5% same-task, 1754 pairs | the frozen space is good enough to teach itself; channel consensus rejects look-alikes |
+
+## 3a. THE DECISIVE CONTROL (2026-08-16) — the trained head is INERT
+
+| representation | d | unseen prec |
+|---|---|---|
+| frozen fix+sig whitened | 512 | 0.376 |
+| **frozen fix+sig z-scored, NO z** | 1792 | **0.400** |
+| ssl_v1 z + fix + sig | 2048 | 0.406 |
+| ssl_v2 z + fix + sig | 2048 | 0.404 |
+
+**z contributes +0.006 against a CI of ±0.04.** Every "fusion win" reported
+before this control was NORMALISATION and RETAINED DIMENSIONS, not the head.
+
+Two objectives as different as SSL admits — v1 forecast-driven with a dead
+contrastive term at PR 46.7, v2 contrastive-driven with a live one at PR 27.5
+— produced 0.406 and 0.404. A result that insensitive to what the model
+learned means the model is not the bottleneck.
+
+**Retroactive caution:** the earlier atomic claim "head+fix+sig 0.341 beats
+frozen 0.312, +27% from fusion" has the SAME confound — 0.312 was whitened,
+0.341 z-scored, and the control was never run there. Treat it as unproven.
+
+**Statistical caution:** at 60 queries CI is ±0.04, so 0.376 / 0.398 / 0.400 /
+0.404 / 0.406 are ONE BAND, not a ranking. Only z-alone (0.202-0.218) is
+clearly separated. Do not read rank order inside the noise.
 
 ## 3b. THE CENTRAL LESSON (2026-08-16, cost: one full training run)
 
@@ -145,9 +170,9 @@ Corpus-fitted constants in the path: token PCA, predictor calibration
 
 | id | change | PR(z) | prec (sealed) | verdict |
 |---|---|---|---|---|
-| ssl_v1_s{0,1,2} | span-pred + overlap-InfoNCE + VICReg, d=256 | 46.7 / 45.1 / 47.8 | alone **0.211**, FUSED **0.404** | alone: loses to frozen. fused: **BEST IN PROGRAM** |
+| ssl_v1_s{0,1,2} | span-pred + overlap-InfoNCE + VICReg, d=256 | 46.7/45.1/47.8 | alone 0.218, fused 0.406 | z adds +0.006 over the no-z control. NULL |
 | vjmine (deduped pool) | mutual top-10 + fix∧sig consensus + DTW verify | — | 94.5% same-task @ 20% keep | mined set is sound; 1754 pairs kept |
-| ssl_v2_s0 | + mined cross-video positives, hard negatives, span 0.5 | running | pending | the v1 correction |
+| ssl_v2_s0 | + mined cross-video positives, hard negatives, span 0.5 | 27.5 | alone 0.202, fused 0.404 | nce ALIVE (0.42 vs v1's 0.005) - the training defect WAS fixed - and retrieval did not move. NULL |
 
 ## 7. QUEUE — ranked, each must be self-supervised
 

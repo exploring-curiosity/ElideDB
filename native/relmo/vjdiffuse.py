@@ -106,11 +106,20 @@ def main():
     ap.add_argument("--alphas", default="0.0,0.5,0.7,0.9,0.95")
     ap.add_argument("--ks", default="10,20,50")
     ap.add_argument("--breakdown", default="rcasa")
+    ap.add_argument("--event-key", default="group", choices=["group", "task"],
+                    help="see vjreps: on rcasa_composite_full 'group' puts "
+                         "900/1152 records in one bucket (chance 0.543) and "
+                         "any diffusion test over that graph is meaningless, "
+                         "because propagating over a graph where 78% of nodes "
+                         "share a label just smears toward the majority")
     ap.add_argument("--out", default="")
     a = ap.parse_args()
 
     AM = vjrel.all_meta(("rcasa", "rcasa_eval", "rcasa_atomic_full",
                          a.dataset))
+    if a.event_key == "task":
+        for i in list(AM):
+            AM[i] = dict(AM[i], event=parse(i)["task"])
     seen = {parse(e["id"])["task"]
             for e in R.read_manifest(a.breakdown)["episodes"]} \
         if a.breakdown else None
