@@ -47,6 +47,8 @@ Columns: what was tried / the number / the reading.
 | 192px encoder | test −0.034, ood −0.068 | 1.84x faster, not free |
 | 64-frame window | test +0.041, **ood −0.114**, drops 13% of corpus | more context helps in-domain, hurts transfer |
 | movi_e corpus | 0/1616 usable | 2.0 s clips vs a 4 s window |
+| **grading composite by `group_key`** | **chance 0.543, lift 1.09-1.20x** | **INVALID METRIC.** The verb x object parser cannot read compositional names and dumps 900/1152 into `Other/Other`. Any prec measured this way is uninterpretable - it looked like 0.651 vs a 0.314 bar. Use `--event-key task`: 32 groups x 36, chance 0.031 |
+| overlap-InfoNCE with cross-recording negatives only | nce -> 0.005 by epoch 2 | "which video is this" is trivial; the term stops contributing. Same failure as the earlier hard-negative lesson. Fix = within-recording disjoint spans (`--hard-neg`) |
 | V-JEPA 2.1 ViT-B drop-in | unloadable | not in any released transformers; `encoder.layernorm` missing → random init, `predictor.proj` 1664 vs 768 |
 
 ## 3. ALIVE — measured wins, keep and build on
@@ -105,7 +107,8 @@ Corpus-fitted constants in the path: token PCA, predictor calibration
 
 | id | change | PR(z) | prec (sealed) | verdict |
 |---|---|---|---|---|
-| ssl_v1_s{0,1,2} | span-pred + overlap-InfoNCE + VICReg, d=256, 13 video-h pool | ep0 13.2 | pending | running |
+| ssl_v1_s0 | span-pred + overlap-InfoNCE + VICReg, d=256, 13 video-h pool (4453 traces) | **46.7** (33.8 on composite) | pending | PR gate passed decisively; collapse broken 3.8 -> 46.7 |
+| ssl_v1_s1/s2 | reseeds | s1 ep14 35.0 | pending | running |
 
 ## 7. QUEUE — ranked, each must be self-supervised
 

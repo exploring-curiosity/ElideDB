@@ -92,12 +92,24 @@ def main():
     ap.add_argument("--queries", type=int, default=60)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--breakdown", default="rcasa")
+    ap.add_argument("--event-key", default="group", choices=["group", "task"],
+                    help="'group' = vjeval.group_key (verb x object-kind). On "
+                         "rcasa_composite_full that parser cannot read "
+                         "compositional names and dumps 900 of 1152 records "
+                         "into one 'Other/Other' bucket, which drives chance "
+                         "to 0.543 and makes prec@support unable to "
+                         "discriminate. 'task' uses task identity - 32 groups "
+                         "of 36, chance 0.031 - and is the valid key for that "
+                         "corpus. Grading only; never reaches retrieval.")
     ap.add_argument("--only", default="", help="comma-separated rep names")
     ap.add_argument("--out", default="")
     a = ap.parse_args()
 
     AM = vjrel.all_meta(("rcasa", "rcasa_eval", "rcasa_atomic_full",
                          a.dataset))
+    if a.event_key == "task":
+        for i in list(AM):
+            AM[i] = dict(AM[i], event=parse(i)["task"])
     seen = None
     if a.breakdown:
         seen = {parse(e["id"])["task"]
