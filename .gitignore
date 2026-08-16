@@ -92,3 +92,12 @@ mujoco_menagerie/
 # this is here so the intent survives a change to that line.
 stores/_deskcache/
 native/verdicts.jsonl
+
+# stray runtime artifacts
+MUJOCO_LOG.TXT
+**/MUJOCO_LOG.TXT
+sam2.1_t.pt
+backups/
+vendor_arctic/
+vendor_robocasa/
+vendor_robosuite/
