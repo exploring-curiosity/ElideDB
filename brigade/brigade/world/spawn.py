@@ -60,10 +60,13 @@ def _region_world_pos(env, fixture, rng: np.random.Generator) -> np.ndarray | No
     reg = regions[name]
     ox, oy, oz = reg["offset"]
     w, d = reg["size"]
-    # Jitter within the region so repeated drops are not stacked in one spot,
-    # but stay clear of the edges.
+    # Jitter within the region so repeated drops are not stacked in one spot —
+    # but biased to the FRONT half. This is where a person actually leaves a
+    # mug, and it matters mechanically: an object against the backsplash is
+    # ~0.75 m from any legal stance, beyond the arm's 0.62 m envelope, so a
+    # back-of-counter drop creates a task no stance can complete.
     ox += float(rng.uniform(-0.30, 0.30)) * w
-    oy += float(rng.uniform(-0.30, 0.30)) * d
+    oy += float(rng.uniform(-0.42, -0.10)) * d
     try:
         # Respects the fixture's rotation; the naive pos+offset does not.
         return np.asarray(OU.get_pos_after_rel_offset(fixture, np.array([ox, oy, oz])), dtype=float)

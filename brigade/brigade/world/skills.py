@@ -172,35 +172,70 @@ def drive_to(fixture_name: str, standoff: float = 0.85, max_steps: int = 260):
                   _plain(fixture_name))
 
 
-def _approach_point(env, instance_id: str, reach: float = _ARM_REACH) -> np.ndarray:
-    """Where to stand in order to touch this object.
+def _approach_candidates(env, instance_id: str, reach: float = _ARM_REACH) -> list[np.ndarray]:
+    """Standing points from which the arm could touch this object, best first.
 
-    NOT the object's own position. An object on a counter has the counter under
-    it, so driving to its XY means driving into the furniture: the base stalls
-    and reports "1.33 m away, blocked". Instead stand back along the line from
-    the object toward where the robot already is — that direction is, by
-    construction, floor the robot is currently standing on.
+    NOT the object's own position — an object on a counter has the counter under
+    it, so driving to its XY means driving into furniture. And not only the
+    straight-line retreat either: the direct bearing can be blocked by things
+    that were not there a minute ago. The concrete case that forced the fan: the
+    robot OPENED a cabinet door, and that door then jutted into the aisle it
+    later needed for the approach — its own past action blocked the direct line
+    (stall at 0.20 m, grasp attempted from out of reach, "not held").
+
+    So: a fan of bearings around the retreat direction, each checked against the
+    fixture map for standing room. The drive tries them in order.
     """
     obj = np.array(env.sim.data.body_xpos[env.obj_body_id[instance_id]])[:2]
     here = np.array(_obs(env)["robot0_base_pos"])[:2]
     away = here - obj
     n = float(np.linalg.norm(away))
-    if n < 1e-6:
-        return obj
-    return obj + away / n * reach
+    base_dir = away / n if n > 1e-6 else np.array([0.0, -1.0])
+
+    cands = []
+    for deg in (0, 30, -30, 60, -60, 90, -90):
+        th = np.deg2rad(deg)
+        c, s = np.cos(th), np.sin(th)
+        d = np.array([c * base_dir[0] - s * base_dir[1], s * base_dir[0] + c * base_dir[1]])
+        p = obj + d * reach
+        try:
+            blocked = OU.check_fxtr_contact(env, np.array([p[0], p[1], 0.35]))
+        except Exception:
+            blocked = False
+        if not blocked:
+            cands.append(p)
+    return cands or [obj + base_dir * reach]
 
 
-def drive_to_object(instance_id: str, standoff: float = 0.14, max_steps: int = 260):
+def drive_to_object(instance_id: str, standoff: float = 0.14, max_steps: int = 200):
     """Park within arm's reach of an object, on accessible floor.
 
-    Distinct from drive_to(fixture), and the distinction is load-bearing: a
-    counter is metres long, so being 'at the counter' says nothing about whether
-    the thing on it can be touched. `standoff` here is tolerance around the
-    computed approach point, not distance to the object.
+    Tries a fan of approach bearings; a stalled bearing (something in the way)
+    falls through to the next instead of ending the skill. The result reports
+    the distance actually achieved to the OBJECT, which is what reach is about.
     """
-    return _drive(
-        lambda env: _approach_point(env, instance_id), standoff, max_steps, instance_id,
-    )
+
+    def controller(env):
+        last = None
+        for p in _approach_candidates(env, instance_id):
+            res = yield from _drive(p, standoff, max_steps, instance_id)(env)
+            last = res
+            obj = np.array(env.sim.data.body_xpos[env.obj_body_id[instance_id]])[:2]
+            here = np.array(_obs(env)["robot0_base_pos"])[:2]
+            gap = float(np.linalg.norm(obj - here))
+            if gap <= _ARM_REACH * 1.15:
+                return SkillResult(True, "drive_to", 0.0, "base",
+                                   f"{gap:.2f}m from {instance_id}",
+                                   dict(distance=gap, reached=True))
+        gap = float(np.linalg.norm(
+            np.array(env.sim.data.body_xpos[env.obj_body_id[instance_id]])[:2]
+            - np.array(_obs(env)["robot0_base_pos"])[:2]))
+        return SkillResult(False, "drive_to", 0.0, "base",
+                           f"all bearings blocked; {gap:.2f}m from {instance_id}",
+                           dict(distance=gap, reached=False,
+                                stalled=bool(last and (last.payload or {}).get("stalled"))))
+
+    return controller
 
 
 def _plain(name: str) -> str:
@@ -271,10 +306,13 @@ def pick(instance_id: str, strategy: str = "top"):
 
         obj = np.array(env.sim.data.body_xpos[env.obj_body_id[instance_id]], dtype=float)
         gap = float(np.linalg.norm(obj[:2] - np.array(_obs(env)["robot0_base_pos"])[:2]))
-        if gap > _ARM_REACH * 1.45:
+        if gap > _ARM_REACH * 1.25:
+            # Refuse with the reason rather than grasping air for 30 seconds.
+            # The failure text names the geometry so the memory entry is useful:
+            # "out of reach at 0.72m" teaches something; "not held" does not.
             return SkillResult(
                 False, "pick", 0.0, strategy,
-                f"cannot get within reach — {gap:.2f}m away (arm reaches ~{_ARM_REACH}m)",
+                f"out of reach — {gap:.2f}m away, arm reaches ~{_ARM_REACH}m",
                 dict(out_of_reach=True, distance=gap, instance_id=instance_id),
             )
 
