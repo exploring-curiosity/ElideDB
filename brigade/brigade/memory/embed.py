@@ -60,7 +60,11 @@ def encode(texts: str | list[str]) -> np.ndarray:
     if not batch:
         return np.zeros((0, CFG.memory.text_dim), dtype=np.float32)
     model = load()
-    vecs = model.encode(batch, normalize_embeddings=True, convert_to_numpy=True)
+    # No progress bar: this runs once per event write and once per recall, and a
+    # tqdm bar per single-item encode is pure terminal noise.
+    vecs = model.encode(
+        batch, normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=False
+    )
     vecs = np.asarray(vecs, dtype=np.float32)
     if vecs.shape[1] != CFG.memory.text_dim:
         raise ValueError(

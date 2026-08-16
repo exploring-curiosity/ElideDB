@@ -55,7 +55,7 @@ class MemoryConfig:
     # at a CockroachDB Cloud cluster.
     dsn: str = _env(
         "BRIGADE_DSN",
-        "postgresql://root@localhost:26257/brigade?sslmode=disable",
+        "postgresql://localhost:5433/brigade",
     )
     pool_min: int = _env_i("BRIGADE_POOL_MIN", 1)
     pool_max: int = _env_i("BRIGADE_POOL_MAX", 8)

@@ -55,20 +55,26 @@ class PoolItem:
 # so the cast is spread deliberately across four fixtures rather than piled onto
 # the one counter the robot happens to face.
 POOL: tuple[PoolItem, ...] = (
-    # Pre-existing stack, inside the home cabinet, unseen until the agent opens
-    # it. Act 1 depends on these being discoverable but not visible.
-    PoolItem("bowl_a", "bowl", "cab"),
-    PoolItem("bowl_b", "bowl", "cab"),
-    # The bowls that get "dropped" on the counter during the demo. They wait in
-    # a different, closed cabinet so their arrival is genuinely an arrival.
-    PoolItem("bowl_c", "bowl", "stage"),
-    PoolItem("bowl_d", "bowl", "stage"),
-    # Tea cast, on the counter where a human would leave them.
-    PoolItem("mug_a", "mug", "counter"),
+    # The existing set, inside the home cabinet, unseen until the agent opens it.
+    # Discovering these is how the robot works out where mugs are kept.
+    PoolItem("mug_a", "mug", "cab"),
+    PoolItem("mug_b", "mug", "cab"),
+    # The ones that get dropped into play during the demo. They wait in a
+    # different, closed cabinet so their arrival on the counter is genuinely an
+    # arrival rather than something that was always sitting there.
+    #
+    # Mugs and cans are the heroes because they are the objects this gripper can
+    # actually hold. MEASURED: the Panda aperture is ~0.08 m; a mug is 0.148 m
+    # across and yields to a side grasp (lifted 0.196 m), a can is 0.082 m and
+    # fits directly. A RoboCasa bowl is 0.33 m across and cannot be grasped by
+    # this hand at all — no controller fixes a 4x geometry mismatch.
+    PoolItem("mug_c", "mug", "stage"),
+    PoolItem("can_a", "can", "stage"),
+    # Scenery. These live on the counter, so the agent's first census accepts
+    # them as normal and never tries to tidy them away. The bowl doubles as an
+    # honest example of something the robot will correctly report it cannot lift.
+    PoolItem("bowl_a", "bowl", "counter"),
     PoolItem("kettle_a", "kettle_non_electric", "counter"),
-    # A distractor, so perception has to discriminate rather than "the only
-    # thing on the counter is the answer".
-    PoolItem("can_a", "can", "counter"),
 )
 
 

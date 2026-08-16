@@ -62,7 +62,21 @@ _JOG_AXES = {
 }
 
 
-def create_app(runner: SimRunner) -> FastAPI:
+class InstructRequest(BaseModel):
+    """A human telling the robot something. Two shapes only.
+
+    A rule ("bowls go in the cabinet") writes a NORM and changes future
+    unprompted behaviour. A job ("put the bowl away") writes a high-priority
+    TASK. Both enter the same queue the robot writes to itself.
+    """
+
+    text: str
+    label: str | None = None
+    location: str | None = None
+    instance_id: str | None = None
+
+
+def create_app(runner: SimRunner, memory=None, agent=None) -> FastAPI:
     app = FastAPI(title="Brigade — The Pass", docs_url="/api/docs")
     started = time.time()
 
@@ -207,18 +221,92 @@ def create_app(runner: SimRunner) -> FastAPI:
 
     # ---- events ----------------------------------------------------------
 
+    # ---- the agent -------------------------------------------------------
+
+    @app.get("/api/agent")
+    def agent_state():
+        """What the robot is doing and why — the console's whole point."""
+        if agent is None:
+            return dict(present=False, feed=[], status=dict(running=False))
+        return dict(present=True, status=agent.status(), feed=agent.feed(50))
+
+    @app.post("/api/agent/pause")
+    def agent_pause(on: bool = True):
+        if agent is None:
+            raise HTTPException(503, "no agent")
+        agent.paused = bool(on)
+        return dict(paused=agent.paused)
+
+    @app.get("/api/memory")
+    def memory_state():
+        if memory is None:
+            raise HTTPException(503, "memory offline")
+        return dict(
+            stats=memory.stats(),
+            beliefs=memory.beliefs(),
+            norms=memory.norms(),
+            tasks=memory.task_board(12),
+            decisions=memory.decision_log(8),
+            events=memory.recent(14),
+            skills=memory.skill_table(),
+        )
+
+    @app.get("/api/memory/recall")
+    def memory_recall(q: str, k: int = 5):
+        """Search the robot's memory the way the robot does."""
+        if memory is None:
+            raise HTTPException(503, "memory offline")
+        t0 = time.time()
+        hits = memory.recall(q, k=k, floor=0.0)
+        return dict(
+            query=q,
+            latency_ms=round((time.time() - t0) * 1000, 1),
+            hits=[dict(score=round(h.score, 3), text=h.text, kind=h.kind,
+                       outcome=h.outcome, subject=h.subject) for h in hits],
+        )
+
+    @app.post("/api/instruct")
+    def instruct(req: InstructRequest):
+        """Give the robot a rule or a job. Both are memory writes."""
+        if memory is None:
+            raise HTTPException(503, "memory offline")
+        if req.label and req.location:
+            norm = memory.instruct_norm(req.label, req.location)
+            return dict(kind="norm", label=req.label, location=req.location,
+                        confidence=norm["confidence"], source=norm["source"])
+        if req.instance_id:
+            label = runner.call(lambda env: env.object_label(req.instance_id))
+            tid = memory.enqueue(req.text or f"put the {label} away", origin="user",
+                                 priority=9, subject=req.instance_id,
+                                 payload=dict(instance_id=req.instance_id, label=label))
+            memory.remember(f"asked to: {req.text}", kind="instruction",
+                            subject=req.instance_id)
+            return dict(kind="task", task_id=tid, priority=9)
+        raise HTTPException(400, "give either (label, location) for a rule, or instance_id")
+
+    @app.post("/api/forget")
+    def forget():
+        """Wipe memory so the cold-start behaviour can be shown again."""
+        if memory is None:
+            raise HTTPException(503, "memory offline")
+        memory.wipe()
+        if agent is not None:
+            agent._known_locations.clear()
+        return dict(ok=True, stats=memory.stats())
+
     @app.get("/api/health")
     def health():
         return dict(
             sim=runner.status(),
-            memory=_memory_health(),
+            memory=_memory_health(memory),
+            agent=(agent.status() if agent is not None else dict(running=False)),
             uptime_s=round(time.time() - started, 1),
         )
 
     return app
 
 
-def _memory_health() -> dict:
+def _memory_health(memory=None) -> dict:
     """Report the memory layer honestly, including when it is absent.
 
     The console shows this in red when it is down, because "the agent stops when
@@ -228,19 +316,25 @@ def _memory_health() -> dict:
     try:
         from ..memory.db import DB
 
-        return dict(connected=DB.healthy(), dsn=DB._safe_dsn())
+        ok = DB.healthy()
+        out = dict(connected=ok, dsn=DB._safe_dsn())
+        if ok:
+            out["flavor"] = DB.flavor
+            out["native_vectors"] = DB.supports_vector()
+        return out
     except Exception as exc:
         return dict(connected=False, error=str(exc)[:200])
 
 
-def serve_in_background(runner: SimRunner, host: str = "127.0.0.1", port: int = 8080) -> threading.Thread:
+def serve_in_background(runner: SimRunner, host: str = "127.0.0.1", port: int = 8080,
+                        memory=None, agent=None) -> threading.Thread:
     """Start uvicorn on a worker thread and return it.
 
     The main thread must go on to run the simulation loop.
     """
     import uvicorn
 
-    app = create_app(runner)
+    app = create_app(runner, memory=memory, agent=agent)
     config = uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False)
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, name="brigade-http", daemon=True)

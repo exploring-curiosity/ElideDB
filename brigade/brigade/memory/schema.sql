@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS object_beliefs (
     instance_id   STRING NOT NULL,
     label         STRING NOT NULL,
     location      STRING NOT NULL,      -- fixture name
-    pos           FLOAT[] NOT NULL,
+    pos           FLOAT8[] NOT NULL,
     confidence    FLOAT NOT NULL DEFAULT 1.0,
     last_seen     TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_verified TIMESTAMPTZ,

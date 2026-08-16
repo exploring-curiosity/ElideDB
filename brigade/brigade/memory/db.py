@@ -37,6 +37,37 @@ log = logging.getLogger("brigade.memory")
 SERIALIZATION_FAILURE = "40001"
 _SCHEMA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
 
+# One schema, several backends. Two INDEPENDENT axes, which is why this is not
+# a single if/else:
+#
+#   dialect   crdb      — STRING, inline INDEX / INVERTED INDEX, CREATE VECTOR INDEX
+#             postgres  — TEXT, separate CREATE INDEX, GIN for JSONB
+#   vectors   native    — a real VECTOR(n) column and the `<=>` cosine operator.
+#                         True for CockroachDB (C-SPANN) and for Postgres with
+#                         pgvector (HNSW). Same operator, same query shape.
+#             arrays    — FLOAT8[] plus a cosine function we install. The
+#                         fallback when neither is available.
+#
+# The whole point is that NOTHING above this module changes when the DSN moves
+# to CockroachDB: same tables, same queries, same call sites. The differences
+# live in three small functions here.
+CRDB = "cockroach"
+POSTGRES = "postgres"
+
+_COSINE_FN = """
+CREATE OR REPLACE FUNCTION brigade_cosine(a FLOAT8[], b FLOAT8[])
+RETURNS FLOAT8 AS $$
+  SELECT CASE
+    WHEN a IS NULL OR b IS NULL OR array_length(a,1) IS DISTINCT FROM array_length(b,1)
+      THEN NULL
+    ELSE (
+      SELECT SUM(x*y) / NULLIF(SQRT(SUM(x*x)) * SQRT(SUM(y*y)), 0)
+      FROM unnest(a, b) AS t(x, y)
+    )
+  END
+$$ LANGUAGE SQL IMMUTABLE;
+"""
+
 
 class MemoryUnavailable(RuntimeError):
     """The memory layer is not usable. The robot must stop, not improvise."""
@@ -49,6 +80,8 @@ class Database:
         self.cfg = cfg or CFG.memory
         self._pool: psycopg2.pool.ThreadedConnectionPool | None = None
         self._lock = threading.Lock()
+        self._flavor: str | None = None
+        self._native_vectors: bool | None = None
 
     # ---- lifecycle ----------------------------------------------------------
 
@@ -132,18 +165,29 @@ class Database:
         rows = self.query("SELECT version() AS v")
         return rows[0]["v"] if rows else "unknown"
 
-    def supports_vector(self) -> bool:
-        """Does this server have the VECTOR type at all?
+    @property
+    def flavor(self) -> str:
+        """Which dialect are we actually talking to? Asked, never assumed."""
+        if self._flavor is None:
+            v = self.server_version().lower()
+            self._flavor = CRDB if "cockroach" in v else POSTGRES
+        return self._flavor
 
-        Checked by asking the server rather than by parsing a version string,
-        because the version string differs between self-hosted, Cloud Basic and
-        Cloud Standard.
+    def supports_vector(self) -> bool:
+        """Does this server have a native VECTOR type?
+
+        Asked of the server rather than inferred from a version string, because
+        the string differs across self-hosted, Cloud Basic and Cloud Standard.
+        Cached — this sits on the recall path and a round trip per query to
+        re-answer a fact that cannot change mid-connection is pure waste.
         """
-        try:
-            self.query("SELECT '[1,2,3]'::VECTOR(3)")
-            return True
-        except Exception:
-            return False
+        if self._native_vectors is None:
+            try:
+                self.query("SELECT '[1,2,3]'::VECTOR(3)")
+                self._native_vectors = True
+            except Exception:
+                self._native_vectors = False
+        return self._native_vectors
 
     def supports_vector_index(self) -> bool:
         """Can this server actually build a C-SPANN vector index?
@@ -176,40 +220,129 @@ class Database:
         a vector index over an already-populated table is expensive, so we build
         while there is nothing to backfill.
         """
-        if not self.supports_vector():
-            raise MemoryUnavailable(
-                f"server at {self._safe_dsn()} has no VECTOR type "
-                f"(version: {self.server_version()}). CockroachDB v25.2+ is required."
-            )
-
+        native = self.supports_vector()
+        crdb = self.flavor == CRDB
         with open(_SCHEMA_PATH) as fh:
             body = fh.read()
-        statements = [s.strip() for s in body.split(";") if s.strip() and not _only_comments(s)]
+        if not crdb:
+            body = to_postgres(body, native_vectors=native)
 
+        statements = [s.strip() for s in body.split(";") if s.strip() and not _only_comments(s)]
         applied = []
         for stmt in statements:
             self.execute(stmt)
             applied.append(_stmt_label(stmt))
 
-        indexes = []
-        if with_vector_indexes:
+        if not crdb:
+            if not native:
+                self.execute(_COSINE_FN)
+            # Secondary indexes, created separately because CockroachDB's inline
+            # INDEX syntax is stripped for Postgres.
+            for ddl in _PG_INDEXES:
+                self.execute(ddl)
+
+        indexes: list[str] = []
+        if native and with_vector_indexes:
             for table, column in (("events", "embedding"), ("relmo_recordings", "embedding")):
+                # CockroachDB: distributed C-SPANN. pgvector: HNSW. Different
+                # DDL, same operator (`<=>`) and therefore the same query above.
+                ddl = (
+                    f"CREATE VECTOR INDEX IF NOT EXISTS ON {table} ({column})"
+                    if crdb else
+                    f"CREATE INDEX IF NOT EXISTS {table}_{column}_hnsw ON {table} "
+                    f"USING hnsw ({column} vector_cosine_ops)"
+                )
                 try:
-                    self.execute(f"CREATE VECTOR INDEX IF NOT EXISTS ON {table} ({column})")
+                    self.execute(ddl)
                     indexes.append(f"{table}.{column}")
                 except Exception as exc:
-                    # Loud, not silent: without the index, recall still works
-                    # (exact scan) but the "distributed vector index" claim does
-                    # not, and the caller must know which world it is in.
-                    log.warning("could not create vector index on %s.%s: %s", table, column, exc)
+                    # Loud, not silent: without the index, recall still works by
+                    # exact scan but the "vector index" claim does not hold, and
+                    # the caller must know which world it is in.
+                    log.warning("no vector index on %s.%s: %s", table, column, exc)
 
-        return dict(tables=applied, vector_indexes=indexes, version=self.server_version())
+        return dict(
+            tables=applied,
+            vector_indexes=indexes,
+            native_vectors=native,
+            flavor=self.flavor,
+            version=self.server_version().split(" on ")[0],
+        )
+
+    # ---- dialect ------------------------------------------------------------
+
+    def vector_param(self, values):
+        """Bind a vector for this backend: VECTOR literal, or a float list."""
+        if self.supports_vector():
+            return vector_literal(values)
+        return [float(v) for v in values]
+
+    def similarity_expr(self, column: str, param: str = "%s") -> str:
+        """SQL that yields cosine similarity in [-1,1], higher = closer.
+
+        CockroachDB's `<=>` is cosine DISTANCE, so it is subtracted from 1 to
+        keep one orientation everywhere: callers always ORDER BY ... DESC.
+        """
+        if self.supports_vector():
+            return f"1 - ({column} <=> {param})"
+        return f"brigade_cosine({column}, {param})"
 
     def drop_all(self) -> None:
         """Tear the memory down. Used by tests; never by the agent."""
         for t in ("decisions", "tasks", "skill_stats", "norms",
                   "object_beliefs", "relmo_recordings", "events"):
             self.execute(f"DROP TABLE IF EXISTS {t} CASCADE")
+
+
+_PG_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS events_by_time ON events (kitchen_id, ts DESC)",
+    "CREATE INDEX IF NOT EXISTS events_by_subject ON events (kitchen_id, subject, ts DESC)",
+    "CREATE INDEX IF NOT EXISTS events_payload ON events USING GIN (payload)",
+    "CREATE INDEX IF NOT EXISTS beliefs_by_label ON object_beliefs (kitchen_id, label, stale)",
+    "CREATE INDEX IF NOT EXISTS tasks_queue ON tasks (kitchen_id, state, priority DESC, created_at ASC)",
+    "CREATE INDEX IF NOT EXISTS decisions_by_time ON decisions (kitchen_id, ts DESC)",
+    "CREATE INDEX IF NOT EXISTS relmo_by_store ON relmo_recordings (store, basis_id)",
+)
+
+
+def to_postgres(sql: str, native_vectors: bool = False) -> str:
+    """Translate the CockroachDB schema into Postgres dialect.
+
+    Three differences, and they are the only three:
+      * STRING is CockroachDB's spelling of TEXT.
+      * VECTOR(n) survives when pgvector is installed; otherwise it becomes
+        FLOAT8[] and cosine becomes a function we install.
+      * CockroachDB allows INDEX / INVERTED INDEX inside CREATE TABLE; Postgres
+        requires separate CREATE INDEX statements, which apply_schema issues.
+
+    Removing those inline index lines is what makes the trailing comma on the
+    preceding column illegal, so the comma is cleaned up here rather than left
+    for the server to complain about at line 35 of a generated statement.
+    """
+    out = re.sub(r"\bSTRING\b", "TEXT", sql)
+    if not native_vectors:
+        out = re.sub(r"VECTOR\(\d+\)", "FLOAT8[]", out)
+
+    # Work line-wise. A regex for the trailing comma is not enough: the comma is
+    # usually followed by an end-of-line comment ("recording_id TEXT, -- joins…"),
+    # so a ",\s*\)" pattern never matches and Postgres reports a syntax error at
+    # the closing paren instead.
+    lines: list[str] = []
+    for raw in out.splitlines():
+        code = raw.split("--", 1)[0].rstrip()  # no '--' appears inside a literal here
+        if re.match(r"^\s*(?:INVERTED\s+)?INDEX\s+\w+\s*\(", code):
+            continue
+        if not code.strip():
+            continue
+        lines.append(code)
+
+    # Drop a comma left dangling on the last member of a CREATE TABLE.
+    for i, line in enumerate(lines):
+        if line.strip().startswith(")") and i > 0:
+            prev = lines[i - 1].rstrip()
+            if prev.endswith(","):
+                lines[i - 1] = prev[:-1]
+    return "\n".join(lines)
 
 
 def _only_comments(stmt: str) -> bool:
