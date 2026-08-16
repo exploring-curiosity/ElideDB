@@ -1,0 +1,100 @@
+{
+ "git_commit": "be15a229fedfea7f93327afc1327c739fb9c5e3d",
+ "git_branch": "relmo-vjepa-span",
+ "git_dirty": true,
+ "write_path": "relmo.vjrec8 (one encoder pass; identical output to vjrec6+vjrec7+vjsig6)",
+ "geometry": {
+  "win_frames": 32,
+  "stream_fps": 8.0,
+  "hop_s": 2.0,
+  "ctx_steps": 8,
+  "dt_s": 0.25,
+  "n_t": 16,
+  "desc_steps_per_window": 8,
+  "hop_steps": 8,
+  "tubelet": 2,
+  "patch": 16,
+  "crop": 256,
+  "spatial_tokens": 256,
+  "gate_layer": 6
+ },
+ "dtype": {
+  "vjepa_backbone": "fp16",
+  "siglip_backbone": "fp16",
+  "pooled_records": "fp32",
+  "token_records": "fp16",
+  "siglip_records": "fp32",
+  "head_train_and_infer": "fp32"
+ },
+ "backbones": {
+  "vjepa": "facebook/vjepa2-vitl-fpc64-256",
+  "siglip": "google/siglip2-base-patch16-224",
+  "siglip_res": 224
+ },
+ "fitted": {
+  "token_pca": {
+   "path": "vjrec7/_token_pca.npz",
+   "sha256": "d57df3b63a3a301e",
+   "dim": 96
+  },
+  "predictor_calibration": {
+   "path": "/Users/sudharshanramesh/Studies/MyProjects/StreetDex/data/relmo/vjrec/rcasa/_calib.npz",
+   "sha256": "09ae47f3726643e0"
+  },
+  "splits": {
+   "path": "splits_vjz.json",
+   "sha256": "c5b488a5d6a9f1f8"
+  }
+ },
+ "matcher": {
+  "kind": "anchored symmetric2 DTW",
+  "arc_ds": 1716.64
+ },
+ "relevance": {
+  "w_event": 1.0,
+  "w_obj": 0.5,
+  "w_scene": 0.25,
+  "w_cam": 0.25,
+  "r_scale": 1.5,
+  "dur_weight": "exp(-ln r / ln r_scale), no cut, no gate"
+ },
+ "head": {
+  "p1_reg_low_s0": {
+   "path": "models/vjrank/p1_reg_low_s0.pt",
+   "sha256": "a3c33b1237315283"
+  },
+  "p1_reg_low_s1": {
+   "path": "models/vjrank/p1_reg_low_s1.pt",
+   "sha256": "1ffac6d459f9a2cb"
+  },
+  "p1_reg_low_s2": {
+   "path": "models/vjrank/p1_reg_low_s2.pt",
+   "sha256": "dcc4333b84542338"
+  }
+ },
+ "corpora": {
+  "rcasa": {
+   "v6": 447,
+   "v7": 447,
+   "siglip": 447
+  },
+  "rcasa_eval": {
+   "v6": 27,
+   "v7": 27,
+   "siglip": 27
+  },
+  "rcasa_atomic_full": {
+   "v6": 2250,
+   "v7": 0,
+   "siglip": 2250
+  },
+  "rcasa_composite_full": {
+   "v6": 1152,
+   "v7": 0,
+   "siglip": 1152
+  }
+ },
+ "metrics": null,
+ "name": "v9",
+ "note": "shipped read path: fp16 backbones, 32f@256px stream-time records, learned token pooling + f, one-pass write (vjrec8)"
+}
