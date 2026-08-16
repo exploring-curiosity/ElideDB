@@ -36,6 +36,10 @@ import numpy as np
 
 from ..config import CFG, WorldConfig
 
+# Fixed size for the free 3D camera. Created once at this size and never rebuilt;
+# see render_free() for why recreating a GL context here is fatal.
+FREE_W, FREE_H = 640, 480
+
 
 @dataclass
 class SkillResult:
@@ -109,6 +113,20 @@ class SimRunner:
         self._hz = 0.0
         self._current_job: str | None = None
         self._looping = False
+
+        # Free orbit camera for the 3D view; the console lets a human drag it.
+        # These defaults were chosen by rendering candidates and LOOKING at them:
+        # the kitchen has walls, so a low camera outside the room renders a flat
+        # grey wall (measured: pixel std 2.3). Looking down over the wall line at
+        # -50 degrees from 3.8 m frames the counter, the robot and the cabinets.
+        self._view = dict(azimuth=135.0, elevation=-50.0, distance=3.8,
+                          lookat_x=2.0, lookat_y=-0.3, lookat_z=1.1)
+        self._view_lock = threading.Lock()
+        self._free_renderer = None
+        self._free_cam = None
+        self._free_opt = None
+        self._free_failed = False
+        self._free_error: str | None = None
 
     # ---- lifecycle ----------------------------------------------------------
 
@@ -245,6 +263,79 @@ class SimRunner:
         with self._frames_lock:
             f = self._frames.get(cam)
             return None if f is None else f.copy()
+
+    # ---- free 3D camera -----------------------------------------------------
+
+    def set_view(self, **kw) -> dict:
+        """Move the free orbit camera. Thread-safe; takes effect next render."""
+        with self._view_lock:
+            for k in ("azimuth", "elevation", "distance", "lookat_x", "lookat_y", "lookat_z"):
+                if k in kw and kw[k] is not None:
+                    self._view[k] = float(kw[k])
+            self._view["elevation"] = float(np.clip(self._view["elevation"], -85.0, -5.0))
+            self._view["distance"] = float(np.clip(self._view["distance"], 0.8, 12.0))
+            return dict(self._view)
+
+    def view(self) -> dict:
+        with self._view_lock:
+            return dict(self._view)
+
+    def render_free(self) -> np.ndarray | None:
+        """Render the whole kitchen from the orbit camera.
+
+        A SECOND renderer over the same model/data, created ONCE at a fixed size
+        and never rebuilt. That is not an optimisation, it is a correctness
+        requirement: tearing down and recreating a MuJoCo GL context on this
+        thread corrupts it, after which the constructor fails outright and every
+        subsequent render returns nothing (the symptom is `Renderer.__del__`
+        raising `'Renderer' object has no attribute '_gl_context'` forever, and a
+        black panel in the console). Callers that want another size resize the
+        returned frame instead.
+
+        Like everything else touching MuJoCo, it runs on the sim thread.
+        """
+
+        def _do(env):
+            import mujoco
+
+            if self._free_failed:
+                return None
+            if self._free_renderer is None:
+                model = env.sim.model._model
+                # Respect the model's offscreen framebuffer; asking for more than
+                # it declares makes the constructor raise.
+                w = min(FREE_W, int(model.vis.global_.offwidth))
+                h = min(FREE_H, int(model.vis.global_.offheight))
+                try:
+                    self._free_renderer = mujoco.Renderer(model, height=h, width=w)
+                except Exception as exc:
+                    self._free_failed = True
+                    self._free_error = f"{type(exc).__name__}: {exc}"
+                    return None
+                self._free_cam = mujoco.MjvCamera()
+                self._free_cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+                # Hide collision geometry. MuJoCo's default renderer draws every
+                # geom group; robosuite keeps visuals in group 1 and collision
+                # primitives in group 0. Left on, the kitchen renders with green
+                # capsules stuck to the arm and purple slabs across the counters
+                # — the collision hulls drawn over the real meshes.
+                self._free_opt = mujoco.MjvOption()
+                self._free_opt.geomgroup[:] = 0
+                for g in (1, 2):
+                    self._free_opt.geomgroup[g] = 1
+
+            v = self.view()
+            cam = self._free_cam
+            cam.azimuth = v["azimuth"]
+            cam.elevation = v["elevation"]
+            cam.distance = v["distance"]
+            cam.lookat[:] = [v["lookat_x"], v["lookat_y"], v["lookat_z"]]
+            self._free_renderer.update_scene(
+                env.sim.data._data, camera=cam, scene_option=self._free_opt
+            )
+            return self._free_renderer.render()
+
+        return self.call(_do, timeout_s=20.0)
 
     def status(self) -> dict:
         return dict(

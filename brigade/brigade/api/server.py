@@ -194,6 +194,61 @@ def create_app(runner: SimRunner, memory=None, agent=None) -> FastAPI:
             raise HTTPException(404, f"no frame for {camera}")
         return Response(_jpeg(frame), media_type="image/jpeg")
 
+    # ---- the 3D view -----------------------------------------------------
+
+    class ViewRequest(BaseModel):
+        azimuth: float | None = None
+        elevation: float | None = None
+        distance: float | None = None
+        lookat_x: float | None = None
+        lookat_y: float | None = None
+        lookat_z: float | None = None
+
+    @app.post("/api/view")
+    def set_view(req: ViewRequest):
+        _require_running()
+        return runner.set_view(**req.model_dump())
+
+    @app.get("/api/view")
+    def get_view():
+        return runner.view()
+
+    @app.get("/stream3d")
+    def stream3d(width: int = 0, height: int = 0):
+        """MJPEG from the free orbit camera — the whole kitchen in 3D.
+
+        Rendered on demand rather than every control step: this is a second
+        render pass and there is no reason to pay for it when nobody is looking.
+        Capped at 12 fps so dragging the view can never starve the 20 Hz control
+        loop it shares a thread with.
+
+        `width`/`height` resize the RESULT. They do not resize the renderer —
+        rebuilding it would destroy the GL context and permanently break every
+        later render.
+        """
+        def gen():
+            period = 1.0 / 12.0
+            while runner.running:
+                t0 = time.time()
+                try:
+                    frame = runner.render_free()
+                except Exception:
+                    break
+                if frame is not None:
+                    if width and height and (frame.shape[1], frame.shape[0]) != (width, height):
+                        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
+                    payload = _jpeg(frame, quality=72)
+                    yield (
+                        b"--frame\r\nContent-Type: image/jpeg\r\n"
+                        b"Content-Length: " + str(len(payload)).encode() + b"\r\n\r\n"
+                        + payload + b"\r\n"
+                    )
+                slack = period - (time.time() - t0)
+                if slack > 0:
+                    time.sleep(slack)
+
+        return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+
     @app.get("/stream/{camera}")
     def stream(camera: str):
         """MJPEG. Deliberately capped below the control rate — the console must

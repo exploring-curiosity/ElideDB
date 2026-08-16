@@ -9,218 +9,129 @@
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
 :root{
-  --ink:#0B0B0C;          /* graphite, the station at night */
-  --ink-2:#131316;
-  --ink-3:#1B1B20;
-  --rule:#2A2A31;
-  --steel:#8A97A6;
-  --steel-dim:#5D6875;
-  --bone:#E8E4DC;         /* ticket paper */
-  --heat:#FF8A1E;         /* heat lamp */
-  --heat-dim:#8A4B10;
-  --fire:#FF4438;         /* stale / failed */
-  --cool:#5EC8C0;         /* verified / open */
-  --tick:#0F0F12;
+  --ink:#0B0B0C; --ink-2:#131316; --ink-3:#1B1B20; --rule:#2A2A31;
+  --steel:#8A97A6; --steel-dim:#5D6875; --bone:#E8E4DC;
+  --heat:#FF8A1E; --heat-dim:#8A4B10; --fire:#FF4438; --cool:#5EC8C0; --moss:#8FBF6A;
   --shadow:0 18px 40px -18px rgba(0,0,0,.9);
   --mono:"JetBrains Mono","SF Mono",Menlo,ui-monospace,monospace;
-  --sign:"Barlow Condensed","Avenir Next Condensed","Haettenschweiler",sans-serif;
+  --sign:"Barlow Condensed","Avenir Next Condensed",sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
-body{
-  background:var(--ink);
-  color:var(--bone);
-  font-family:var(--mono);
-  font-size:13px;
-  -webkit-font-smoothing:antialiased;
-  overflow:hidden;
-}
-/* fine grain so the black has a surface rather than being a void */
-body::after{
-  content:"";position:fixed;inset:0;pointer-events:none;z-index:999;opacity:.5;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='.045'/%3E%3C/svg%3E");
-}
+body{background:var(--ink);color:var(--bone);font-family:var(--mono);font-size:13px;
+  -webkit-font-smoothing:antialiased;overflow:hidden}
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:999;opacity:.5;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='.045'/%3E%3C/svg%3E")}
 
-/* ─── frame ─────────────────────────────────────────────────────────── */
 .shell{display:grid;grid-template-rows:auto 1fr auto;height:100vh}
 
-header{
-  display:flex;align-items:stretch;gap:0;
-  border-bottom:1px solid var(--rule);
-  background:linear-gradient(180deg,var(--ink-2),var(--ink));
-}
-.brand{
-  padding:14px 22px 11px;border-right:1px solid var(--rule);
-  display:flex;align-items:baseline;gap:12px;
-}
-.brand h1{
-  font-family:var(--sign);font-weight:700;font-size:30px;letter-spacing:.14em;
-  text-transform:uppercase;line-height:1;
-  color:var(--bone);
-}
-.brand .sub{
-  font-family:var(--sign);font-size:15px;letter-spacing:.34em;text-transform:uppercase;
-  color:var(--heat);font-weight:600;
-}
-.slug{
-  display:flex;align-items:center;gap:26px;padding:0 22px;flex:1;
-  font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--steel-dim);
-}
-.slug b{display:block;color:var(--steel);font-weight:500;letter-spacing:.06em;font-size:12px}
-.pill{
-  display:inline-flex;align-items:center;gap:7px;padding:5px 11px;
-  border:1px solid var(--rule);border-radius:2px;background:var(--ink-3);
-  font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--steel);
-}
+/* header */
+header{display:flex;align-items:stretch;border-bottom:1px solid var(--rule);
+  background:linear-gradient(180deg,var(--ink-2),var(--ink))}
+.brand{padding:12px 20px 10px;border-right:1px solid var(--rule);display:flex;align-items:baseline;gap:11px}
+.brand h1{font-family:var(--sign);font-weight:700;font-size:27px;letter-spacing:.14em;
+  text-transform:uppercase;line-height:1}
+.brand .sub{font-family:var(--sign);font-size:14px;letter-spacing:.32em;text-transform:uppercase;
+  color:var(--heat);font-weight:600}
+.slug{display:flex;align-items:center;gap:22px;padding:0 20px;flex:1;font-size:10px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--steel-dim)}
+.slug b{display:block;color:var(--steel);font-weight:500;letter-spacing:.05em;font-size:12px}
+.pills{display:flex;gap:8px;align-items:center;padding:0 18px;border-left:1px solid var(--rule)}
+.pill{display:inline-flex;align-items:center;gap:7px;padding:5px 10px;border:1px solid var(--rule);
+  border-radius:2px;background:var(--ink-3);font-size:10px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--steel);white-space:nowrap}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--steel-dim);flex:none}
 .dot.on{background:var(--heat);box-shadow:0 0 0 3px rgba(255,138,30,.16);animation:pulse 2s ease-in-out infinite}
+.dot.good{background:var(--moss);box-shadow:0 0 0 3px rgba(143,191,106,.16)}
 .dot.bad{background:var(--fire);box-shadow:0 0 0 3px rgba(255,68,56,.16)}
 @keyframes pulse{50%{opacity:.45}}
-.rail-head{display:flex;gap:10px;align-items:center;padding:0 20px;border-left:1px solid var(--rule)}
 
-/* ─── body ──────────────────────────────────────────────────────────── */
-main{display:grid;grid-template-columns:1fr 400px;min-height:0}
-.line{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--rule)}
+/* body: 3D | rail */
+main{display:grid;grid-template-columns:1fr 392px;min-height:0}
+.stage{display:grid;grid-template-rows:1fr auto;min-height:0;border-right:1px solid var(--rule)}
 
-/* min-height is load-bearing: with flex:1 and min-height:0 the camera row
-   collapses to nothing as soon as the deck below it gets tall. The feeds are the
-   point of this screen; they never shrink away. */
-.cams{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--rule);flex:1;min-height:300px}
-.cam{position:relative;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center}
-.cam img{width:100%;height:100%;object-fit:contain;display:block;image-rendering:auto}
-.cam figcaption{
-  position:absolute;top:10px;left:12px;z-index:3;
-  font-family:var(--sign);font-size:14px;letter-spacing:.2em;text-transform:uppercase;
-  color:var(--bone);text-shadow:0 1px 6px #000;
-  display:flex;align-items:center;gap:8px;
-}
-.cam figcaption::before{content:"";width:5px;height:14px;background:var(--heat)}
-.cam .corner{position:absolute;bottom:10px;right:12px;font-size:10px;color:var(--steel-dim);letter-spacing:.1em;z-index:3}
+.viewwrap{position:relative;background:#000;overflow:hidden;min-height:340px}
+#view3d{width:100%;height:100%;object-fit:contain;display:block;cursor:grab}
+#view3d.drag{cursor:grabbing}
+.tag{position:absolute;z-index:4;font-family:var(--sign);font-size:13px;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--bone);text-shadow:0 1px 6px #000;display:flex;align-items:center;gap:8px}
+.tag::before{content:"";width:5px;height:13px;background:var(--heat)}
+.tag.tl{top:10px;left:12px}
+.hint{position:absolute;bottom:9px;left:12px;z-index:4;font-size:10px;color:var(--steel-dim);letter-spacing:.08em}
+.eyes{position:absolute;top:10px;right:10px;z-index:5;display:flex;flex-direction:column;gap:8px}
+.eye{width:168px;height:126px;border:1px solid var(--rule);background:#000;position:relative;
+  box-shadow:var(--shadow);overflow:hidden}
+.eye img{width:100%;height:100%;object-fit:cover;display:block}
+.eye span{position:absolute;bottom:0;left:0;right:0;padding:3px 6px;font-size:9px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--bone);background:linear-gradient(0deg,rgba(0,0,0,.85),transparent)}
 
-.deck{
-  border-top:1px solid var(--rule);background:var(--ink-2);
-  padding:14px 20px 16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:22px;
-}
-.deck h3,.rail h3{
-  font-family:var(--sign);font-size:13px;letter-spacing:.26em;text-transform:uppercase;
-  color:var(--heat);font-weight:600;margin-bottom:10px;
-  display:flex;align-items:center;gap:9px;
-}
-.deck h3::after,.rail h3::after{content:"";flex:1;height:1px;background:var(--rule)}
-
-.row{display:flex;gap:6px;margin-bottom:7px;flex-wrap:wrap}
+/* deck */
+.deck{border-top:1px solid var(--rule);background:var(--ink-2);padding:12px 18px 14px;
+  display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:20px}
+h3{font-family:var(--sign);font-size:12px;letter-spacing:.26em;text-transform:uppercase;
+  color:var(--heat);font-weight:600;margin-bottom:9px;display:flex;align-items:center;gap:9px}
+h3::after{content:"";flex:1;height:1px;background:var(--rule)}
+.row{display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap}
 select,button,input{font-family:var(--mono);font-size:12px}
-select{
-  background:var(--ink-3);color:var(--bone);border:1px solid var(--rule);
-  padding:6px 8px;border-radius:2px;flex:1;min-width:0;
-}
-select:focus{outline:none;border-color:var(--heat-dim)}
-button{
-  background:var(--ink-3);color:var(--steel);border:1px solid var(--rule);
-  padding:6px 12px;border-radius:2px;cursor:pointer;letter-spacing:.08em;
-  text-transform:uppercase;font-size:11px;transition:all .13s ease;
-}
+select,input{background:var(--ink-3);color:var(--bone);border:1px solid var(--rule);
+  padding:6px 8px;border-radius:2px;flex:1;min-width:0}
+select:focus,input:focus{outline:none;border-color:var(--heat-dim)}
+button{background:var(--ink-3);color:var(--steel);border:1px solid var(--rule);padding:6px 11px;
+  border-radius:2px;cursor:pointer;letter-spacing:.08em;text-transform:uppercase;font-size:10px;
+  transition:all .13s ease}
 button:hover:not(:disabled){border-color:var(--heat);color:var(--heat);background:#1E1811}
-button:active:not(:disabled){transform:translateY(1px)}
 button:disabled{opacity:.35;cursor:not-allowed}
 button.hot{border-color:var(--heat-dim);color:var(--heat)}
 button.wide{flex:1}
-.jog{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
-.jog button{padding:7px 0;font-size:11px}
-.jog .lbl{
-  grid-column:1/-1;font-size:10px;letter-spacing:.16em;color:var(--steel-dim);
-  text-transform:uppercase;margin-top:4px;
-}
-label.chk{
-  display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.08em;
-  color:var(--steel-dim);text-transform:uppercase;cursor:pointer;user-select:none;
-}
-label.chk input{accent-color:var(--heat)}
 
-/* ─── ticket rail ───────────────────────────────────────────────────── */
-.rail{display:flex;flex-direction:column;min-height:0;background:var(--ink)}
-.rail>.pad{padding:14px 18px 0}
-.tickets{overflow-y:auto;padding:2px 18px 18px;display:flex;flex-direction:column;gap:9px;min-height:0}
-.tickets::-webkit-scrollbar{width:7px}
-.tickets::-webkit-scrollbar-thumb{background:var(--rule);border-radius:4px}
+/* rail */
+.rail{display:flex;flex-direction:column;min-height:0;background:var(--ink);overflow-y:auto}
+.rail::-webkit-scrollbar{width:7px}
+.rail::-webkit-scrollbar-thumb{background:var(--rule);border-radius:4px}
+.rail section{padding:12px 16px 4px}
 
-.ticket{
-  background:var(--bone);color:#15151A;border-radius:1px;position:relative;
-  padding:10px 12px 11px;box-shadow:var(--shadow);
-  animation:slide .26s cubic-bezier(.2,.8,.3,1) both;
-}
-@keyframes slide{from{opacity:0;transform:translateY(-6px)}}
-/* perforated top edge, like a torn ticket */
-.ticket::before{
-  content:"";position:absolute;top:-4px;left:0;right:0;height:5px;
-  background:radial-gradient(circle at 4px 0, transparent 0 3.4px, var(--bone) 3.6px) 0 0/8px 5px repeat-x;
-}
-.ticket .hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px}
-.ticket .name{
-  font-family:var(--sign);font-size:19px;font-weight:700;letter-spacing:.07em;
-  text-transform:uppercase;line-height:1;
-}
-.ticket .id{font-size:10px;color:#6C6C78;letter-spacing:.07em}
-.ticket .loc{
-  font-size:11px;letter-spacing:.03em;color:#2E2E38;
-  border-top:1px dashed #B9B3A8;padding-top:6px;
-  display:flex;justify-content:space-between;gap:8px;
-}
-.ticket .loc .where{font-weight:700}
-.ticket .how{
-  font-weight:400;font-size:9px;letter-spacing:.13em;text-transform:uppercase;
-  color:#7A7466;border:1px solid #C3BCAE;border-radius:1px;padding:0 4px;margin-left:6px;
-}
-.ticket.held{box-shadow:0 0 0 2px var(--heat),var(--shadow)}
-.ticket .flag{
-  display:inline-block;padding:1px 6px;border-radius:1px;font-size:9px;
-  letter-spacing:.14em;text-transform:uppercase;font-weight:700;
-}
-.flag.hold{background:var(--heat);color:#1A1005}
-.flag.lost{background:var(--fire);color:#fff}
+/* the agent's stream of consciousness */
+.beats{display:flex;flex-direction:column;gap:0}
+.beat{display:grid;grid-template-columns:64px 1fr;gap:9px;padding:7px 0;
+  border-bottom:1px solid var(--rule);animation:slide .25s ease both}
+@keyframes slide{from{opacity:0;transform:translateY(-5px)}}
+.beat .ph{font-size:9px;letter-spacing:.14em;text-transform:uppercase;padding-top:2px;font-weight:700}
+.ph.notice{color:var(--cool)} .ph.decide{color:var(--heat)}
+.ph.act{color:var(--steel)} .ph.learn{color:var(--moss)} .ph.idle{color:var(--steel-dim)}
+.beat .tx{font-size:12px;line-height:1.4;color:var(--bone)}
+.beat .dt{font-size:10.5px;color:var(--steel-dim);margin-top:2px;line-height:1.4}
+.beat.fail .tx{color:var(--fire)}
+.beat .mem{margin-top:4px;padding-left:8px;border-left:2px solid var(--heat-dim);
+  font-size:10px;color:var(--steel-dim);line-height:1.45}
 
-.doors{padding:0 18px 14px}
-.door{
-  display:flex;align-items:center;gap:9px;padding:6px 0;
-  border-bottom:1px solid var(--rule);font-size:11px;color:var(--steel);
-}
-.door .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:.03em}
-.door .st{font-size:10px;letter-spacing:.14em;text-transform:uppercase;width:52px}
-.door .st.open{color:var(--cool)}
-.door .st.shut{color:var(--steel-dim)}
-.door button{padding:3px 8px;font-size:10px}
+/* memory cards */
+.mtable{width:100%;border-collapse:collapse;font-size:11px}
+.mtable td{padding:4px 0;border-bottom:1px solid var(--rule);color:var(--steel)}
+.mtable td.k{color:var(--bone);width:44%}
+.mtable td.v{text-align:right;color:var(--steel-dim)}
+.chip{display:inline-block;padding:1px 5px;border:1px solid var(--rule);border-radius:1px;
+  font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--steel-dim)}
+.chip.learned{border-color:var(--moss);color:var(--moss)}
+.chip.instructed{border-color:var(--heat);color:var(--heat)}
+.chip.self{border-color:var(--cool);color:var(--cool)}
+.chip.user{border-color:var(--heat);color:var(--heat)}
+.chip.done{border-color:var(--moss);color:var(--moss)}
+.chip.failed{border-color:var(--fire);color:var(--fire)}
+.chip.running{border-color:var(--heat);color:var(--heat)}
+.empty{font-size:11px;color:var(--steel-dim);padding:6px 0;font-style:italic}
 
-/* ─── status bar ────────────────────────────────────────────────────── */
-footer{
-  border-top:1px solid var(--rule);background:var(--ink-2);
-  display:flex;align-items:center;gap:0;font-size:11px;
-}
-.stat{
-  padding:9px 18px;border-right:1px solid var(--rule);
-  display:flex;gap:9px;align-items:baseline;white-space:nowrap;
-}
-.stat .k{color:var(--steel-dim);letter-spacing:.14em;text-transform:uppercase;font-size:10px}
+footer{border-top:1px solid var(--rule);background:var(--ink-2);display:flex;align-items:center;font-size:11px}
+.stat{padding:8px 16px;border-right:1px solid var(--rule);display:flex;gap:8px;align-items:baseline;white-space:nowrap}
+.stat .k{color:var(--steel-dim);letter-spacing:.14em;text-transform:uppercase;font-size:9px}
 .stat .v{color:var(--bone);font-weight:500;font-variant-numeric:tabular-nums}
 .stat .v.hot{color:var(--heat)}
-.log{
-  flex:1;padding:9px 18px;color:var(--steel-dim);overflow:hidden;
-  text-overflow:ellipsis;white-space:nowrap;letter-spacing:.03em;
-}
+.log{flex:1;padding:8px 16px;color:var(--steel-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .log b{color:var(--heat);font-weight:500}
 .log.err b{color:var(--fire)}
 
-/* Narrow screens: drop the rail under the line rather than crushing both. */
-@media (max-width:1100px){
+@media (max-width:1180px){
   main{grid-template-columns:1fr;grid-template-rows:1fr auto;overflow-y:auto}
-  .line{border-right:none;border-bottom:1px solid var(--rule)}
-  .deck{grid-template-columns:1fr 1fr}
-  .rail{max-height:420px}
-  body{overflow:auto}
-}
-@media (max-width:760px){
-  .cams{grid-template-columns:1fr}
-  .deck{grid-template-columns:1fr}
-  header{flex-wrap:wrap}
+  .rail{max-height:460px}.deck{grid-template-columns:1fr 1fr}body{overflow:auto}
 }
 </style>
 </head>
@@ -228,262 +139,307 @@ footer{
 <div class="shell">
 
   <header>
-    <div class="brand">
-      <h1>Brigade</h1><span class="sub">The&nbsp;Pass</span>
-    </div>
+    <div class="brand"><h1>Brigade</h1><span class="sub">The&nbsp;Pass</span></div>
     <div class="slug">
       <div>Kitchen<b id="s-kitchen">—</b></div>
       <div>Station<b id="s-robot">—</b></div>
-      <div>Home<b id="s-home">—</b></div>
-      <div>Staging<b id="s-stage">—</b></div>
+      <div>Doing<b id="s-doing">—</b></div>
     </div>
-    <div class="rail-head">
+    <div class="pills">
       <span class="pill"><i class="dot" id="d-sim"></i><span id="s-sim">booting</span></span>
+      <span class="pill"><i class="dot" id="d-agent"></i><span id="s-agent">agent</span></span>
       <span class="pill"><i class="dot" id="d-mem"></i><span id="s-mem">memory</span></span>
     </div>
   </header>
 
   <main>
-    <section class="line">
-      <div class="cams" id="cams"></div>
+    <section class="stage">
+      <div class="viewwrap" id="viewwrap">
+        <!-- src is set from JS once the kitchen reports ready. Setting it here
+             races the boot: the browser requests the stream while MuJoCo is
+             still loading meshes, gets nothing, and never retries — a black
+             panel for the rest of the session. -->
+        <img id="view3d" alt="kitchen">
+        <div class="tag tl">Kitchen · 3D</div>
+        <div class="hint">drag to orbit · scroll to zoom · shift-drag to pan</div>
+        <div class="eyes" id="eyes"></div>
+      </div>
 
       <div class="deck">
         <div>
-          <h3>Service</h3>
+          <h3>Tell the robot</h3>
           <div class="row">
-            <select id="obj"></select>
-            <select id="dest"></select>
+            <select id="i-label"></select>
+            <select id="i-loc"></select>
           </div>
           <div class="row">
-            <button class="hot wide" id="btn-drop">Fire to pass</button>
-            <button class="wide" id="btn-return">Return to staging</button>
+            <button class="hot wide" id="btn-rule">Set the rule</button>
           </div>
-          <label class="chk"><input type="checkbox" id="secret"> Move unobserved (memory not told)</label>
-        </div>
-
-        <div>
-          <h3>Station</h3>
-          <div class="jog">
-            <div class="lbl">Base</div>
-            <button data-jog="base_x"  data-amt="1">Fwd</button>
-            <button data-jog="base_x"  data-amt="-1">Back</button>
-            <button data-jog="base_yaw" data-amt="1">Turn</button>
-            <div class="lbl">Arm</div>
-            <button data-jog="arm_z" data-amt="1">Up</button>
-            <button data-jog="arm_z" data-amt="-1">Down</button>
-            <button data-jog="arm_x" data-amt="1">Reach</button>
-            <div class="lbl">Gripper</div>
-            <button data-jog="gripper" data-amt="1">Close</button>
-            <button data-jog="gripper" data-amt="-1">Open</button>
-            <button id="btn-refresh">Refresh</button>
+          <div class="row">
+            <select id="i-obj"></select>
+            <button id="btn-fetch">Fetch it</button>
           </div>
-        </div>
-
-        <div>
-          <h3>Notes</h3>
-          <p style="font-size:11px;line-height:1.65;color:var(--steel-dim);letter-spacing:.02em">
-            World layer only. The robot is under manual control — skills, perception
-            and memory are not wired yet.
-            <b style="color:var(--steel)">Fire to pass</b> teleports an object onto the
-            selected fixture (opening it first if it has a door).
-            <b style="color:var(--steel)">Move unobserved</b> is the same motion but is
-            deliberately not reported, so that later the robot's memory will be wrong
-            and has to notice.
+          <p style="font-size:10px;color:var(--steel-dim);line-height:1.5;margin-top:4px">
+            A rule changes what it does <i>unprompted</i>, forever. A job is one errand.
           </p>
+        </div>
+
+        <div>
+          <h3>Poke the kitchen</h3>
+          <div class="row">
+            <select id="d-obj"></select>
+            <select id="d-dest"></select>
+          </div>
+          <div class="row">
+            <button class="hot wide" id="btn-drop">Leave it out</button>
+            <button class="wide" id="btn-secret">Move unseen</button>
+          </div>
+          <p style="font-size:10px;color:var(--steel-dim);line-height:1.5;margin-top:4px">
+            <b style="color:var(--steel)">Move unseen</b> does not tell the robot — its memory
+            is then wrong and it has to find that out.
+          </p>
+        </div>
+
+        <div>
+          <h3>Ask its memory</h3>
+          <div class="row">
+            <input id="q" placeholder="a grasp that did not work">
+            <button id="btn-ask">Ask</button>
+          </div>
+          <div id="qout" style="font-size:10.5px;color:var(--steel-dim);line-height:1.5;max-height:96px;overflow:auto"></div>
+          <div class="row" style="margin-top:6px">
+            <button id="btn-pause">Pause agent</button>
+            <button id="btn-forget">Make it forget</button>
+          </div>
         </div>
       </div>
     </section>
 
     <aside class="rail">
-      <div class="pad"><h3>On the rail</h3></div>
-      <div class="tickets" id="tickets"></div>
-      <div class="pad"><h3>Doors</h3></div>
-      <div class="doors" id="doors"></div>
+      <section>
+        <h3>What it is thinking</h3>
+        <div class="beats" id="beats"><div class="empty">waiting for the agent…</div></div>
+      </section>
+      <section>
+        <h3>Where things belong <span style="font-size:9px;letter-spacing:.1em;color:var(--steel-dim)">· norms</span></h3>
+        <table class="mtable" id="norms"></table>
+      </section>
+      <section>
+        <h3>Work</h3>
+        <table class="mtable" id="tasks"></table>
+      </section>
+      <section>
+        <h3>Where things are <span style="font-size:9px;letter-spacing:.1em;color:var(--steel-dim)">· beliefs</span></h3>
+        <table class="mtable" id="beliefs"></table>
+      </section>
+      <section>
+        <h3>Decisions <span style="font-size:9px;letter-spacing:.1em;color:var(--steel-dim)">· with the memories used</span></h3>
+        <table class="mtable" id="decisions"></table>
+      </section>
+      <section style="padding-bottom:18px">
+        <h3>Grip experience</h3>
+        <table class="mtable" id="skills"></table>
+      </section>
     </aside>
   </main>
 
   <footer>
     <div class="stat"><span class="k">Rate</span><span class="v hot" id="f-hz">—</span></div>
-    <div class="stat"><span class="k">Tick</span><span class="v" id="f-tick">—</span></div>
-    <div class="stat"><span class="k">Job</span><span class="v" id="f-job">idle</span></div>
-    <div class="stat"><span class="k">Queue</span><span class="v" id="f-q">0</span></div>
-    <div class="stat"><span class="k">Up</span><span class="v" id="f-up">—</span></div>
+    <div class="stat"><span class="k">Noticed</span><span class="v" id="f-noticed">0</span></div>
+    <div class="stat"><span class="k">Done</span><span class="v" id="f-done">0</span></div>
+    <div class="stat"><span class="k">Failed</span><span class="v" id="f-failed">0</span></div>
+    <div class="stat"><span class="k">Events</span><span class="v" id="f-events">0</span></div>
+    <div class="stat"><span class="k">Vectors</span><span class="v" id="f-vec">—</span></div>
     <div class="log" id="f-log">standing by</div>
   </footer>
-
 </div>
 
 <script>
 const $ = s => document.querySelector(s);
-let CAMS = [], TARGETS = [], booted = false;
+let CAMS=[], TARGETS=[], OBJECTS={}, booted=false, lastBeat=0;
 
-function say(msg, err){
-  const el = $("#f-log");
-  el.className = "log" + (err ? " err" : "");
-  const t = new Date().toLocaleTimeString([], {hour12:false});
-  el.innerHTML = `${t} <b>${msg}</b>`;
+function say(m,err){const e=$("#f-log");e.className="log"+(err?" err":"");
+  e.innerHTML=`${new Date().toLocaleTimeString([],{hour12:false})} <b>${m}</b>`}
+async function post(p,b){const r=await fetch(p,{method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify(b||{})});const j=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j.detail||r.statusText); return j}
+const short = s => (s||"").replace(/_main_group$/,"");
+
+/* ── 3D orbit ─────────────────────────────────────────────────────── */
+let drag=null, view={azimuth:135,elevation:-50,distance:3.8};
+const img3d=$("#view3d");
+img3d.addEventListener("mousedown",e=>{drag={x:e.clientX,y:e.clientY,shift:e.shiftKey};img3d.classList.add("drag")});
+addEventListener("mouseup",()=>{drag=null;img3d.classList.remove("drag")});
+addEventListener("mousemove",e=>{
+  if(!drag) return;
+  const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
+  drag.x=e.clientX; drag.y=e.clientY;
+  if(drag.shift){ pushView({lookat_x:null,lookat_y:null}, dx, dy); }
+  else { view.azimuth+=dx*0.4; view.elevation=Math.max(-85,Math.min(-5,view.elevation+dy*0.3));
+         pushView({azimuth:view.azimuth, elevation:view.elevation}); }
+});
+img3d.addEventListener("wheel",e=>{e.preventDefault();
+  view.distance=Math.max(0.8,Math.min(12,view.distance+e.deltaY*0.004));
+  pushView({distance:view.distance})},{passive:false});
+let viewPending=false;
+async function pushView(v){
+  if(viewPending) return; viewPending=true;
+  try{ const got=await post("/api/view",v); Object.assign(view,got); }catch{}
+  setTimeout(()=>viewPending=false,60);
 }
 
-async function post(path, body){
-  const r = await fetch(path, {
-    method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)
-  });
-  const j = await r.json().catch(() => ({}));
-  if(!r.ok) throw new Error(j.detail || r.statusText);
-  return j;
-}
-
-function mountCams(cams){
-  if(JSON.stringify(cams) === JSON.stringify(CAMS)) return;
-  CAMS = cams;
-  $("#cams").innerHTML = cams.map(c => `
-    <figure class="cam">
-      <figcaption>${c.replace(/^robot0_/,"").replace(/_/g," ")}</figcaption>
-      <img src="/stream/${c}" alt="${c}">
-      <span class="corner">MJPEG · 15 fps</span>
-    </figure>`).join("");
-}
-
-function ticket(id, o){
-  const held = o.grasped ? '<span class="flag hold">In hand</span>' : "";
-  const lost = o.location === "unknown" ? '<span class="flag lost">Adrift</span>' : "";
-  // Show HOW the location was established whenever it was not certain. A bowl
-  // located by proximity is a bowl the robot ought to look at again before it
-  // trusts the answer, and hiding that would make the rail lie by omission.
-  const soft = (o.location_confidence ?? 1) < 1
-    ? `<span class="how">${o.located_by}</span>` : "";
-  return `<article class="ticket ${o.grasped ? "held" : ""}">
-    <div class="hd"><span class="name">${o.label ?? "?"}</span><span class="id">${id}</span></div>
-    <div class="loc">
-      <span class="where">${(o.location ?? "—").replace(/_main_group$/,"")}${soft}</span>
-      <span>${held}${lost}</span>
-    </div>
-  </article>`;
-}
-
-function renderDoors(doors){
-  $("#doors").innerHTML = Object.entries(doors).map(([n, open]) => `
-    <div class="door">
-      <span class="nm">${n.replace(/_main_group$/,"")}</span>
-      <span class="st ${open ? "open" : "shut"}">${open ? "open" : "shut"}</span>
-      <button data-door="${n}" data-act="${open ? "close" : "open"}">${open ? "Shut" : "Open"}</button>
+/* ── panels ───────────────────────────────────────────────────────── */
+function renderBeats(feed){
+  if(!feed.length) return;
+  $("#beats").innerHTML = feed.map(b=>`
+    <div class="beat ${b.ok===false?"fail":""}">
+      <div class="ph ${b.phase}">${b.phase}</div>
+      <div>
+        <div class="tx">${b.text}</div>
+        ${b.detail?`<div class="dt">${b.detail}</div>`:""}
+        ${b.recalled&&b.recalled.length?`<div class="mem">recalled: ${b.recalled.map(r=>`“${r}”`).join("<br>")}</div>`:""}
+      </div>
     </div>`).join("");
 }
+function table(id, rows){ $(id).innerHTML = rows.length?rows.join(""):`<tr><td class="empty">nothing yet</td></tr>` }
 
-function fillSelects(objects){
-  const obj = $("#obj");
-  const want = Object.keys(objects).sort();
-  if(obj.dataset.keys !== want.join()){
-    obj.dataset.keys = want.join();
-    obj.innerHTML = want.map(k => `<option value="${k}">${k} · ${objects[k].label ?? "?"}</option>`).join("");
-  }
+function renderMemory(m){
+  table("#norms", (m.norms||[]).map(n=>`<tr>
+      <td class="k">${n.label}</td>
+      <td class="v">${short(n.home_location)} <span class="chip ${n.source}">${n.source}</span>
+        <span style="color:var(--steel)">${(+n.confidence).toFixed(2)}</span></td></tr>`));
+  table("#tasks", (m.tasks||[]).map(t=>`<tr>
+      <td class="k">${t.goal}</td>
+      <td class="v"><span class="chip ${t.origin}">${t.origin}</span> <span class="chip ${t.state}">${t.state}</span></td></tr>`));
+  table("#beliefs", (m.beliefs||[]).map(b=>`<tr>
+      <td class="k">${b.label} <span style="color:var(--steel-dim)">${b.instance_id}</span></td>
+      <td class="v">${short(b.location)}${b.stale?' <span class="chip failed">stale</span>':""}</td></tr>`));
+  table("#decisions", (m.decisions||[]).map(d=>`<tr>
+      <td class="k">${d.chose}</td>
+      <td class="v">${d.n_recalled} mem · ${(+d.recall_latency_ms).toFixed(0)}ms</td></tr>`));
+  table("#skills", (m.skills||[]).map(s=>`<tr>
+      <td class="k">${s.skill} ${s.object_label} <span class="chip">${s.strategy}</span></td>
+      <td class="v">${s.n_ok}/${s.n_try}</td></tr>`));
+  $("#f-events").textContent = m.stats?.events ?? 0;
+  $("#f-vec").textContent = m.stats?.native_vectors ? "pgvector" : "array";
 }
 
-async function loadTargets(){
-  const r = await fetch("/api/targets");
-  if(!r.ok) return;
-  TARGETS = await r.json();
-  $("#dest").innerHTML = TARGETS.map(t =>
-    `<option value="${t.name}">${t.kind === "container" ? "▣" : "▭"} ${t.name.replace(/_main_group$/,"")}</option>`
-  ).join("");
+function mountEyes(cams){
+  if(JSON.stringify(cams)===JSON.stringify(CAMS)) return; CAMS=cams;
+  $("#eyes").innerHTML = cams.map(c=>`<figure class="eye">
+      <img src="/stream/${c}" alt="${c}"><span>${c.replace(/^robot0_/,"").replace(/_/g," ")}</span></figure>`).join("");
+}
+function fillSelect(sel, opts, keep){
+  const cur = $(sel).value;
+  const want = opts.map(o=>o.v).join();
+  if($(sel).dataset.k===want) return;
+  $(sel).dataset.k=want;
+  $(sel).innerHTML = opts.map(o=>`<option value="${o.v}">${o.t}</option>`).join("");
+  if(keep && opts.some(o=>o.v===cur)) $(sel).value=cur;
 }
 
+/* ── polling ──────────────────────────────────────────────────────── */
 async function poll(){
   try{
     const s = await (await fetch("/api/state")).json();
-    const simOk = s.ready && s.status.running;
-    $("#d-sim").className = "dot " + (simOk ? "on" : "bad");
-    $("#s-sim").textContent = simOk ? "kitchen live" : "kitchen down";
+    const ok = s.ready && s.status.running;
+    $("#d-sim").className="dot "+(ok?"on":"bad");
+    $("#s-sim").textContent = ok?"kitchen live":"kitchen down";
+    if(!s.ready){ setTimeout(poll,700); return; }
+    mountEyes(s.cameras);
+    OBJECTS = s.objects;
+    $("#s-kitchen").textContent=s.kitchen_id; $("#s-robot").textContent=s.robot_id;
+    $("#f-hz").textContent=(s.status.hz??0).toFixed(1)+" Hz";
 
-    if(!s.ready){ setTimeout(poll, 700); return; }
+    const objOpts = Object.entries(s.objects).sort()
+      .map(([k,o])=>({v:k,t:`${k} · ${o.label??"?"}`}));
+    fillSelect("#d-obj",objOpts,true); fillSelect("#i-obj",objOpts,true);
+    const labels=[...new Set(Object.values(s.objects).map(o=>o.label).filter(Boolean))].sort();
+    fillSelect("#i-label",labels.map(l=>({v:l,t:l})),true);
 
-    mountCams(s.cameras);
-    $("#s-kitchen").textContent = s.kitchen_id;
-    $("#s-robot").textContent   = s.robot_id;
-    $("#s-home").textContent    = s.fixtures.home_cabinet.replace(/_main_group$/,"");
-    $("#s-stage").textContent   = s.fixtures.stage_cabinet.replace(/_main_group$/,"");
-
-    $("#tickets").innerHTML = Object.entries(s.objects)
-      .sort((a,b) => (a[1].label ?? "").localeCompare(b[1].label ?? "") || a[0].localeCompare(b[0]))
-      .map(([id,o]) => ticket(id,o)).join("");
-    renderDoors(s.doors);
-    fillSelects(s.objects);
-
-    $("#f-hz").textContent   = (s.status.hz ?? 0).toFixed(1) + " Hz";
-    $("#f-tick").textContent = s.status.tick;
-    $("#f-job").textContent  = s.status.current_job ?? "idle";
-    $("#f-q").textContent    = s.status.queued_jobs;
-    $("#f-up").textContent   = Math.floor(s.uptime_s) + "s";
-
-    if(!booted){ booted = true; await loadTargets(); say("kitchen live · world layer only"); }
-  }catch(e){
-    $("#d-sim").className = "dot bad";
-    $("#s-sim").textContent = "unreachable";
-    say("console lost the kitchen: " + e.message, true);
-  }
-  setTimeout(poll, 1000);
+    if(!booted){
+      booted=true;
+      img3d.src = "/stream3d?width=880&height=660";
+      await loadTargets();
+      say("kitchen live · agent deciding for itself");
+    }
+  }catch(e){ $("#d-sim").className="dot bad"; $("#s-sim").textContent="unreachable"; }
+  setTimeout(poll,1200);
 }
 
-async function health(){
+async function pollAgent(){
   try{
-    const h = await (await fetch("/api/health")).json();
-    const ok = h.memory && h.memory.connected;
-    $("#d-mem").className = "dot " + (ok ? "on" : "bad");
-    $("#s-mem").textContent = ok ? "memory online" : "memory offline";
-    $("#s-mem").title = h.memory?.error || h.memory?.dsn || "";
-  }catch{ /* footer already reports sim health */ }
-  setTimeout(health, 5000);
+    const a = await (await fetch("/api/agent")).json();
+    $("#d-agent").className="dot "+(a.present&&a.status.running?(a.status.paused?"bad":"good"):"bad");
+    $("#s-agent").textContent = !a.present?"no agent":(a.status.paused?"agent paused":"agent thinking");
+    $("#s-doing").textContent = a.status.current || "watching";
+    $("#f-noticed").textContent=a.status.noticed??0;
+    $("#f-done").textContent=a.status.tasks_done??0;
+    $("#f-failed").textContent=a.status.tasks_failed??0;
+    if(a.feed?.length){ renderBeats(a.feed);
+      if(a.feed[0].t!==lastBeat){ lastBeat=a.feed[0].t; } }
+  }catch{}
+  setTimeout(pollAgent,1000);
+}
+
+async function pollMemory(){
+  try{
+    const m = await (await fetch("/api/memory")).json();
+    $("#d-mem").className="dot good"; $("#s-mem").textContent="memory online";
+    renderMemory(m);
+  }catch{ $("#d-mem").className="dot bad"; $("#s-mem").textContent="memory offline" }
+  setTimeout(pollMemory,1500);
+}
+
+async function loadTargets(){
+  const r=await fetch("/api/targets"); if(!r.ok) return;
+  TARGETS=await r.json();
+  const opts=TARGETS.map(t=>({v:t.name,t:`${t.kind==="container"?"▣":"▭"} ${short(t.name)}`}));
+  fillSelect("#d-dest",opts,true); fillSelect("#i-loc",opts,true);
 }
 
 /* ── controls ─────────────────────────────────────────────────────── */
-$("#btn-drop").onclick = async e => {
-  const b = e.target; b.disabled = true;
-  try{
-    const r = await post("/api/drop", {
-      instance_id: $("#obj").value, fixture: $("#dest").value, secret: $("#secret").checked
-    });
-    say(`${r.label} ${r.instance_id} → ${r.settled_location.replace(/_main_group$/,"")}`
-        + (r.opened_door ? " (door opened)" : "")
-        + ($("#secret").checked ? " · unobserved" : ""));
-  }catch(err){ say("drop failed: " + err.message, true); }
-  b.disabled = false;
-};
+$("#btn-drop").onclick = async e=>{ e.target.disabled=true;
+  try{ const r=await post("/api/drop",{instance_id:$("#d-obj").value,fixture:$("#d-dest").value});
+       say(`${r.label} left on ${short(r.settled_location)} — the robot will notice`); }
+  catch(err){ say("failed: "+err.message,true) } e.target.disabled=false };
 
-$("#btn-return").onclick = async e => {
-  const b = e.target; b.disabled = true;
-  try{
-    const stage = (await (await fetch("/api/state")).json()).fixtures.stage_cabinet;
-    const r = await post("/api/drop", {instance_id: $("#obj").value, fixture: stage, secret: true});
-    say(`${r.instance_id} returned to staging · unobserved`);
-  }catch(err){ say("return failed: " + err.message, true); }
-  b.disabled = false;
-};
+$("#btn-secret").onclick = async e=>{ e.target.disabled=true;
+  try{ const r=await post("/api/drop",{instance_id:$("#d-obj").value,fixture:$("#d-dest").value,secret:true});
+       say(`moved ${r.instance_id} to ${short(r.settled_location)} — robot NOT told`); }
+  catch(err){ say("failed: "+err.message,true) } e.target.disabled=false };
 
-document.addEventListener("click", async ev => {
-  const jog = ev.target.closest("[data-jog]");
-  if(jog){
-    jog.disabled = true;
-    try{
-      const r = await post("/api/jog", {axis: jog.dataset.jog, amount: +jog.dataset.amt});
-      say(`jog ${r.axis} ${r.ok ? "ok" : "failed"} · ${r.seconds}s`, !r.ok);
-    }catch(err){ say("jog failed: " + err.message, true); }
-    jog.disabled = false;
-    return;
-  }
-  const door = ev.target.closest("[data-door]");
-  if(door){
-    door.disabled = true;
-    try{
-      const r = await post("/api/door", {fixture: door.dataset.door, action: door.dataset.act});
-      say(`${r.fixture.replace(/_main_group$/,"")} is now ${r.is_open ? "open" : "shut"}`);
-    }catch(err){ say("door failed: " + err.message, true); }
-    door.disabled = false;
-  }
-});
+$("#btn-rule").onclick = async e=>{ e.target.disabled=true;
+  try{ const r=await post("/api/instruct",{text:"",label:$("#i-label").value,location:$("#i-loc").value});
+       say(`rule set: ${r.label}s go in ${short(r.location)} — applies from now on`); }
+  catch(err){ say("failed: "+err.message,true) } e.target.disabled=false };
 
-$("#btn-refresh").onclick = () => { loadTargets(); say("targets refreshed"); };
+$("#btn-fetch").onclick = async e=>{ e.target.disabled=true;
+  try{ const id=$("#i-obj").value; const r=await post("/api/instruct",{text:`bring me the ${id}`,instance_id:id});
+       say(`asked for ${id} — queued above its own work (priority ${r.priority})`); }
+  catch(err){ say("failed: "+err.message,true) } e.target.disabled=false };
 
-poll(); health();
+$("#btn-ask").onclick = async ()=>{
+  const q=$("#q").value.trim(); if(!q) return;
+  try{ const r=await (await fetch(`/api/memory/recall?q=${encodeURIComponent(q)}&k=4`)).json();
+    $("#qout").innerHTML = r.hits.length
+      ? r.hits.map(h=>`<div style="padding:3px 0"><b style="color:var(--heat)">${h.score.toFixed(3)}</b> ${h.text}</div>`).join("")
+      : `<div class="empty">no memory of that</div>`;
+    say(`recall "${q}" — ${r.hits.length} hits in ${r.latency_ms}ms`);
+  }catch(e){ say("recall failed: "+e.message,true) } };
+$("#q").addEventListener("keydown",e=>{ if(e.key==="Enter") $("#btn-ask").click() });
+
+$("#btn-pause").onclick = async e=>{
+  const on = e.target.textContent.startsWith("Pause");
+  try{ const r=await post(`/api/agent/pause?on=${on}`); e.target.textContent=r.paused?"Resume agent":"Pause agent";
+       say(r.paused?"agent paused":"agent resumed") }catch(err){ say(err.message,true) } };
+
+$("#btn-forget").onclick = async ()=>{
+  if(!confirm("Wipe the robot's memory? It will start over knowing nothing.")) return;
+  try{ await post("/api/forget"); say("memory wiped — it knows nothing again") }
+  catch(e){ say(e.message,true) } };
+
+poll(); pollAgent(); pollMemory();
 </script>
 </body>
 </html>
