@@ -131,6 +131,14 @@ def main():
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--w-span", type=float, default=1.0)
     ap.add_argument("--w-nce", type=float, default=1.0)
+    ap.add_argument("--hard-neg", type=float, default=0.0,
+                    help="weight on WITHIN-recording negatives: a "
+                         "non-overlapping span of the same recording is a "
+                         "different MOMENT. v1 measured nce -> 0.005 by "
+                         "epoch 2, i.e. 'which video is this' is trivial; "
+                         "this makes the task 'which moment is this'. Risk "
+                         "to watch: at high weight it can teach phase "
+                         "discrimination at the expense of event identity.")
     ap.add_argument("--w-var", type=float, default=0.5)
     ap.add_argument("--w-cov", type=float, default=0.1)
     ap.add_argument("--ema", type=float, default=0.996)
@@ -193,6 +201,7 @@ def main():
             if len(batch) < 4:
                 continue
             crops_a, crops_b, spans, span_tgts, rolls = [], [], [], [], []
+            crops_h = []
             for i in batch:
                 rec = D[i]
                 T = len(rec["tok"])
@@ -203,6 +212,15 @@ def main():
                 s1 = int(np.clip(s0 + L - ov, 0, T - L))
                 crops_a.append(crop(rec, s0, s0 + L, torch, dev))
                 crops_b.append(crop(rec, s1, s1 + L, torch, dev))
+                if a.hard_neg > 0:
+                    # a DISJOINT span of the same recording: same video, other
+                    # moment. Falls back to an overlapping crop when the
+                    # recording is too short to be disjoint - such a recording
+                    # simply contributes no hard negative.
+                    cand = [(u, u + L) for u in range(0, T - L + 1, max(1, L // 2))
+                            if u + L <= s0 or u >= s0 + L]
+                    h0 = int(cand[rng.integers(len(cand))][0]) if cand else s1
+                    crops_h.append(crop(rec, h0, h0 + L, torch, dev))
                 # span task inside crop A: prefix >=4, span 8-24
                 sp = int(rng.integers(8, min(24, L - 4) + 1))
                 st = int(rng.integers(4, L - sp + 1))
@@ -223,8 +241,16 @@ def main():
             logits = ua @ ub.T / 0.1
             same = torch.tensor(
                 [[ri == rj for rj in rolls] for ri in rolls], device=dev)
-            logits = logits.masked_fill(
-                same & ~torch.eye(B, dtype=torch.bool, device=dev), -1e9)
+            eye = torch.eye(B, dtype=torch.bool, device=dev)
+            logits = logits.masked_fill(same & ~eye, -1e9)
+            if a.hard_neg > 0:
+                _, _, fh = encode_batch(model, crops_h, torch, dev)
+                hard = ua @ F.normalize(fh, dim=-1).T / 0.1
+                # a recording's own disjoint span is the hard negative; other
+                # rows' hard crops are ordinary negatives, EXCEPT where they
+                # share a rollout (cross-view bar applies here too)
+                hard = hard.masked_fill(same & ~eye, -1e9)
+                logits = torch.cat([logits, hard + np.log(a.hard_neg)], 1)
             l_nce = F.cross_entropy(logits,
                                     torch.arange(B, device=dev))
 
