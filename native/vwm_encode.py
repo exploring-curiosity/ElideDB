@@ -119,10 +119,17 @@ def main():
         T = len(G)
         g = G.reshape(T, -1, G.shape[-1]).mean(1)
         g /= np.maximum(np.linalg.norm(g, axis=-1, keepdims=True), 1e-8)
-        k = G.shape[1] // 5
-        c = G.reshape(T, 5, k, 5, k, -1).mean((2, 4)).reshape(T, -1)
-        r10 = G.reshape(T, 10, 2, 20, -1).mean((2, 3)).reshape(T, -1)
-        r20 = G.mean(2).reshape(T, -1)       # (T, 20*384) row marginal
+        # coarse fields crop the grid to a divisible size (a 28-grid at
+        # 448px keeps 25x25 for the 5x5 field); the row marginal works
+        # at any grid width
+        GG = G.shape[1]
+        k = GG // 5
+        Gc = G[:, :5 * k, :5 * k]
+        c = Gc.reshape(T, 5, k, 5, k, -1).mean((2, 4)).reshape(T, -1)
+        k1 = GG // 10
+        Gc1 = G[:, :10 * k1, :10 * k1]
+        r10 = Gc1.reshape(T, 10, k1, 10 * k1, -1).mean((2, 3)).reshape(T, -1)
+        r20 = G.mean(2).reshape(T, -1)       # (T, GRID*384) row marginal
         np.savez(fp, g=g.astype(np.float16), c=c.astype(np.float16),
                  r10=r10.astype(np.float16), r20=r20.astype(np.float16),
                  cam=cam.name)

@@ -204,24 +204,61 @@ xarm7/vx300s episodes (cross-embodiment slice of the sim ruler).
 
 ## 7. Current system vs the general solution
 
-| layer | requirement | shipped system | status |
-|---|---|---|---|
-| L0 | frozen appearance | DINOv3 vits; identity cut AUC 0.9994 | have, validated |
-| L1 | entity tracks | none in shipped path; prior lineage recall 0.48 | missing / failed old gate |
-| L2 | derived roles | fragments in wrong space (median bg = scene part) | partial |
-| L3 | entity records | none — r20 pools everything | missing |
-| L4 | interactions/topology | none in any lineage | missing |
-| L5 | moment = graph | moment = pooled vector | missing |
-| L6 | symmetric query | yes | have |
-| L7 | role correspondence | cosine + DTW (time-correspondence only) | 1 of 2 dimensions |
-| L8 | graph geometry | CSLS + diffusion, +50% AP holdout | have, carries unchanged |
+Status as of 2026-08-10 late (entsam.py on data/prim_actions_v2, the
+first fully-verified corpus - 180 eps, 3 arms, every episode gated):
 
-The current system is the general solution with its middle removed.
-Both validated ends (L0, L8) carry unchanged. The prior tracks-first
-lineage failed from (a) tracking below its gate and (b) hand-coded
-named axes on top — the general design differs in exactly those two
-places: roles are positional statistics, and matching is
-correspondence, not fixed-axis channels.
+| layer | requirement | built | status |
+|---|---|---|---|
+| L0/L1 | entities with identity through time | FastSAM frame-0 prompts (mask-pixel+chroma NMS) -> SAM2.1-t video masklets; per-recording VIEW SELECTION at ingest (keep the view whose non-agent entities move) | have; entity gate 0.870 corpus-wide (panda 0.92 / ur5e 0.88 / vx300s 0.55->0.87 after view selection) |
+| L2 | roles by statistics | change-coverage anchor; appendage = moves-in-anchor-motion + APPROACH VETO (a patient sits out the approach; an appendage never sits out); scene-residue filter (chroma-vs-temporal-median at transiently-occupied places) | have |
+| L3 | particulars | IoU dedup + scale-gated part-merge (chroma-gated); vanished partners keep their last rest (biography used in adjacency) | have |
+| L4/L5 | moment = relational story | 9 facts per window: rest_b/rest_a, disp, arc (chord deviation - carry vs slide), adjB/adjA (box-gap, comparable scale), agB/agA (separation GROWTH = released vs held), absent (occluded grip IS the taking); pixel-arbitrated masklet-theft correction; next-event cap on end windows | have |
+| L6/L7 | symmetric query + correspondence | same operators; graded CONJUNCTION of fact agreements (product form: one contradicted claim sinks the pair) - no cosine anywhere | have |
+| L8 | corpus geometry | CSLS + short diffusion on the fact-agreement graph | have; NEUTRAL at 324 events (needs corpus mass) |
+
+**The numbers (leave-episode-out, k = support, true spans given):**
+yield ALL 0.499 (L8 0.498) vs chance ~0.31; per class pick 0.61,
+place 0.50, stack 0.48, push 0.36, unstack 0.28; per arm panda 0.60,
+ur5e 0.47, vx300s 0.43. Cross-embodiment slice (query one arm against
+the other two): 0.484 - within 0.015 of the mixed number, i.e. the
+facts ARE embodiment-general; what they are not yet is reliable.
+13% of events extract no moment (abstention, not error).
+
+**Where the remaining gap to 0.90 lives (measured):** within-class
+fact noise 0.2-0.3 std against class separations of comparable size -
+box-level geometry on 20-30 px things. Decomposed: (a) masklet
+merges (visually-aligned pairs from a poor view; white-on-white);
+(b) the terminal-coda ambiguity (held-still vs resting with the agent
+parked is view-ambiguous at box level; rest_a splits the pick class
+36/108 along the terminal/mid line); (c) per-view quality (the same
+physical stack moves 0.29 extents in one camera and 4+ in another).
+
+**Spatial round (owner-directed, 2026-08-10 late):** image-plane
+box-gap adjacency PROVEN BLIND against sim truth (median gap 0.00 for
+both true-contact and true-separate pairs). Depth Pro at event
+endpoints + per-recording support plane built: 3D contact separates
+truth (5.1 vs 15.9 cm) and runs at parity overall (L7 0.510) with a
+healthier class mix; the ELEVATION fact is blocked by the monocular
+SUPPORT PRIOR - depth models assume things rest on surfaces, so true
+falls read -0.26 while true rises read +0.00 at 25 px object scale.
+Elevation weight zeroed, facts stored. V-JEPA 2/2.1: latents contain
+depth but only supervised probes read it - no label-free relation
+readout exists to use. Open support-prior-free lift signal: object-
+shadow separation (shadows already tracked as scene residue).
+
+**Measured negatives (do not retry blind):** tail-evidence-weighted
+coda penalties (0.499 -> 0.469: terminal picks collide with terminal
+places); SAM2 at imgsz 768 (gate +0.04 but no-moment 0.22 -> 0.33 on
+the audit slice; resolution is not the bound); L8 neutral at this
+corpus size; settle-run end detection (forced rest_a=1 for held-still
+picks - the one-sided window exists for a reason).
+
+**What this rebuild proved:** with identity from a tracker and facts
+compared as claims, the yield structure follows the fact table
+directly - every class's failures trace to a named extraction defect
+with an instrument, not to an unexplained metric gap. The pooled-
+descriptor era could never say WHERE a point of yield went; this
+system can, per event.
 
 ## 8. Gates (all pre-existing; build must pass them, not redefine them)
 

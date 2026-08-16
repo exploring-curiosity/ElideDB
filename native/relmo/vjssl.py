@@ -157,6 +157,16 @@ def main():
     ap.add_argument("--w-var", type=float, default=0.5)
     ap.add_argument("--w-cov", type=float, default=0.1)
     ap.add_argument("--ema", type=float, default=0.996)
+    ap.add_argument("--mined", default="",
+                    help="vjmine pairs file. THE v1 FIX: with no mined "
+                         "partner every positive is two crops of one "
+                         "recording, so the model learns within-video "
+                         "consistency and is then asked for cross-video "
+                         "retrieval. A mined partner makes the positive a "
+                         "DIFFERENT video of the same kind of moment.")
+    ap.add_argument("--p-mined", type=float, default=0.5,
+                    help="probability of using a mined partner when one "
+                         "exists; the rest stay self-overlap crops")
     a = ap.parse_args()
 
     import torch
@@ -167,6 +177,15 @@ def main():
     torch.manual_seed(a.seed)
     rng = np.random.default_rng(a.seed)
     dev = "mps" if torch.backends.mps.is_available() else "cpu"
+
+    MINED = {}
+    if a.mined:
+        md = json.loads(Path(a.mined).read_text())
+        for x, y, _c in md["pairs"]:
+            MINED.setdefault(x, []).append(y)
+            MINED.setdefault(y, []).append(x)
+        print(f"mined positives: {md['n_pairs']} pairs over "
+              f"{len(MINED)} recordings", flush=True)
 
     print("loading pool (fp16-resident)...", flush=True)
     D = load_pool()
@@ -207,6 +226,7 @@ def main():
         return participation(np.concatenate(zs))
 
     t0, hist = time.time(), []
+    n_mined = 0
     for ep in range(a.epochs):
         order = rng.permutation(len(train))
         bar = tqdm(range(steps_ep), desc=f"ep{ep}", unit="step")
@@ -226,7 +246,21 @@ def main():
                 s0 = rng.integers(0, T - L + 1)
                 s1 = int(np.clip(s0 + L - ov, 0, T - L))
                 crops_a.append(crop(rec, s0, s0 + L, torch, dev))
-                crops_b.append(crop(rec, s1, s1 + L, torch, dev))
+                # the positive: a DIFFERENT video of the same kind of moment
+                # when the miner found one, else the self-overlap fallback
+                part = None
+                if MINED.get(i) and rng.random() < a.p_mined:
+                    cs = [c for c in MINED[i] if c in D]
+                    part = cs[rng.integers(len(cs))] if cs else None
+                if part is not None:
+                    pr_ = D[part]
+                    Tp = len(pr_["tok"])
+                    Lp = int(min(Tp, 64))
+                    sp = int(rng.integers(0, Tp - Lp + 1))
+                    crops_b.append(crop(pr_, sp, sp + Lp, torch, dev))
+                    n_mined += 1
+                else:
+                    crops_b.append(crop(rec, s1, s1 + L, torch, dev))
                 if a.hard_neg > 0:
                     # a DISJOINT span of the same recording: same video, other
                     # moment. Falls back to an overlapping crop when the
@@ -292,10 +326,11 @@ def main():
                             var=f"{float(l_var):.3f}")
         pr = gate_pr()
         hist.append(dict(ep=ep, pr=round(pr, 1), span=float(l_span),
-                         nce=float(l_nce), var=float(l_var)))
+                         nce=float(l_nce), var=float(l_var), mined=n_mined))
         print(f"  ep{ep}: PR(z)={pr:.1f}  span {float(l_span):.3f}  "
               f"nce {float(l_nce):.3f}  var {float(l_var):.3f}  "
-              f"[{(time.time()-t0)/60:.0f}m]", flush=True)
+              f"mined+{n_mined}  [{(time.time()-t0)/60:.0f}m]", flush=True)
+        n_mined = 0
         if ep >= 5 and pr < 15:
             print("GATE FAILED: PR(z) < 15 after epoch 5 - aborting per "
                   "runbook §5.")

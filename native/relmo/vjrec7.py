@@ -45,10 +45,11 @@ OUT7 = R.BASE / "vjrec7"
 TOK_DIM = 96
 
 
-def encode_tokens(model, torch, dev, clip, layer, n_t, dt_torch):
-    """One window -> (b_tok (S,256,1024), gate (S,256)). Observation only."""
-    n_sp = GRID * GRID
-    px = to_tensor(clip, torch, dev, dt_torch)
+def encode_tokens(model, torch, dev, clip, layer, n_t, dt_torch, res=None):
+    """One window -> (b_tok (S,K,1024), gate (S,K)). Observation only."""
+    from relmo.vjs import CROP, PATCH
+    n_sp = ((res or CROP) // PATCH) ** 2
+    px = to_tensor(clip, torch, dev, dt_torch, res)
     with torch.no_grad():
         enc = model.encoder(pixel_values_videos=px, output_hidden_states=True)
         X = enc.last_hidden_state.float()[0].reshape(n_t, n_sp, -1)
@@ -61,15 +62,16 @@ def encode_tokens(model, torch, dev, clip, layer, n_t, dt_torch):
     return np.concatenate(B), np.concatenate(G).astype(np.float32)
 
 
-def record(model, torch, dev, frames, src_fps, layer, dt_torch, proj=None):
-    dt, n_t, desc, hop_steps = geometry(WIN_FRAMES, STREAM_FPS, HOP_S)
-    wins = windows(len(frames), src_fps, WIN_FRAMES, STREAM_FPS, HOP_S)
+def record(model, torch, dev, frames, src_fps, layer, dt_torch, proj=None,
+           wf=WIN_FRAMES, hop=HOP_S, res=None):
+    dt, n_t, desc, hop_steps = geometry(wf, STREAM_FPS, hop)
+    wins = windows(len(frames), src_fps, wf, STREAM_FPS, hop)
     if not wins:
         return None
     B, G, step, frame0 = [], [], [], []
     for j, (_, idx) in enumerate(wins):
         b, g = encode_tokens(model, torch, dev, frames[idx], layer, n_t,
-                             dt_torch)
+                             dt_torch, res)
         if proj is not None:
             b = (b.astype(np.float32) @ proj).astype(np.float16)
         B.append(b)
@@ -91,6 +93,9 @@ def main():
     ap.add_argument("--fit", action="store_true",
                     help="fit the token PCA on TRAIN episodes and exit")
     ap.add_argument("--fit-episodes", type=int, default=24)
+    ap.add_argument("--res", type=int, default=0)
+    ap.add_argument("--win-frames", type=int, default=WIN_FRAMES)
+    ap.add_argument("--hop", type=float, default=HOP_S)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--suffix", default="")
     a = ap.parse_args()
@@ -99,13 +104,13 @@ def main():
     from tqdm import tqdm
     from transformers import VJEPA2Model
 
-    _, n_t, _, _ = geometry(WIN_FRAMES, STREAM_FPS, HOP_S)
+    _, n_t, _, _ = geometry(a.win_frames, STREAM_FPS, a.hop)
     dev = "mps" if torch.backends.mps.is_available() else "cpu"
     dt_torch = torch.float16 if a.fp16 else torch.float32
     print(f"loading {MODEL} onto {dev}...", flush=True)
     model = VJEPA2Model.from_pretrained(MODEL, dtype=dt_torch).to(dev).eval()
     OUT7.mkdir(parents=True, exist_ok=True)
-    pfile = OUT7 / "_token_pca.npz"
+    pfile = OUT7 / f"_token_pca{a.suffix}.npz"
 
     if a.fit:
         from relmo.vjsplit import load as load_split
@@ -118,10 +123,10 @@ def main():
                 continue
             w_, h_ = probe_dims(mp4)
             F = read_frames(mp4, w_, h_)
-            wins = windows(len(F), fps, WIN_FRAMES, STREAM_FPS, HOP_S)
+            wins = windows(len(F), fps, a.win_frames, STREAM_FPS, a.hop)
             for _, idx in wins[:4]:
                 b, _ = encode_tokens(model, torch, dev, F[idx], a.layer, n_t,
-                                     dt_torch)
+                                     dt_torch, a.res or None)
                 toks.append(b.reshape(-1, b.shape[-1]).astype(np.float32))
         X = np.concatenate(toks)
         rng = np.random.default_rng(0)
@@ -159,7 +164,8 @@ def main():
         try:
             w_, h_ = probe_dims(mp4)
             rec = record(model, torch, dev, read_frames(mp4, w_, h_), fps,
-                         a.layer, dt_torch, proj)
+                         a.layer, dt_torch, proj, a.win_frames, a.hop,
+                         a.res or None)
         except Exception as e:                                # noqa: BLE001
             tqdm.write(f"  {eid}: {type(e).__name__}: {e}")
             failed += 1

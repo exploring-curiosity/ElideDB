@@ -47,6 +47,7 @@ Columns: what was tried / the number / the reading.
 | 192px encoder | test −0.034, ood −0.068 | 1.84x faster, not free |
 | 64-frame window | test +0.041, **ood −0.114**, drops 13% of corpus | more context helps in-domain, hurts transfer |
 | movi_e corpus | 0/1616 usable | 2.0 s clips vs a 4 s window |
+| whitening a FUSION (truncates each channel to 256d) | 0.338 vs 0.404 z-scored | whitening helps a SINGLE channel, HURTS a fusion: 768d after truncation vs 2048d kept. Decorrelation does not pay for the dimensions lost |
 | **grading composite by `group_key`** | **chance 0.543, lift 1.09-1.20x** | **INVALID METRIC.** The verb x object parser cannot read compositional names and dumps 900/1152 into `Other/Other`. Any prec measured this way is uninterpretable - it looked like 0.651 vs a 0.314 bar. Use `--event-key task`: 32 groups x 36, chance 0.031 |
 | overlap-InfoNCE with cross-recording negatives only | nce -> 0.005 by epoch 2 | "which video is this" is trivial; the term stops contributing. Same failure as the earlier hard-negative lesson. Fix = within-recording disjoint spans (`--hard-neg`) |
 | V-JEPA 2.1 ViT-B drop-in | unloadable | not in any released transformers; `encoder.layernorm` missing → random init, `predictor.proj` 1664 vs 768 |
@@ -65,6 +66,8 @@ Columns: what was tried / the number / the reading.
 | **whitening on target corpus** | **sig unseen 0.258→0.293 (+14%)** | fits itself to any corpus; carries no rcasa |
 | **fix+sig whitened** | **0.312/0.312/0.312** | ZERO seen-vs-unseen gap. Fully frozen |
 | **head+fix+sig fused** | **unseen 0.248→0.314 (+27%)** | best overall 0.341; channels complementary off-domain |
+| **ssl-z + fix + sig, z-scored, SEALED corpus** | **0.404 ALL / 0.406 unseen** | **CURRENT BEST.** Beats frozen-only (0.376) by +9% rel. A z weak ALONE (0.211) still adds when fused — pattern repeats on both corpora |
+| mined cross-video positives | 94.5% same-task, 1754 pairs | the frozen space is good enough to teach itself; channel consensus rejects look-alikes |
 
 ## 3b. THE CENTRAL LESSON (2026-08-16, cost: one full training run)
 
@@ -135,14 +138,16 @@ Corpus-fitted constants in the path: token PCA, predictor calibration
 | frozen fix+sig whitened | 0.312 | atomic_full |
 | best fusion (head+fix+sig) | 0.314 | atomic_full |
 | PR(z) target | ≥ 30 | training gate |
-| composite (sealed) baselines | **TBD — first run pending** | |
+| **composite (sealed), frozen fix+sig whitened** | **0.376 unseen** | vjreps, task key, chance 0.029 |
+| **composite (sealed), ssl_v1 z + fix + sig** | **0.406 unseen** | THE BAR TO BEAT |
 
 ## 6. RUNS
 
 | id | change | PR(z) | prec (sealed) | verdict |
 |---|---|---|---|---|
-| ssl_v1_s0 | span-pred + overlap-InfoNCE + VICReg, d=256, 13 video-h pool (4453 traces) | 46.7 (33.8 on composite) | **0.211** (whitened 0.269) | **FAILED — loses to frozen 0.371** |
-| ssl_v1_s1 | reseed | 45.1 | pending | PR reproduces |
+| ssl_v1_s{0,1,2} | span-pred + overlap-InfoNCE + VICReg, d=256 | 46.7 / 45.1 / 47.8 | alone **0.211**, FUSED **0.404** | alone: loses to frozen. fused: **BEST IN PROGRAM** |
+| vjmine (deduped pool) | mutual top-10 + fix∧sig consensus + DTW verify | — | 94.5% same-task @ 20% keep | mined set is sound; 1754 pairs kept |
+| ssl_v2_s0 | + mined cross-video positives, hard negatives, span 0.5 | running | pending | the v1 correction |
 
 ## 7. QUEUE — ranked, each must be self-supervised
 

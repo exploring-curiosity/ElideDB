@@ -52,12 +52,13 @@ from relmo.vjsplit import load as load_split  # noqa: E402
 REC7 = R.BASE / "vjrec7"
 
 
-def load_corpus(datasets=("rcasa", "rcasa_eval"), layer=6, arc=ARC_DS):
+def load_corpus(datasets=("rcasa", "rcasa_eval"), layer=6, arc=ARC_DS,
+                suffix=""):
     """{id: dict(tok (T,256,d), gate (T,256), g (T,2), sig (T,768))}."""
     out = {}
     for ds in datasets:
-        t7 = REC7 / f"{ds}_L{layer}"
-        rec6, sig6 = vjz.dirs("vjrec6", ds)
+        t7 = REC7 / f"{ds}_L{layer}{suffix}"
+        rec6, sig6 = vjz.dirs("vjrec6", ds, suffix=suffix)
         if not t7.exists():
             continue
         for p in sorted(t7.glob("*.npz")):
@@ -206,6 +207,7 @@ def main():
     ap.add_argument("--every", type=int, default=25)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--tag", default="p1_s0")
+    ap.add_argument("--rec-suffix", default="")
     a = ap.parse_args()
 
     import torch
@@ -215,7 +217,7 @@ def main():
     torch.manual_seed(a.seed)
     rng = np.random.default_rng(a.seed)
     sp = load_split()
-    D = load_corpus()
+    D = load_corpus(suffix=a.rec_suffix)
     meta = vjrel.meta_table("rcasa")
     tr = [i for i in sorted(sp["train"]) if i in D]
     va = [i for i in sorted(sp["val"]) if i in D]

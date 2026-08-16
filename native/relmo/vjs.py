@@ -97,11 +97,17 @@ def sample_clip(F: np.ndarray, n: int) -> np.ndarray:
     return F[idx]
 
 
-def to_tensor(clip: np.ndarray, torch, device, dtype):
-    """(T,H,W,3) uint8 -> (1,T,3,CROP,CROP) normalised."""
+def to_tensor(clip: np.ndarray, torch, device, dtype, res=None):
+    """(T,H,W,3) uint8 -> (1,T,3,res,res) normalised. res defaults to CROP.
+
+    V-JEPA's cost is dominated by token count, which is (res/PATCH)^2 per
+    tubelet, so this is the single biggest write-time dial that does not touch
+    the model: 256 -> 192 measured 2.2x cheaper.
+    """
     import torch.nn.functional as Fn
+    res = res or CROP
     x = torch.tensor(clip).permute(0, 3, 1, 2).float().div_(255.)   # T,3,H,W
-    x = Fn.interpolate(x, size=(CROP, CROP), mode="bilinear",
+    x = Fn.interpolate(x, size=(res, res), mode="bilinear",
                        align_corners=False)
     mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
     std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)

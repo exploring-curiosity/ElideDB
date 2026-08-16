@@ -30,6 +30,9 @@ from pathlib import Path
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ent  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 ENT = ROOT / "data" / "cache" / "ent"
 FPS = 10.0
@@ -75,9 +78,68 @@ def moment(rows, view, a, b):
     agents = [r for r in vr if r["role"] == "agent"]
     selfs = [r for r in vr if r["role"] == "entity"
              and r.get("selfmove", False)]
-    sites_all = [s for s in vr if s["role"] == "site"]
-    ws = [s for s in sites_all
-          if s["t0"] <= b + 15 and s["t1"] >= a - 15]
+    # agent-body sites: the agent's parked body occupied the end that
+    # holds the THING (dirg: pre side for vanish-shaped, post side
+    # for appear-shaped) - that change is the agent moving itself,
+    # not an entity event. Direction-aware on purpose: a real vanish
+    # site's post end is legitimately agent-visited (it picked the
+    # thing up), so a blanket either-end rule kills real sites.
+    def _ghost(s):
+        return (s.get("ab_pre", False) if s.get("dirg", 0.0) >= 0
+                else s.get("ab_post", False))
+    sites_all = [s for s in vr if s["role"] == "site"
+                 and not _ghost(s)]
+
+    # TRANSIENT OCCUPANCY (persistence, atomically): two sites at the
+    # same spot in adjacent snapshot pairs, X->Y then Y->X, mean the
+    # persistent world RETURNED to its prior state - no scene change
+    # happened there, something merely dwelt for one quiet span. When
+    # the occupant (Y) looks like the agent's body it is a grasp/park
+    # dwell (measured: wood->white + white->wood bracketing every
+    # pick pause; their ground sides pair at dcol~0 and beat every
+    # true pair). A non-body occupant is a real reversible event
+    # (place then re-pick) and both sites stay.
+    pal = [np.median(np.asarray(r["rgb"]), 0) for r in agents]
+
+    def _bodylike(c):
+        c = np.asarray(c, np.float32)
+        sr = c / (c.sum() + 3.0)
+        for p in pal:
+            pr = p / (p.sum() + 3.0)
+            if np.abs(pr - sr).sum() < 0.12 \
+                    and abs(float(p.sum()) - float(c.sum())) < 300:
+                return True
+        return False
+
+    drop = set()
+    for i1, A in enumerate(sites_all):
+        for B in sites_all[i1 + 1:]:
+            if abs(B["t0"] - A["t1"]) > 2:
+                continue
+            ext = 0.5 * (max(A["w"], A["h"]) + max(B["w"], B["h"]))
+            if np.hypot(A["cx"] - B["cx"],
+                        A["cy"] - B["cy"]) > 0.7 * ext:
+                continue
+            if np.abs(A["post_rgb"] - B["pre_rgb"]).sum() < 80 \
+                    and np.abs(A["pre_rgb"] - B["post_rgb"]).sum() < 80 \
+                    and _bodylike(0.5 * (A["post_rgb"]
+                                         + B["pre_rgb"])):
+                drop.add(id(A))
+                drop.add(id(B))
+    sites_all = [s for s in sites_all if id(s) not in drop]
+    # a site's change is honestly located only as an interval
+    # (ton, tc]: onset of deviation from the pre state to the
+    # crossing. tc alone LAGS the event (the crossing completes when
+    # the agent clears the spot), so an event's own site lands at the
+    # window END and the neighbour's lag-shifted site at the START -
+    # point attachment mis-assigns both (measured). Membership = the
+    # fractional overlap of the site's interval with the window.
+    def member(s):
+        ton = s.get("ton", s["t0"])
+        span = max(s["tc"] - ton, 1)
+        return max(0.0, (min(s["tc"], b + 4) - max(ton, a - 4))
+                   / span)
+    ws = [s for s in sites_all if member(s) > 0.05]
 
     agent_rgb = None
     if agents:
@@ -99,56 +161,119 @@ def moment(rows, view, a, b):
                 best = max(best, float(np.exp(-d / max(rad, 8.0))))
         return best
 
-    # pair sites by core colour: a vanish (pre-side thing) matched to
-    # an appear (post-side thing) of the same look, vanish first
-    best_pair, pair = None, None
+    # INVOLVEMENT is graded, not binary (measured: binary existence
+    # facts saturate - 70% of pick windows contain SOME appear site,
+    # a neighbour's at the window edge, flipping the fact wholesale).
+    # A site's involvement in THIS window = interval membership *
+    # evidence mass relative to the window's own largest site.
+    # Boundary sites contribute marginally instead of flipping facts;
+    # degenerate slivers weigh almost nothing (colour-link alone
+    # paired two 4px backdrop bits over the true pair). No absolute
+    # constants: both terms are window-relative.
+    amax = max((s["w"] * s["h"] for s in ws), default=1.0)
+
+    def inv(s):
+        return member(s) * float(
+            np.sqrt(s["w"] * s["h"] / max(amax, 1.0)))
+
+    # graded one-sided evidence, direction from figure/ground (dirg:
+    # the thing differs from its surround, the ground matches it) -
+    # a place event's lone appear site must not read as a vanish of
+    # the table
+    # body-appearance PENALTY (not exclusion): position cannot
+    # separate agent from patient at the manipulation point (both are
+    # exactly there), only appearance can - but a body-coloured
+    # entity is a real possibility (white block, white arm), so a
+    # body-looking thing side loses only to a chromatic alternative,
+    # never to nothing.
+    def _wgt(thing_rgb):
+        # 0.15 by A/B (0.473 vs 0.460 at 0.4); the floor is nonzero
+        # so a body-coloured entity still wins over NOTHING
+        return 0.15 if _bodylike(thing_rgb) else 1.0
+
+    # (measured: agent presence as a selection factor HURTS - in
+    # dense windows the agent is near everything; it stays a
+    # reported fact only)
+    v_best, sv1 = 0.0, None
+    a_best, sa1 = 0.0, None
+    for s in ws:
+        d = s.get("dirg", 0.0)
+        if d >= 0 and not s.get("ab_pre", False):
+            sc = inv(s) * d * _wgt(s["pre_rgb"])
+            if sc > v_best:
+                v_best, sv1 = sc, s
+        if d < 0 and not s.get("ab_post", False):
+            sc = inv(s) * (-d) * _wgt(s["post_rgb"])
+            if sc > a_best:
+                a_best, sa1 = sc, s
+
+    # pair: colour-linked vanish->appear, weighted by joint
+    # involvement; agent-body sides excluded from their agent end
+    # direction-consistent pairing: a vanish candidate's THING is on
+    # its pre side (dirg>=0), an appear candidate's on its post side
+    # (dirg<=0). Without this the loop links the GROUND sides of two
+    # occupancy sites (wood->white + white->wood pair at dcol~0,
+    # measured beating every true pair).
+    best_pair, pair = 0.0, None
     for sv in ws:
+        if sv.get("ab_pre", False) or sv.get("dirg", 0.0) < -0.05:
+            continue                    # pre side is the agent's body
         for sa in ws:
-            if sa is sv or sa["t0"] < sv["t0"]:
+            if sa is sv or sa["tc"] < sv["tc"] \
+                    or sa.get("ab_post", False) \
+                    or sa.get("dirg", 0.0) > 0.05:
                 continue
             dcol = np.abs(sv["pre_rgb"] - sa["post_rgb"]).sum()
             if dcol > 200:
                 continue
-            score = np.exp(-dcol / 120.0)
-            if best_pair is None or score > best_pair:
-                best_pair, pair = score, (sv, sa)
+            sc = float(np.exp(-dcol / 120.0)
+                       * np.sqrt(max(inv(sv) * inv(sa), 0.0))
+                       * _wgt(sv["pre_rgb"]))
+            if sc > best_pair:
+                best_pair, pair = sc, (sv, sa)
 
-    # the involved sites: the pair if found, else the strongest
-    # single site (largest core change region)
-    if pair is not None:
-        sv, sa = pair
-        prgb = 0.5 * (sv["pre_rgb"] + sa["post_rgb"])
-    elif ws:
-        sv = max(ws, key=lambda s: s["w"] * s["h"])
-        sa = None
-        prgb = sv["pre_rgb"]
+    # the involved sites for downstream facts: the STRONGEST story
+    # wins - pair, lone vanish, or lone appear. A pair does not
+    # override by mere existence (measured: a 0.12 shadow-sliver
+    # pair displacing a 0.99 lone vanish)
+    if pair is not None and best_pair >= max(v_best, a_best):
+        sv_u, sa_u = pair
+        prgb = 0.5 * (sv_u["pre_rgb"] + sa_u["post_rgb"])
+    elif v_best >= a_best and sv1 is not None:
+        sv_u, sa_u = sv1, None
+        prgb = sv1["pre_rgb"]
+    elif sa1 is not None:
+        sv_u, sa_u = None, sa1
+        prgb = sa1["post_rgb"]
     else:
-        sv = sa = None
+        sv_u = sa_u = None
         prgb = None
 
-    size_v = max(sv["w"], sv["h"]) if sv is not None else 1.0
-    ag_v = agent_at(0.5 * (sv["t0"] + sv["t1"]), sv["cx"], sv["cy"],
-                    size_v) if sv is not None else 0.0
-    ag_a = 0.0
+    ag_v = (agent_at(sv_u["tc"], sv_u["cx"], sv_u["cy"],
+                     max(sv_u["w"], sv_u["h"]))
+            if sv_u is not None else 0.0)
+    ag_a = (agent_at(sa_u["tc"], sa_u["cx"], sa_u["cy"],
+                     max(sa_u["w"], sa_u["h"]))
+            if sa_u is not None else 0.0)
     pair_disp = dt_pair = 0.0
-    if sa is not None:
-        size_a = max(sa["w"], sa["h"])
-        ag_a = agent_at(0.5 * (sa["t0"] + sa["t1"]), sa["cx"],
-                        sa["cy"], size_a)
-        unit = 0.5 * (size_v + size_a)
-        pair_disp = min(float(np.hypot(sa["cx"] - sv["cx"],
-                                       sa["cy"] - sv["cy"])) / unit,
-                        10.0) / 10.0
-        dt_pair = min(max(sa["t0"] - sv["t1"], 0)
+    if pair is not None:        # pair facts from the pair's own ends
+        pv, pa = pair
+        unit = 0.5 * (max(pv["w"], pv["h"]) + max(pa["w"], pa["h"]))
+        pair_disp = min(float(np.hypot(pa["cx"] - pv["cx"],
+                                       pa["cy"] - pv["cy"]))
+                        / unit, 10.0) / 10.0
+        dt_pair = min(max(pa["tc"] - pv["tc"], 0)
                       / max(b - a, 1), 1.5) / 1.5
 
-    # appear-site adjacency to OTHER settled evidence (different look):
-    # arrived next to something, vs onto empty ground
+    # involved-site adjacency to OTHER settled evidence (different
+    # look): arrived next to something vs onto empty ground (stack vs
+    # place), or vanished from next to something vs from open ground
+    # (unstack vs pick) - the appear side when present, else vanish
     near_other = 0.0
-    ref = sa if sa is not None else None
-    if ref is not None:
+    ref = sa_u if sa_u is not None else sv_u
+    if ref is not None and prgb is not None:
         for s2 in sites_all:
-            if s2 is ref or s2["t1"] > b + 15:
+            if s2 is ref or s2["tc"] > b:
                 continue
             if np.abs(s2["post_rgb"] - prgb).sum() < 120:
                 continue
@@ -157,27 +282,27 @@ def moment(rows, view, a, b):
             near_other = max(near_other,
                              float(np.exp(-d / max(1.5 * unit, 8.0))))
 
-    # independent motion: a window site with NO agent visit, or a
-    # self-moving track alive in the window
+    # independent motion: involvement-weighted absence of the agent
+    # at a site, or a self-moving track alive in the window
     indep = 0.0
     for s in ws:
-        av = agent_at(0.5 * (s["t0"] + s["t1"]), s["cx"], s["cy"],
+        av = agent_at(s["tc"], s["cx"], s["cy"],
                       max(s["w"], s["h"]))
-        indep = max(indep, 1.0 - av)
+        indep = max(indep, inv(s) * (1.0 - av))
     self_alive = any(((r["t"] >= a) & (r["t"] <= b)).sum() >= 3
                      for r in selfs)
 
     vec = np.array([
-        float(sv is not None),
-        float(sa is not None),
-        float(pair is not None),
+        v_best,
+        a_best,
+        best_pair,
         pair_disp, dt_pair,
         ag_v, ag_a,
         max(ag_v, ag_a),
         near_other,
         indep,
         float(self_alive),
-        min(len(ws), 4) / 4.0,
+        min(float(sum(inv(s) for s in ws)), 4.0) / 4.0,
     ], np.float32)
     return dict(vec=vec, patient_rgb=prgb, agent_rgb=agent_rgb)
 
@@ -192,7 +317,7 @@ def load_events():
             if not f.exists():
                 continue
             rows = np.load(f, allow_pickle=True)
-            views = sorted({r["view"] for r in rows})[:2]
+            views = ent.views_of(rows)[:2]
             if len(views) < 2:
                 continue
             meta = json.loads((ep / "meta.json").read_text())

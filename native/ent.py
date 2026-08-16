@@ -40,6 +40,7 @@ BG_STRIDE = 5            # frames sampled into the scene median
 MIN_AREA_FRAC = 2e-4     # component noise floor, relative to frame area
 GAP_BRIDGE = 6           # frames a track survives unmatched
 MOVE_EXT = 0.35          # "moved" = displacement > this * own extent
+OBJ_CADENCE = 5          # frames between object-configuration samples
 
 
 def read_frames(mp4):
@@ -193,18 +194,30 @@ def settled_scenes(F, cadence=10, halfwin=15):
     return np.array(ts), snaps
 
 
-def scene_changes(ts, snaps):
+def scene_changes(F, ts, snaps):
     """Regions where consecutive settled scenes differ: something
     appeared or vanished from the persistent world. Each site carries
-    its time, bbox and the before/after appearance."""
+    its time, bbox and the before/after appearance.
+
+    The mask is CHROMATIC change only: shadows and illumination are
+    same-chromaticity by construction, and the census showed they were
+    most of the excess sites (tan->darker-tan, grey->grey). The known
+    generic limit: an achromatic change on achromatic ground is
+    indistinguishable from illumination in a two-snapshot diff - that
+    ambiguity is real in any fixed-camera recording, not a corpus
+    quirk."""
     sites = []
     for i in range(1, len(snaps)):
         a, b = snaps[i - 1], snaps[i]
         s_a = a.sum(-1, keepdims=True) + 3.0
         s_b = b.sum(-1, keepdims=True) + 3.0
         chrom = np.abs(a / s_a - b / s_b).sum(-1)
-        inten = np.abs(a - b).sum(-1)
-        m = (chrom > 0.08) | (inten > 90)
+        m = chrom > 0.08
+        # opening cuts thin penumbra bridges: shadow edges pass the
+        # mask pixel-by-pixel and chain solid regions into one giant
+        # component whose "change" is nothing (measured: a 174x112
+        # site with core pre~post swallowing the real block sites)
+        m = ndimage.binary_opening(m, structure=np.ones((3, 3), bool))
         lab, nlab = ndimage.label(m)
         if not nlab:
             continue
@@ -225,15 +238,235 @@ def scene_changes(ts, snaps):
             core = mm & (mag >= np.percentile(mag[mm], 75))
             if core.sum() < 3:
                 core = mm
+            # DIRECTION (which side holds the thing): the thing
+            # differs from its own surround, the ground matches it -
+            # figure/ground from spatial coincidence alone. Compare
+            # each side's core colour to the surrounding ring in the
+            # SAME snapshot; dirg > 0 = thing on the pre side
+            # (vanish-shaped), < 0 = thing on the post side
+            # (appear-shaped). A whole-recording background cannot
+            # answer this (a long-resting entity IS the background at
+            # its own spot); the ring can.
+            ys2 = slice(max(ys.start - 5, 0), min(ys.stop + 5, H))
+            xs2 = slice(max(xs.start - 5, 0), min(xs.stop + 5, W))
+            mm2 = np.zeros((ys2.stop - ys2.start,
+                            xs2.stop - xs2.start), bool)
+            mm2[ys.start - ys2.start:ys.stop - ys2.start,
+                xs.start - xs2.start:xs.stop - xs2.start] = mm
+            ring = ndimage.binary_dilation(mm2, iterations=4) & ~mm2
+            pre_rgb = np.median(a[sl][core], 0).astype(np.float32)
+            post_rgb = np.median(b[sl][core], 0).astype(np.float32)
+            # core validity: the site's own medians must clear the
+            # SAME chromatic bar the mask used - an aggregate of
+            # penumbra edges has extreme pixels but near-equal cores,
+            # i.e. it is not a change of the persistent world
+            cd = np.abs(pre_rgb / (pre_rgb.sum() + 3.0)
+                        - post_rgb / (post_rgb.sum() + 3.0)).sum()
+            if cd < 0.08:
+                continue
+            if ring.sum() >= 8:
+                ring_a = np.median(a[ys2, xs2][ring], 0)
+                ring_b = np.median(b[ys2, xs2][ring], 0)
+                d_pre = float(np.abs(pre_rgb - ring_a).sum())
+                d_post = float(np.abs(post_rgb - ring_b).sum())
+                dirg = (d_pre - d_post) / max(d_pre + d_post, 1e-6)
+            else:
+                dirg = 0.0
+            # LOCALIZE the change inside the snapshot interval: when
+            # events run back to back, one snapshot pair straddles
+            # several physical changes and interval-overlap attachment
+            # hands every window the whole bundle (measured: 4+ sites
+            # per window, every fact saturated). The region itself
+            # says when it changed: its distance-to-pre / distance-to-
+            # post curves cross exactly once; a transient occlusion
+            # (the agent passing over) bumps both curves without
+            # faking a crossing.
+            t0f, t1f = int(ts[i - 1]), int(ts[i])
+            pre_c = a[sl][core]
+            post_c = b[sl][core]
+            samp = list(range(t0f, t1f + 1, 2))
+            dpre = np.array(
+                [np.abs(F[t][sl][core].astype(np.float32)
+                        - pre_c).mean() for t in samp])
+            dpost = np.array(
+                [np.abs(F[t][sl][core].astype(np.float32)
+                        - post_c).mean() for t in samp])
+            sc = dpre - dpost
+            tc = (t0f + t1f) // 2
+            ki = len(sc) - 1
+            for k in range(len(sc) - 1):
+                if sc[k] > 0 and sc[k + 1] > 0:
+                    tc, ki = samp[k], k
+                    break
+            # ONSET: last sample still at rest in the pre state before
+            # the crossing. tc alone LAGS the physical change (the
+            # crossing cannot complete until the agent clears the
+            # spot), so a change is honestly located only as an
+            # interval (ton, tc]; downstream, window membership is the
+            # fractional overlap of that interval, not a point test.
+            base = float(dpre[0])
+            thr = base + 0.3 * (float(dpre[:ki + 1].max()) - base)
+            ton = t0f
+            for k in range(ki, -1, -1):
+                if dpre[k] <= thr:
+                    ton = samp[k]
+                    break
             sites.append(dict(
-                t0=int(ts[i - 1]), t1=int(ts[i]),
+                t0=t0f, t1=t1f, tc=int(tc), ton=int(min(ton, tc)),
+                dirg=float(dirg),
                 cx=0.5 * (xs.start + xs.stop),
                 cy=0.5 * (ys.start + ys.stop),
                 w=float(xs.stop - xs.start),
                 h=float(ys.stop - ys.start),
-                pre_rgb=np.median(a[sl][core], 0).astype(np.float32),
-                post_rgb=np.median(b[sl][core], 0).astype(np.float32)))
+                pre_rgb=pre_rgb, post_rgb=post_rgb))
     return sites
+
+
+def _same_look(ci, cj):
+    """Same THING, seen under different light. Chromaticity only, and
+    a looser bar than the change detector uses: the two faces of one
+    object differ almost entirely in intensity (measured: splitting
+    on intensity too shattered blocks into lit/shaded halves, each
+    below the area floor - entity presence fell 0.623 -> 0.477)."""
+    si, sj = ci.sum() + 3.0, cj.sum() + 3.0
+    return float(np.abs(ci / si - cj / sj).sum()) < 0.14
+
+
+def _colour_regions(small, comp, floor, ithr):
+    """One connected foreground blob may hold SEVERAL things that
+    touch: two stacked entities are a single component against the
+    surface, and the merge hides exactly the relation that separates
+    'arrived on open ground' from 'arrived onto a particular thing'
+    (measured: 38% of true entities absent, outsized regions at
+    precisely the stacking snapshots).
+
+    Things are split by colour coherence - spatial coincidence of
+    LIKE measurements, the same atomic signal one level finer - then
+    neighbours that look the same are re-merged so shading gradients
+    do not shatter one thing into many."""
+    # split on CHROMATICITY (which distinguishes things) plus a single
+    # per-recording dark/light cut (which distinguishes achromatic
+    # things - a black arm joint from a white one - without letting
+    # shading cut one object in half)
+    s = small.sum(-1) + 3.0
+    q = (np.round(small[..., 0] / s / 0.05).astype(np.int32) * 1000
+         + np.round(small[..., 1] / s / 0.05).astype(np.int32) * 10
+         + (s > ithr).astype(np.int32))
+    parts = []
+    for val in np.unique(q[comp]):
+        lab2, n2 = ndimage.label(comp & (q == val))
+        for k in range(1, n2 + 1):
+            mk = lab2 == k
+            if mk.sum() >= floor:
+                parts.append(mk)
+    changed = True
+    while changed and len(parts) > 1:
+        changed = False
+        for i in range(len(parts)):
+            for j in range(i + 1, len(parts)):
+                if not _same_look(np.median(small[parts[i]], 0),
+                                  np.median(small[parts[j]], 0)):
+                    continue
+                if not (ndimage.binary_dilation(parts[i])
+                        & parts[j]).any():
+                    continue
+                parts[i] = parts[i] | parts.pop(j)
+                changed = True
+                break
+            if changed:
+                break
+    return parts
+
+
+def scene_objects(ts, snaps):
+    """L3: the THINGS a scene is made of - spatial coincidence WITHIN
+    a still (PROBLEM.md atomic signal (a)), which the write path never
+    used until now. It only ever saw change, so an entity that never
+    moves did not exist; but the thing you stack ONTO is exactly such
+    an entity, and it is the reference object of the relation that
+    separates place from stack.
+
+    A thing is a region that differs from the surface it sits on.
+    'Surface' is estimated per-recording as the LOCAL colour mode
+    (median over a neighbourhood many times an object's size), so
+    nothing about tables, walls or blocks is asserted - on a street
+    the same operator returns cars against road, on a bench parts
+    against a workbench.
+
+    THE SAMPLING IS REGULAR, NOT SETTLED-ONLY (measured 2026-08-10):
+    local contrast needs no background model, so it works on ANY
+    frame - only the change-SITE machinery needs quiet scenes. When
+    configurations were read at quiet snapshots, a pick-carry-place
+    sequence fell BETWEEN two of them and the resulting facts
+    described several events at once: place events came out
+    vanish-dominant (kind -0.31 where an arriving thing must be +1).
+    A regularly sampled state series is also what PROBLEM.md #4
+    means by a state series in the first place.
+
+    Objects are linked across samples by position+colour, giving a
+    resting particular its own state series exactly as a moving one
+    gets from tracks."""
+    D = 4                                # work at 1/4 scale
+    regions = []                         # per sample: list of dicts
+    diffs = []
+    for sn in snaps:
+        small = sn[::D, ::D]
+        surf = np.stack([ndimage.median_filter(small[..., c], size=15)
+                         for c in range(3)], -1)
+        s_s = small.sum(-1, keepdims=True) + 3.0
+        s_u = surf.sum(-1, keepdims=True) + 3.0
+        diffs.append(np.abs(small / s_s - surf / s_u).sum(-1))
+    thr = max(otsu(np.concatenate([d.ravel() for d in diffs])), 0.06)
+    ithr = otsu(np.concatenate(
+        [sn[::D, ::D].sum(-1).ravel() for sn in snaps]))
+    for k, d in enumerate(diffs):
+        small = snaps[k][::D, ::D]
+        m = ndimage.binary_opening(d > thr, np.ones((2, 2), bool))
+        lab, nlab = ndimage.label(m)
+        objs = []
+        for j in range(1, nlab + 1):
+            comp = lab == j
+            if comp.sum() < 12:          # 12 quarter-scale px
+                continue
+            for mk in _colour_regions(small, comp, 12, ithr):
+                ys, xs = ndimage.find_objects(mk.astype(np.int8))[0]
+                objs.append(dict(
+                    t=int(ts[k]),
+                    cx=D * 0.5 * (xs.start + xs.stop),
+                    cy=D * 0.5 * (ys.start + ys.stop),
+                    w=float(D * (xs.stop - xs.start)),
+                    h=float(D * (ys.stop - ys.start)),
+                    rgb=np.median(small[mk], 0).astype(np.float32)))
+        regions.append(objs)
+    # link across snapshots: a particular persists where position and
+    # appearance both continue (identity by continuity, PROBLEM.md #4)
+    objects, live = [], []
+    for objs in regions:
+        used = set()
+        for tr in live:
+            best, bj = None, -1
+            for j, o in enumerate(objs):
+                if j in used:
+                    continue
+                ext = max(tr["w"][-1], tr["h"][-1], 8.0)
+                dist = np.hypot(o["cx"] - tr["cx"][-1],
+                                o["cy"] - tr["cy"][-1])
+                dcol = float(np.abs(o["rgb"] - tr["rgb"][-1]).sum())
+                if dist > 0.8 * ext or dcol > 150:
+                    continue
+                cost = dist + 0.2 * dcol
+                if best is None or cost < best:
+                    best, bj = cost, j
+            if bj >= 0:
+                o = objs[bj]
+                used.add(bj)
+                for key in ("t", "cx", "cy", "w", "h", "rgb"):
+                    tr[key].append(o[key])
+        for j, o in enumerate(objs):
+            if j not in used:
+                live.append({k2: [v] for k2, v in o.items()})
+    objects = [tr for tr in live if len(tr["t"]) >= 1]
+    return objects
 
 
 def link(mp4):
@@ -244,7 +477,12 @@ def link(mp4):
     F = read_frames(mp4)
     T = len(F)
     ts, snaps = settled_scenes(F)
-    sites = scene_changes(ts, snaps)
+    sites = scene_changes(F, ts, snaps)
+    # object configurations on a REGULAR cadence (see scene_objects):
+    # sites need quiet scenes, objects do not
+    otimes = np.arange(0, T, OBJ_CADENCE)
+    objects = scene_objects(otimes, [F[t].astype(np.float32)
+                                     for t in otimes])
     # per-frame background = nearest settled snapshot; thresholds are
     # per-RECORDING (one Otsu over all groups), not per-group
     idx = np.clip(np.searchsorted(ts, np.arange(T)), 0, len(ts) - 1)
@@ -316,7 +554,7 @@ def link(mp4):
                 next_id += 1
     tracks += live
     tracks = [tr for tr in tracks if len(tr.t) >= 5]
-    return stitch(tracks), sites, T
+    return stitch(tracks), sites, objects, T
 
 
 def stitch(tracks, max_gap=25, pos_slack=2.5, col_tol=140.0):
@@ -388,6 +626,38 @@ def roles(tracks, T, n_change_windows=40):
                             max(tr.cy) - min(tr.cy))
             if span < 1.2 * ext:
                 residue_ids.add(tr.tid)
+    # CARRIED-ENTITY DEMOTION: a much-carried patient is statistically
+    # agent-like (high presence, high moving, involved in every
+    # change - measured: a blue block's carry track earned the agent
+    # role, poisoned the body palette, and got its own vanish site
+    # flagged as agent-body). What separates it is ASYMMETRIC
+    # co-movement: the carried thing moves only while its carrier
+    # moves, and it is born later - it did not exist as a mover
+    # before the world started changing.
+    cands = sorted((tr for tr in tracks if tr.tid in agent_ids),
+                   key=lambda tr: tr.t[0])
+    demoted = set()
+    for i, tri in enumerate(cands):
+        ti = np.array(tri.t)
+        di = np.hypot(np.diff(tri.cx), np.diff(tri.cy))
+        exti = max(np.median(tri.w), np.median(tri.h), 1.0)
+        mov_i = set(int(t) for t in ti[1:][di > 0.05 * exti])
+        if not mov_i:
+            continue
+        for trj in cands[:i]:
+            if trj.tid in demoted \
+                    or tri.t[0] - trj.t[0] < 0.1 * T:
+                continue
+            tj = np.array(trj.t)
+            dj = np.hypot(np.diff(trj.cx), np.diff(trj.cy))
+            extj = max(np.median(trj.w), np.median(trj.h), 1.0)
+            mov_j = set()
+            for t in tj[1:][dj > 0.05 * extj]:
+                mov_j.update(range(int(t) - 3, int(t) + 4))
+            if len(mov_i & mov_j) / len(mov_i) > 0.9:
+                demoted.add(tri.tid)
+                break
+    agent_ids -= demoted
     # INDEPENDENT (self-moving) entities: displaced substantially with
     # almost no contact coupling - people in car footage, other
     # vehicles, animals. Nothing requires an agent to act on them
@@ -401,12 +671,104 @@ def roles(tracks, T, n_change_windows=40):
     return agent_ids, residue_ids, self_ids, stats
 
 
+def _agent_explains(agents, t_ref, s, side_rgb, pal):
+    """Is this site end the agent's own body? Two conditions: some
+    fragment was parked at the site around t_ref, AND the site's
+    appearance at that end looks like the agent's body (palette) - a
+    ghost's changed side IS the body by definition, so both must
+    hold; position alone flags real sites the agent parks over.
+    At snapshot times the agent is invisible to the motion layer, so
+    the nearest sample IS the parked pose - a track ends where the
+    body stopped. The agent is FRAGMENTARY by construction (foreground
+    is diffed against a scene that contains the parked body, so only
+    the parts clear of the old silhouette show); per-fragment
+    centre-inside-site or half-coverage, any fragment sufficing."""
+    x0, x1 = s["cx"] - s["w"] / 2, s["cx"] + s["w"] / 2
+    y0, y1 = s["cy"] - s["h"] / 2, s["cy"] + s["h"] / 2
+    area = max((x1 - x0) * (y1 - y0), 1.0)
+    hit = False
+    for tr in agents:
+        t = np.asarray(tr.t)
+        i = int(np.clip(np.searchsorted(t, t_ref), 0, len(t) - 1))
+        if i > 0 and abs(t[i - 1] - t_ref) < abs(t[i] - t_ref):
+            i -= 1
+        mx = 0.15 * max(x1 - x0, y1 - y0)
+        if x0 - mx <= tr.cx[i] <= x1 + mx \
+                and y0 - mx <= tr.cy[i] <= y1 + mx:
+            hit = True
+            break
+        w, h = tr.w[i] * 1.15, tr.h[i] * 1.15
+        ix = max(0.0, min(x1, tr.cx[i] + w / 2)
+                 - max(x0, tr.cx[i] - w / 2))
+        iy = max(0.0, min(y1, tr.cy[i] + h / 2)
+                 - max(y0, tr.cy[i] - h / 2))
+        if ix * iy / area >= 0.5:
+            hit = True
+            break
+    if not hit or pal is None or not len(pal):
+        return False
+    # the site side must LOOK like the agent's own body (measured:
+    # position alone flagged the carried purple cylinder's real
+    # appear site - the arm parks over what it just released).
+    # Chromaticity-first comparison: raw RGB L1 calls a mid-grey and
+    # a dark purple "close" (same luminance), exactly the confusion
+    # that let the false flag through.
+    sr = side_rgb / (side_rgb.sum() + 3.0)
+    pr = pal / (pal.sum(1, keepdims=True) + 3.0)
+    chrom = np.abs(pr - sr).sum(1)
+    inten = np.abs(pal.sum(1) - side_rgb.sum())
+    return bool(((chrom < 0.12) & (inten < 300)).any())
+
+
+CACHE_VER = 3            # 3: object configs on a regular cadence
+
+
+def views_of(rows):
+    """View names in a cache, excluding the version marker row.
+    Every reader must go through this: the marker's empty view sorts
+    FIRST, so a naive set-of-views would hand a caller '' as view 0."""
+    return sorted({r["view"] for r in rows if r["role"] != "_ver"})
+
+
 def build_one(ep, out):
-    rows = []
+    rows = [dict(role="_ver", ver=CACHE_VER, view="")]
     for cam in sorted(ep.glob("cam*.mp4")):
-        tracks, sites, T = link(cam)
+        tracks, sites, objects, T = link(cam)
         agent_ids, residue_ids, self_ids, stats = roles(tracks, T)
+        for o in objects:
+            rows.append(dict(
+                view=cam.stem, role="object",
+                t=np.array(o["t"], np.int32),
+                cx=np.array(o["cx"], np.float32),
+                cy=np.array(o["cy"], np.float32),
+                w=np.array(o["w"], np.float32),
+                h=np.array(o["h"], np.float32),
+                rgb=np.stack(o["rgb"]).astype(np.float32)))
+        # AGENT-BODY sites: the agent parked in different poses across
+        # quiet spans shows up as vanish/appear-shaped scene change
+        # (measured: arm links against the backdrop, red gripper pad -
+        # chromatic, so no illumination filter can catch it). Role-
+        # consistent, not colour-based: the agent is not scene, so a
+        # site end the agent's body occupied is the agent, not an
+        # entity event. The flags are PER END; the read side must
+        # apply them direction-aware (a real vanish site's POST end is
+        # legitimately agent-visited - it picked the thing up).
+        # Flagged, kept in the store, excluded only at moment build.
+        ag_trs = [tr for tr in tracks if tr.tid in agent_ids]
+        # body palette = each agent fragment's WHOLE-LIFE median
+        # colour. Not per-sample: a carried entity is merged into the
+        # agent's blob (it has no track of its own under the piecewise
+        # scene), so samples during a carry wear the entity's colour -
+        # a life median is immune to the brief carry, and different
+        # fragments supply the body's different colour modes.
+        pal = (np.stack([np.median(np.stack(tr.rgb), 0)
+                         for tr in ag_trs]).astype(np.float32)
+               if ag_trs else None)
         for s in sites:
+            s["ab_pre"] = _agent_explains(
+                ag_trs, s["t0"], s, s["pre_rgb"], pal)
+            s["ab_post"] = _agent_explains(
+                ag_trs, s["t1"], s, s["post_rgb"], pal)
             rows.append(dict(view=cam.stem, role="site", **s))
         for tr, (pres, mov, ext) in zip(tracks, stats):
             rows.append(dict(
@@ -426,6 +788,23 @@ def build_one(ep, out):
     return rows
 
 
+def _current(out):
+    """A cache is reusable only if it carries THIS build's version.
+    Existence is not freshness: an interrupted build from an earlier
+    format silently survived a rebuild and crashed the bench 45 min
+    later (2026-08-10). An explicit marker row beats inferring the
+    format from fields, which cannot distinguish 'new layer missing'
+    from 'this recording had none of that layer'."""
+    if not out.exists():
+        return False
+    try:
+        rows = np.load(out, allow_pickle=True)
+    except Exception:
+        return False
+    return bool(len(rows)) and rows[0].get("role") == "_ver" \
+        and rows[0].get("ver") == CACHE_VER
+
+
 def build(corpus):
     CACHE.mkdir(parents=True, exist_ok=True)
     eps = sorted((ROOT / corpus).glob("ep*"))
@@ -433,7 +812,7 @@ def build(corpus):
     name = Path(corpus).name
     for ep in tqdm(eps, unit="ep", desc=f"ent/{name}"):
         out = CACHE / f"{name}_{ep.name}.npy"
-        if not out.exists():
+        if not _current(out):
             build_one(ep, out)
 
 
@@ -454,7 +833,7 @@ def grade(corpus):
         meta = json.loads((ep / "meta.json").read_text())
         rgba = {b["name"]: 255 * np.array(b["rgba"][:3])
                 for b in meta["blocks"]}
-        for view in sorted({r["view"] for r in rows}):
+        for view in views_of(rows):
             vr = [r for r in rows if r["view"] == view]
             ents = [r for r in vr if r["role"] == "entity"]
             agents = [r for r in vr if r["role"] == "agent"]

@@ -183,10 +183,11 @@ def windows(n_frames, src_fps, win_frames=WIN_FRAMES, stream_fps=STREAM_FPS,
     return out
 
 
-def encode_window(model, torch, dev, clip, cal, layer, n_t, dt_torch):
+def encode_window(model, torch, dev, clip, cal, layer, n_t, dt_torch, res=None):
     """One window -> (a, b, g, n_steps). Step-differenced, fp32 out."""
-    n_sp = GRID * GRID
-    px = to_tensor(clip, torch, dev, dt_torch)
+    from relmo.vjs import CROP, PATCH
+    n_sp = ((res or CROP) // PATCH) ** 2
+    px = to_tensor(clip, torch, dev, dt_torch, res)
     alpha, b_cal = cal
     bT = torch.tensor(b_cal, device=dev)
     with torch.no_grad():
@@ -220,7 +221,7 @@ def encode_window(model, torch, dev, clip, cal, layer, n_t, dt_torch):
 
 def record_stream(model, torch, dev, frames, src_fps, cal, layer, dt_torch,
                   win_frames=WIN_FRAMES, stream_fps=STREAM_FPS, hop_s=HOP_S,
-                  offset_s=0.0, tempo_ds=0.0):
+                  offset_s=0.0, tempo_ds=0.0, res=None):
     """A whole recording -> one continuous trace, indexed by TIME or by CHANGE."""
     dt, n_t, desc, hop_steps = geometry(win_frames, stream_fps, hop_s)
     if tempo_ds > 0:
@@ -235,7 +236,7 @@ def record_stream(model, torch, dev, frames, src_fps, cal, layer, dt_torch,
     A, B, G, step, frame0 = [], [], [], [], []
     for j, (_, idx) in enumerate(wins):
         a, b, g = encode_window(model, torch, dev, frames[idx], cal, layer,
-                                n_t, dt_torch)
+                                n_t, dt_torch, res)
         A.append(a)
         B.append(b)
         G.append(g)
@@ -252,7 +253,8 @@ def record_stream(model, torch, dev, frames, src_fps, cal, layer, dt_torch,
     # the artefact this file exists to remove
     Gc = np.clip(G - np.median(G, 0, keepdims=True), 0, None)
     den = Gc.sum(1, keepdims=True) + 1e-9
-    rec = {"where_map": Gc.reshape(-1, GRID, GRID).astype(np.float32),
+    gsz = int(round(Gc.shape[1] ** 0.5))
+    rec = {"where_map": Gc.reshape(-1, gsz, gsz).astype(np.float32),
            "step": step.astype(np.int32),
            "frame0": np.concatenate(frame0).astype(np.int32),
            "dt": np.float32(dt), "n_windows": np.int32(len(wins))}
@@ -284,6 +286,8 @@ def main():
     ap.add_argument("--hop", type=float, default=HOP_S)
     ap.add_argument("--calib", default="rcasa")
     ap.add_argument("--fp16", action="store_true")
+    ap.add_argument("--res", type=int, default=0,
+                    help="encoder input resolution; 0 = the vjs default (256)")
     ap.add_argument("--tempo-ds", type=float, default=0.0,
                     help="tempo-adaptive grid: change-units per window. >0 "
                          "replaces the fixed-rate time grid entirely.")
@@ -339,7 +343,7 @@ def main():
             F = read_frames(mp4, w_, h_)
             rec = record_stream(model, torch, dev, F, src_fps, cal, a.layer,
                                 dt_torch, a.win_frames, a.stream_fps, a.hop,
-                                a.offset, a.tempo_ds)
+                                a.offset, a.tempo_ds, a.res or None)
         except Exception as e:                                # noqa: BLE001
             tqdm.write(f"  {eid}: {type(e).__name__}: {e}")
             failed += 1
