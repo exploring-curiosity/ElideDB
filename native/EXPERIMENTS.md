@@ -66,6 +66,40 @@ Columns: what was tried / the number / the reading.
 | **fix+sig whitened** | **0.312/0.312/0.312** | ZERO seen-vs-unseen gap. Fully frozen |
 | **head+fix+sig fused** | **unseen 0.248→0.314 (+27%)** | best overall 0.341; channels complementary off-domain |
 
+## 3b. THE CENTRAL LESSON (2026-08-16, cost: one full training run)
+
+**PR(z) is a DIAGNOSTIC, not a TARGET. Optimising it directly made retrieval
+worse.**
+
+| | effective dims | prec on sealed corpus (unseen) |
+|---|---|---|
+| shipped head | 3.8 | 0.248 |
+| ssl_v1 | **46.7** | **0.218** |
+| frozen fix+sig whitened | 28.3 | **0.376** |
+
+The shipped head's 4 dimensions were 4 USEFUL dimensions. ssl_v1 has 47
+dimensions that encode less of what matters. A VICReg variance floor spreads
+a representation across axes; it does not make those axes semantic. Without a
+strong invariance term, the extra capacity fills with nuisance — camera,
+lighting, phase, background.
+
+So the original diagnosis ("the head collapsed to 4 dims, force it wider")
+was half right and half wrong. Collapse WAS the symptom. Width was not the
+cure.
+
+**Why ssl_v1 specifically failed:** every positive it ever saw was two crops
+of the SAME recording, and its InfoNCE hit 0.005 by epoch 2 because "which
+video is this" is trivial. That left span-prediction as the only live signal.
+Forecasting your own future latents needs SPECIFICITY (encode exactly this
+scene); retrieval needs INVARIANCE (two different videos of the same event
+map close). Those objectives partly conflict. It learned within-video
+consistency and was then measured on cross-video retrieval.
+
+**Correction for the next run:** cross-video invariance must be the DOMINANT
+term, not an absent one. Span prediction drops to a weak auxiliary. VICReg
+becomes a floor against collapse, not a driver. And PR is read as "is it
+collapsing" (< ~15 bad), never as "higher is better".
+
 ## 4. The measured diagnosis (2026-08-16)
 
 Effective dimensionality (participation ratio of the covariance spectrum),
@@ -107,20 +141,23 @@ Corpus-fitted constants in the path: token PCA, predictor calibration
 
 | id | change | PR(z) | prec (sealed) | verdict |
 |---|---|---|---|---|
-| ssl_v1_s0 | span-pred + overlap-InfoNCE + VICReg, d=256, 13 video-h pool (4453 traces) | **46.7** (33.8 on composite) | pending | PR gate passed decisively; collapse broken 3.8 -> 46.7 |
-| ssl_v1_s1/s2 | reseeds | s1 ep14 35.0 | pending | running |
+| ssl_v1_s0 | span-pred + overlap-InfoNCE + VICReg, d=256, 13 video-h pool (4453 traces) | 46.7 (33.8 on composite) | **0.211** (whitened 0.269) | **FAILED — loses to frozen 0.371** |
+| ssl_v1_s1 | reseed | 45.1 | pending | PR reproduces |
 
 ## 7. QUEUE — ranked, each must be self-supervised
 
-1. **Apply the §3 read-side wins to the SSL z**: whitening + fusion with
-   frozen channels. Both already measured on the old head; they are free and
-   compose with any z. Test as part of every eval, not as a separate idea.
+1. **ssl_v2 = mined cross-video positives (dominant) + within-recording hard
+   negatives + weak span + VICReg floor.** This is the direct correction of
+   the v1 failure. `vjmine.py` bootstraps positives from the FROZEN space
+   (0.371), not the trained one.
 2. **Graph diffusion at read** — +50% AP measured on an earlier system,
-   still absent from the read path. Highest untapped single win.
-3. **Stage D mining** — mutual top-k across videos, fix∧sig consensus,
-   DTW-verified, top 1% only.
-4. Longer/harder spans; multi-horizon span targets.
-5. Wider d if PR saturates at the ceiling of d.
-6. k-reciprocal re-ranking (training-free, standard in re-ID).
+   still absent from the read path. Training-free; applies to the frozen
+   space TODAY regardless of what the head does. Highest untapped win.
+3. k-reciprocal re-ranking (training-free, standard in re-ID).
+4. Read-side whitening + fusion are now measured on every eval by `vjreps`.
+5. Longer/harder spans; multi-horizon span targets — only after 1 lands.
+
+**Do NOT queue:** wider d, higher VICReg weight, or anything else justified
+by "raises PR". See §3b.
 
 Do NOT queue: anything in §2 without a stated new reason.
