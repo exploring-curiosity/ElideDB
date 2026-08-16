@@ -43,7 +43,7 @@ The bet, falsifiable: *a restoration objective on broad video will not fit in
 | rcasa_eval | already ingested | 0.26 | train |
 | rcasa_atomic_full | already ingested | 5.68 | train |
 | bridge_wide | sampled from data/bridge (LeRobot v3) | 5.0 | train + text layer |
-| movi_e | data/relmo/datasets/movi_e (1,616 mp4) | ~1 | train |
+| ~~movi_e~~ | data/relmo/datasets/movi_e (1,616 mp4) | **0** | **UNUSABLE** |
 | kitti_seq | data/kitti PNG drives → mp4 @10fps | ~0.8 | train |
 | oxford_seq | data/oxfordDataset PNGs → mp4 | ~0.03 | train |
 | drone_fpv | data/drone zips (uzhfpv ×2, rpg_race) → mp4 | ~1.5 | train |
@@ -191,8 +191,8 @@ regressed below the frozen floor there.
 
 ## STATUS
 
-- [ ] A: prep (bridge_wide / kitti_seq / oxford_seq / drone_fpv verified)
-- [ ] B: ingest (5 corpora verified on disk)
+- [x] A: prep (bridge_wide / kitti_seq / oxford_seq / drone_fpv verified)
+- [x] B: ingest VERIFIED on disk 2026-08-16: bridge_wide 2414/2414, kitti_seq 22, oxford_seq 3, drone_fpv 4; movi_e 0/1616 (all too_short, corpus dropped). Pool = 2443 new + 2604 rcasa-family = 5047 recordings, ~13.0 video-h
 - [ ] C: train 3 seeds (PR gate passed)
 - [ ] D: mining round (skipped unless E shows signal)
 - [ ] E: eval vs bars, snapshot v10 cut, numbers attached
