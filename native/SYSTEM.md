@@ -1,6 +1,8 @@
-# SYSTEM.md — the working system, as of 2026-08-17
+# SYSTEM.md — internals, as of 2026-08-17
 
-What ships, what it scores, how to run it, and what is known dead. Start here.
+**Using ElideDB? Read the top-level [README](../README.md) instead.** This
+file is for whoever maintains the engine: architecture, measured numbers, and
+what is known dead.
 Companion docs: `EXPERIMENTS.md` (every measured dead end — grep it before
 proposing anything), `SSL_TRAINING.md` (the self-supervised runbook, executed
 and concluded), `STREAM_PIPELINE.md` (designed, not started).
@@ -99,6 +101,8 @@ There is no third door; all of them were checked.
 
 | module | role |
 |---|---|
+| `api` | **public API** — `Memory`, `Hit`. The only supported surface |
+| `cli` | **command line** — `python -m relmo.cli` |
 | `vjrec8` | **write path** (one pass) |
 | `vjstore` | **read path** (stores, prefilter, banded DTW) |
 | `vjmatch` | DTW, arc-length resample. `band` is per-reference (v6 bug fixed 2026-08-17) |

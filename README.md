@@ -1,143 +1,163 @@
 # ElideDB
 
-**A Parquet-native, timestamp-first database for camera and sensor
-recordings.** Put any timestamped data in (sensor rows, video, GPS,
-audio, logs) and get back time-window reads, SQL, and event search,
-while the engine reads as few bytes as physically possible.
-*The best read is the read elided.*
+**Video memory. Ask "when did something like this happen?" and get timestamps back.**
 
-- **Everything is Parquet.** Every table is plain Parquet files under a
-  Delta-Lake-style transaction log. No custom formats; DuckDB, Spark,
-  pandas, anything that reads Parquet reads your database.
-- **Timestamps are the law.** Every table has a `ts` column (int64
-  nanoseconds). That one rule is what makes cross-modal queries,
-  alignment, and pruning work.
-- **The store is standalone.** Ingest transcodes media once into the
-  store directory and indexes it to the byte; the database keeps
-  serving after the original files are archived or deleted. Raw
-  sources are never modified.
-- **Search by describing the event.** "The arm closes the drawer"
-  returns playable clips where it actually happens. No labels, no
-  language model in the query path, and a question the footage cannot
-  answer returns nothing, with the reason.
+No labels. No captions. No fine-tuning. No per-dataset configuration. Point it
+at video, then query it with more video.
+
+```bash
+elidedb add     kitchen  /videos/robot_runs      # ingest
+elidedb query   kitchen  /clips/spill.mp4        # ask
+```
+```
+ #   match             span  source
+------------------------------------------------
+ 1   41.2%    0.0-  23.2s  run_0114/frames.mp4
+ 2   38.7%    0.0-  13.0s  run_0088/frames.mp4
+ 3   31.1%    0.0-  14.4s  run_0203/frames.mp4
+
+3 hits in 554 ms
+```
+
+---
+
+## What it's for
+
+**A memory layer for a robot / VLA.** The robot asks "have I been in a
+situation like this before?" and gets its own past experiences back, ranked,
+in about half a second. Nothing has to be labelled first, and it works on
+scenes and tasks the system has never seen.
+
+**Mining your own archive.** Find every past instance of a behaviour to review
+or retrain on, without having tagged any of it.
+
+## Performance
+
+Measured on a held-out corpus where **91% of the tasks were never seen during
+setup** (1,152 recordings, random-guess baseline 2.9%):
+
+| you ask for | you get right |
+|---|---|
+| top 1 | **95.0%** |
+| top 5 | **88.6%** |
+| top 10 | **79.8%** |
+| top 20 | 56.7% |
+
+| operation | cost |
+|---|---|
+| query (3,556-recording store) | **554 ms** median, 1.9 s p99 |
+| query, robot's own live trace | search only — nothing to encode |
+| ingest | ~14 min of compute per hour of video (4× real time), resumable |
+| storage | ~0.8 GB per hour of video |
+
+Precision holds *equally well on unfamiliar material* — on the held-out corpus
+it scores marginally higher on tasks it has never seen (0.404) than on
+familiar ones (0.375). There is no model trained on your data, so there is
+nothing to drift, retrain, or version when you point it somewhere new.
+
+**Where it is weak, stated plainly:** precision falls off past the top ~20.
+If you need to retrieve *every* instance of something (say 35 of 35), it
+currently finds about 40%. It is strong at "show me the closest matches",
+not yet at "show me all of them".
 
 ## Install
 
-```bash
-pip install -e ".[ml]"     # from the repo root; [ml] adds search
-brew install ffmpeg        # clip playback + video indexing
-```
-
-## 60 seconds to your first database
+Requires Python 3.11+, `ffmpeg`, and ~8 GB RAM. Apple Silicon (MPS) or CPU;
+CUDA untested.
 
 ```bash
-elidedb create lake/mydb --name "my project"
-
-# any timestamped rows: CSV/Parquet, ISO dates or epoch s/ms/us/ns
-elidedb add lake/mydb readings sensor_log.csv --ts-col time
-
-# any video
-elidedb video lake/mydb dashcam.mp4 --stream front
-
-elidedb ls lake/mydb                                   # what's inside
-elidedb sql lake/mydb "SELECT count(*) FROM readings"  # SQL via DuckDB
-elidedb embed lake/mydb                                # local ML, once
-elidedb desk                                           # browse it
+git clone <this repo> && cd StreetDex
+pip install torch transformers numpy tqdm
+brew install ffmpeg            # or apt install ffmpeg
+cd native
 ```
 
-## Event search
+Models download automatically on first use (V-JEPA 2 ViT-L, SigLIP 2 base;
+~1.5 GB total, cached).
 
-The query model is a set, not a top hit: a robotics team wants every
-clip where the thing happened, clean enough to review or retrain on.
+## Use it
+
+### Command line
+
+```bash
+python -m relmo.cli stores                       # what stores exist
+python -m relmo.cli add   kitchen /videos        # ingest a folder
+python -m relmo.cli stats kitchen                # size, hours, median length
+python -m relmo.cli query kitchen clip.mp4 --top 10
+python -m relmo.cli query kitchen long.mp4 --start 120 --end 145
+python -m relmo.cli like  kitchen <recording-id> # query with something stored
+python -m relmo.cli query kitchen clip.mp4 --json  # machine-readable
+```
+
+Add `--exact` to any query for the exhaustive scan: ~40× slower, about 1.3
+percentage points more accurate. The default fast path is recommended.
+
+### Python
 
 ```python
-from elidedb import Store
-from elidedb.scenario import search_set
+from relmo.api import Memory
 
-db = Store.open("lake/mydb")
-r = search_set(db, "the robot arm closes the drawer", k_max=10)
-for c in r["clips"]:
-    print(c["stream"], c["t0"], c["t1"], c["score"])
+mem = Memory.open("kitchen")
+mem.add("/videos/robot_runs")              # ingest, resumable
+
+for hit in mem.query("/clips/spill.mp4", top_k=10):
+    print(f"{hit.score:.0%}  {hit.label}  {hit.start:.1f}-{hit.end:.1f}s")
+
+# the robot's own case: the trace is already in memory, so no re-encoding
+hits = mem.query_recording("run_0114", top_k=5)
+
+mem.stats()          # {'store': 'kitchen', 'recordings': 812, 'hours': 6.4, ...}
+Memory.list()        # {'kitchen': 812, 'warehouse': 2401}
 ```
 
-Under the hood, per-store fitted retrieval over open world models and
-video-native encoders (V-JEPA 2, InternVideo2, SigLIP 2, Perception
-Encoder, X-CLIP, FastSAM regions), fused by learned weights and passed
-through a fitted selection chain: no-match gate, direction filter,
-event dedup, and a confidence cut, so the returned set ends where the
-evidence does. An opt-in geometry tier verifies spatial relations with
-the SAM 3 video tracker. Nothing in the engine is tuned to a dataset;
-whatever matters in your corpus is learned from your corpus, and every
-change to retrieval lands with a benchmark row against a frozen,
-hand-graded truth set ([BENCHMARKS.md](BENCHMARKS.md)).
+`Hit` carries `id`, `score` (similarity, 0–1), `video`, `start`, `end`, and
+`label` (a human-readable source name).
 
-## ElideDB Desk
+## Stores
 
-`elidedb desk` opens the console: store overview with honest size and
-coverage tiles, an analytics view (storage, row density over time,
-vector inventory, the fitted retrieval profile, write history), the
-search console where every result plays, schema and Parquet-layout
-browsers, a live architecture schematic drawn from what is actually
-on disk, and index/maintenance operations. Set `DESK_READONLY=1` to
-serve it publicly with mutations disabled.
+A **store** is one deployment's memory — one robot, one site, one customer.
 
-## Deploy the demo
+Stores never mix. Every statistic the search uses is computed inside the
+store, so two deployments cannot leak into each other's results. Query one
+store at a time; searching across stores means looping over them deliberately.
 
-`deploy/` holds a verified Docker package that runs the full search
-stack read-only on two CPU cores (about 5 s per warm query), plus a
-one-command stager for a free Hugging Face Space. `site/` is the
-landing page. See [deploy/README.md](deploy/README.md).
+## How it works
 
-## The numbers that matter (measured, [BENCHMARKS.md](BENCHMARKS.md))
+```
+video ──► V-JEPA 2 (frozen) ──► what changed, moment to moment
+      └─► SigLIP 2  (frozen) ──► what it looks like
+                    └──► one trace per recording, ~0.8 GB / video-hour
 
-- 2 s window over a **14.16 M-row** audio table: touches **4 MB of
-  286 MB (98.6 % elided)**, 165 ms.
-- Multimodal 2 s window across 15 tables: 10/56 files touched,
-  **98.9 % elided, 13.8 ms** (sensor-only).
-- Event search over 1,122 episodes: **seconds warm on two CPU
-  cores**, eight model channels fused, no GPU in the query path.
-- Retrieval precision and yield are tracked per commit on a frozen
-  truth set; the ledger in BENCHMARKS.md is appended by the benchmark
-  script, never by hand.
+query ──► same two encoders ──► trace
+      └─► pooled prefilter (whole store, milliseconds)
+          └─► elastic time-alignment on the top 100 (DTW)
+              └─► ranked timestamps
+```
 
-## Documentation
+Both encoders are **frozen, off-the-shelf, and never fine-tuned**. Matching is
+elastic in time, so the same action performed faster or slower still matches —
+but not so elastic that a 7-second event matches a 20-second one, which are
+treated as genuinely different.
 
-| doc | what it covers |
+## Limits
+
+- Clips shorter than **4 seconds** cannot be encoded (the model's window) and
+  are skipped at ingest with a count.
+- Results are whole recordings, not the matching sub-span inside them.
+- Text queries ("show me spills") are **not supported** — query by example
+  only.
+- Single machine. No server, no auth, no replication.
+- Search cost grows linearly with store size; ~550 ms at 3.5k recordings.
+
+## Repo layout
+
+| path | what |
 |---|---|
-| [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | step-by-step: install, create, add data, query, browse |
-| [docs/API.md](docs/API.md) | every class, method, and CLI verb |
-| [DESIGN.md](DESIGN.md) | architecture + which idea came from which system (Delta, Spark, C-Store, warehouses) |
-| [deploy/README.md](deploy/README.md) | the cloud demo: container, costs, one-command staging |
-| [notebooks/elidedb_demo.ipynb](notebooks/elidedb_demo.ipynb) | query styles, executed on real data |
-| [BENCHMARKS.md](BENCHMARKS.md) | measured numbers and the per-commit retrieval ledger |
+| `native/relmo/api.py` | **the public API** (`Memory`, `Hit`) |
+| `native/relmo/cli.py` | **the command line** |
+| `native/relmo/vjrec8.py` | write path — one encoder pass |
+| `native/relmo/vjstore.py` | read path — stores, prefilter, alignment |
+| `native/SYSTEM.md` | architecture and measured numbers |
+| `native/EXPERIMENTS.md` | every approach tried and what it scored |
 
-## Repository layout
-
-```
-python/elidedb/     THE ENGINE. Everything that runs: store, log, video,
-                    planner, retrieval, cli, desk. Python on Parquet.
-scripts/            entry points only — ingest, benchmark, fit. A file with
-                    a main() is a program; anything imported lives in the
-                    package above. Never both.
-tests/              the live test suite (pytest)
-artifacts/          fitted state: teacher scores, thresholds, verb partitions
-                    — see artifacts/README.md
-eval/               truth set. EVAL ONLY: nothing is ever fitted on it.
-deploy/             the Hugging Face Space: Dockerfile, store builder, stager
-site/               landing page (static, single file)
-desk/               macOS app bundle (thin launcher for elidedb.desk)
-notebooks/          executed demo notebook
-FDNN_BrainModel/    reference MLP carrying the FDNN architecture, kept as the
-                    canonical statement of the three rules the students obey
-rust/               a vertical slice against the same on-disk format — store
-                    open, tx log, parquet scan, zone-map prune, counted
-                    reads. NOT WIRED: no pyo3, no ctypes, nothing in Python
-                    imports it. It reads what Python writes; it does not
-                    serve. See deprecated/README.md for the language history.
-deprecated/         the C++20 era and its Python sidecar. Off every code
-                    path, kept as provenance — see deprecated/README.md
-```
-
-Raw data (`data/`), generated databases (`lake/`), model weights
-(`models/`), and build output are git-ignored: the repo carries code,
-docs, and fitted state only.
+Anything in `native/relmo/` not listed above is internal.
