@@ -50,8 +50,20 @@ assert "rcasa_composite_full" not in POOL
 
 
 def load_pool(datasets=POOL, layer=6):
-    """Like vjrank2.load_corpus but tokens kept fp16; ~4x less RAM."""
-    out = {}
+    """Like vjrank2.load_corpus but tokens kept fp16; ~4x less RAM.
+
+    DEDUPLICATED BY EPISODE STEM. 266 RoboCasa demonstrations exist in BOTH
+    rcasa and rcasa_atomic_full - different files, different bitrates
+    (432 KB vs 101 KB), same demonstration (obs_change cosine 0.76). Training
+    on both teaches invariance to video encoding, and mining ranks them as
+    the corpus's most similar cross-video pairs, which is degenerate. First
+    dataset in POOL order wins.
+
+    `rollout` deliberately OMITS the dataset name so that the same
+    demonstration appearing under two corpora is treated as one rollout by
+    the cross-view bar, in training and in mining alike.
+    """
+    out, seen_stem = {}, set()
     for ds in datasets:
         t7 = REC7 / f"{ds}_L{layer}"
         rec6, sig6 = vjz.dirs("vjrec6", ds)
@@ -62,9 +74,12 @@ def load_pool(datasets=POOL, layer=6):
         for p in sorted(t7.glob("*.npz")):
             if p.name.startswith("."):
                 continue
+            if p.stem in seen_stem:          # same demo under another corpus
+                continue
             f6, s6 = rec6 / p.name, sig6 / p.name
             if not (f6.exists() and s6.exists()):
                 continue
+            seen_stem.add(p.stem)
             z7, z6 = np.load(p), np.load(f6)
             sig = np.load(s6)["sig"].astype(np.float32)
             tok, gate = z7["b_tok"], z7["gate"].astype(np.float32)
@@ -80,7 +95,7 @@ def load_pool(datasets=POOL, layer=6):
                 tok=flat.reshape(len(flat), K, Dt).astype(np.float16),
                 gate=rest[0].astype(np.float16), g=rest[1],
                 sig=rest[2].astype(np.float16), fix=rest[3].astype(np.float16),
-                rollout=f"{ds}/{p.stem.split('__')[0]}")
+                rollout=p.stem.split("__")[0])
             if len(out[f"{ds}/{p.stem}"]["tok"]) < 12:
                 del out[f"{ds}/{p.stem}"]        # too short for span+prefix
         print(f"  {ds}: {len(out)-n0} recordings", flush=True)
