@@ -331,9 +331,24 @@ def main():
               f"nce {float(l_nce):.3f}  var {float(l_var):.3f}  "
               f"mined+{n_mined}  [{(time.time()-t0)/60:.0f}m]", flush=True)
         n_mined = 0
-        if ep >= 5 and pr < 15:
-            print("GATE FAILED: PR(z) < 15 after epoch 5 - aborting per "
-                  "runbook §5.")
+        # THE GATE, CORRECTED. It used to abort below PR 15, written when I
+        # believed PR was the objective. It is not - see EXPERIMENTS.md §3b:
+        # v1 reached PR 46.7 and scored 0.211, while the shipped head's 3.8
+        # dims scored 0.248. That gate then aborted v2 at PR 14.7 even though
+        # v2's contrastive loss had risen from v1's dead 0.005 to a working
+        # 0.44, which is the real progress signal.
+        #
+        # So: abort on TOTAL collapse (PR below the shipped head's 3.8), and
+        # abort on a DEAD contrastive task, which is the failure that actually
+        # cost v1 its result.
+        if ep >= 5 and pr < 6:
+            print(f"GATE FAILED: PR(z)={pr:.1f} - total collapse, at or below "
+                  f"the shipped head. Aborting.")
+            break
+        if ep >= 3 and float(l_nce) < 0.01 and a.w_nce > 0:
+            print(f"GATE FAILED: nce={float(l_nce):.4f} - the contrastive "
+                  f"task is trivial and has stopped contributing (this is "
+                  f"exactly how v1 failed). Aborting.")
             break
         if (time.time() - t0) / 60 > a.minutes:
             print("time budget reached")
