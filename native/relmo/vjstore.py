@@ -109,7 +109,7 @@ class Store:
         self.raw = {i: (D[i]["fix"].astype(np.float32),
                         D[i]["sig"].astype(np.float32)) for i in self.ids}
 
-    def query(self, fix, sig, top_k=10, prefilter_m=50, band=0.1,
+    def query(self, fix, sig, top_k=10, prefilter_m=100, band=0.25,
               exclude=None):
         """Raw channel traces (T,1024),(T,768) -> [(id, score)].
         Standardization for DTW happens HERE; the prefilter uses the raw

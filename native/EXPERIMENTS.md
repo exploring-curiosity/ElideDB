@@ -66,6 +66,7 @@ Columns: what was tried / the number / the reading.
 | transition anchor | q04 0.72→0.92 | direction from the trace, not from text |
 | DINOv3 identity cut | AUC 0.9994 | identity rides on tracks |
 | one-pass write (vjrec8) | 1.72x, bit-identical | 5688 arrays verified |
+| **store read path (vjstore): whitened-pooled prefilter M=100 + per-ref band 0.25** | **P@10 0.752 vs 0.765 exact, p50 554 ms vs 20.2 s (36x)** | UC1 shipped config. Fidelity gate caught two defects en route (zero-mean prefilter, padded-diagonal band) |
 | **whitening on target corpus** | **sig unseen 0.258→0.293 (+14%)** | fits itself to any corpus; carries no rcasa |
 | **fix+sig whitened** | **0.312/0.312/0.312** | ZERO seen-vs-unseen gap. Fully frozen |
 | **head+fix+sig fused** | **unseen 0.248→0.314 (+27%)** | best overall 0.341; channels complementary off-domain |
