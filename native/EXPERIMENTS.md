@@ -47,6 +47,7 @@ Columns: what was tried / the number / the reading.
 | 192px encoder | test −0.034, ood −0.068 | 1.84x faster, not free |
 | 64-frame window | test +0.041, **ood −0.114**, drops 13% of corpus | more context helps in-domain, hurts transfer |
 | movi_e corpus | 0/1616 usable | 2.0 s clips vs a 4 s window |
+| **graph diffusion at read** | **NULL: 0.404 -> 0.406 best (CI ±0.04); alpha 0.9 collapses to 0.28** | The +50% AP from an earlier system does NOT reproduce. Caveat on the implementation: the graph is MEAN-POOLED, and composite recordings are 208 steps (~52 s), so averaging destroys the moment structure the graph needs. A DTW-built graph costs n^2 alignments (hours) - not worth it on evidence this weak |
 | whitening a FUSION (truncates each channel to 256d) | 0.338 vs 0.404 z-scored | whitening helps a SINGLE channel, HURTS a fusion: 768d after truncation vs 2048d kept. Decorrelation does not pay for the dimensions lost |
 | **grading composite by `group_key`** | **chance 0.543, lift 1.09-1.20x** | **INVALID METRIC.** The verb x object parser cannot read compositional names and dumps 900/1152 into `Other/Other`. Any prec measured this way is uninterpretable - it looked like 0.651 vs a 0.314 bar. Use `--event-key task`: 32 groups x 36, chance 0.031 |
 | overlap-InfoNCE with cross-recording negatives only | nce -> 0.005 by epoch 2 | "which video is this" is trivial; the term stops contributing. Same failure as the earlier hard-negative lesson. Fix = within-recording disjoint spans (`--hard-neg`) |
@@ -59,7 +60,6 @@ Columns: what was tried / the number / the reading.
 | stream-time records (v6/v8) | the shipped geometry | `t` is absolute time; windows tile exactly |
 | gate-pooled `b` as primary | b alone 0.442 > a alone 0.420 | `a` is partly the model's prior |
 | arc-length reparameterisation | largest single frozen gain | re-index by cumulative gate energy |
-| graph diffusion (earlier system) | **+50% AP holdout, 0.396→0.597** | **NOT in the current read path — untapped** |
 | transition anchor | q04 0.72→0.92 | direction from the trace, not from text |
 | DINOv3 identity cut | AUC 0.9994 | identity rides on tracks |
 | one-pass write (vjrec8) | 1.72x, bit-identical | 5688 arrays verified |
@@ -155,10 +155,9 @@ Corpus-fitted constants in the path: token PCA, predictor calibration
    negatives + weak span + VICReg floor.** This is the direct correction of
    the v1 failure. `vjmine.py` bootstraps positives from the FROZEN space
    (0.371), not the trained one.
-2. **Graph diffusion at read** — +50% AP measured on an earlier system,
-   still absent from the read path. Training-free; applies to the frozen
-   space TODAY regardless of what the head does. Highest untapped win.
-3. k-reciprocal re-ranking (training-free, standard in re-ID).
+2. ~~Graph diffusion~~ — MEASURED NULL, see §2.
+3. k-reciprocal re-ranking — deprioritised: it reads the same mean-pooled
+   graph that made diffusion null, so it likely shares the defect.
 4. Read-side whitening + fusion are now measured on every eval by `vjreps`.
 5. Longer/harder spans; multi-horizon span targets — only after 1 lands.
 
