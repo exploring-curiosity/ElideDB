@@ -193,7 +193,7 @@ regressed below the frozen floor there.
 
 - [x] A: prep (bridge_wide / kitti_seq / oxford_seq / drone_fpv verified)
 - [x] B: ingest VERIFIED on disk 2026-08-16: bridge_wide 2414/2414, kitti_seq 22, oxford_seq 3, drone_fpv 4; movi_e 0/1616 (all too_short, corpus dropped). Pool = 2443 new + 2604 rcasa-family = 5047 recordings, ~13.0 video-h
-- [ ] C: train 3 seeds (PR gate passed)
-- [ ] D: mining round (skipped unless E shows signal)
-- [ ] E: eval vs bars, snapshot v10 cut, numbers attached
+- [x] C: v1 3 seeds (PR 46.7/45.1/47.8) + v2 seed0 (PR 27.5, nce alive)
+- [x] D: mined 1754 pairs @ 94.5% same-task; used in v2; NULL downstream
+- [x] E: SEALED corpus, task key. BEST = frozen fix+sig z-scored 0.401±0.021 (unseen 0.404), UNTRAINED. Head adds +0.006 = null
 - [ ] text L1/L2 measured

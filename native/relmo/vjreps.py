@@ -78,6 +78,16 @@ def build_reps(Z, D, have, k_white=256):
             i: np.concatenate([zs(D[i]["fix"].astype(np.float32)),
                                zs(D[i]["sig"].astype(np.float32))], -1)
             for i in have},
+        # NEW CHANNEL: spatial motion signature, free, label-free, never used
+        "fix+sig+wmap zscored": {
+            i: np.concatenate([zs(D[i]["fix"].astype(np.float32)),
+                               zs(D[i]["sig"].astype(np.float32)),
+                               zs(D[i]["wmap"].astype(np.float32))], -1)
+            for i in have},
+        "fix+wmap zscored": {
+            i: np.concatenate([zs(D[i]["fix"].astype(np.float32)),
+                               zs(D[i]["wmap"].astype(np.float32))], -1)
+            for i in have},
         "z + fix + sig (z-scored)": {
             i: np.concatenate([zs(Z[i]), zs(D[i]["fix"].astype(np.float32)),
                                zs(D[i]["sig"].astype(np.float32))], -1)

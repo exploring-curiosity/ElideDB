@@ -84,13 +84,21 @@ def load_corpus(datasets=("rcasa", "rcasa_eval"), layer=6, arc=ARC_DS,
             T, K, D = tok.shape
             if len(sig) != T or len(g) != T or len(fix) != T:
                 continue
+            # where_map is the per-step SPATIAL motion signature (16x16 gate
+            # energy). It has always been loaded and then collapsed to a
+            # scalar for arc-length weighting; the map itself has never been
+            # used as a channel. It answers WHERE change happened, which is
+            # orthogonal to fix (WHAT changed) and sig (what it LOOKS like).
+            wmap = z6["where_map"].reshape(T, -1).astype(np.float32)
             if arc > 0:
-                w = z6["where_map"].reshape(T, -1).sum(1)
+                w = wmap.sum(1)
                 flat, rest = arc_resample(tok.reshape(T, K * D), w, arc,
-                                          aux=[gate, g, sig, fix], max_len=256)
+                                          aux=[gate, g, sig, fix, wmap],
+                                          max_len=256)
                 tok = flat.reshape(len(flat), K, D)
-                gate, g, sig, fix = rest
-            out[p.stem] = dict(tok=tok, gate=gate, g=g, sig=sig, fix=fix)
+                gate, g, sig, fix, wmap = rest
+            out[p.stem] = dict(tok=tok, gate=gate, g=g, sig=sig, fix=fix,
+                               wmap=wmap)
     return out
 
 

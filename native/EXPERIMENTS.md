@@ -48,6 +48,7 @@ Columns: what was tried / the number / the reading.
 | 64-frame window | test +0.041, **ood −0.114**, drops 13% of corpus | more context helps in-domain, hurts transfer |
 | movi_e corpus | 0/1616 usable | 2.0 s clips vs a 4 s window |
 | **graph diffusion at read** | **NULL: 0.404 -> 0.406 best (CI ±0.04); alpha 0.9 collapses to 0.28** | The +50% AP from an earlier system does NOT reproduce. Caveat on the implementation: the graph is MEAN-POOLED, and composite recordings are 208 steps (~52 s), so averaging destroys the moment structure the graph needs. A DTW-built graph costs n^2 alignments (hours) - not worth it on evidence this weak |
+| **where_map as a retrieval channel** | seen 0.375→0.413, **unseen 0.404→0.394** | Spatial motion layout is a SCENE prior - where in frame motion happens depends on kitchen layout and camera pose. Helps in-domain, hurts transfer. Same failure shape as the trained head, different source |
 | whitening a FUSION (truncates each channel to 256d) | 0.338 vs 0.404 z-scored | whitening helps a SINGLE channel, HURTS a fusion: 768d after truncation vs 2048d kept. Decorrelation does not pay for the dimensions lost |
 | **grading composite by `group_key`** | **chance 0.543, lift 1.09-1.20x** | **INVALID METRIC.** The verb x object parser cannot read compositional names and dumps 900/1152 into `Other/Other`. Any prec measured this way is uninterpretable - it looked like 0.651 vs a 0.314 bar. Use `--event-key task`: 32 groups x 36, chance 0.031 |
 | overlap-InfoNCE with cross-recording negatives only | nce -> 0.005 by epoch 2 | "which video is this" is trivial; the term stops contributing. Same failure as the earlier hard-negative lesson. Fix = within-recording disjoint spans (`--hard-neg`) |
@@ -66,7 +67,7 @@ Columns: what was tried / the number / the reading.
 | **whitening on target corpus** | **sig unseen 0.258→0.293 (+14%)** | fits itself to any corpus; carries no rcasa |
 | **fix+sig whitened** | **0.312/0.312/0.312** | ZERO seen-vs-unseen gap. Fully frozen |
 | **head+fix+sig fused** | **unseen 0.248→0.314 (+27%)** | best overall 0.341; channels complementary off-domain |
-| **frozen fix+sig, Z-SCORED, 1792d, SEALED corpus** | **0.398 ALL / 0.400 unseen** | **CURRENT BEST, and it is UNTRAINED.** The gain over whitened-512d (0.376) is normalisation + retained dimensions |
+| **frozen fix+sig, Z-SCORED, 1792d, SEALED corpus** | **0.401 ± 0.021 ALL / 0.404 unseen (240 q)** | **THE RESULT, and it is UNTRAINED.** 14x chance on a corpus 91% unseen-task, and BETTER on unseen (0.404) than seen (0.375) - no generalization gap at all |
 | mined cross-video positives | 94.5% same-task, 1754 pairs | the frozen space is good enough to teach itself; channel consensus rejects look-alikes |
 
 ## 3a. THE DECISIVE CONTROL (2026-08-16) — the trained head is INERT
@@ -173,6 +174,29 @@ Corpus-fitted constants in the path: token PCA, predictor calibration
 | ssl_v1_s{0,1,2} | span-pred + overlap-InfoNCE + VICReg, d=256 | 46.7/45.1/47.8 | alone 0.218, fused 0.406 | z adds +0.006 over the no-z control. NULL |
 | vjmine (deduped pool) | mutual top-10 + fix∧sig consensus + DTW verify | — | 94.5% same-task @ 20% keep | mined set is sound; 1754 pairs kept |
 | ssl_v2_s0 | + mined cross-video positives, hard negatives, span 0.5 | 27.5 | alone 0.202, fused 0.404 | nce ALIVE (0.42 vs v1's 0.005) - the training defect WAS fixed - and retrieval did not move. NULL |
+
+## 6b. SATURATION REACHED on this pool (2026-08-16)
+
+Everything cheap has been measured. On a 13-video-hour pool spanning two
+domains, the following are ALL null against a ±0.02-0.04 CI:
+
+  * the training objective — v1 (forecast) and v2 (contrastive, mined
+    positives, hard negatives) land 0.002 apart
+  * the head itself — +0.006 over a no-head control at 240 queries
+  * graph diffusion — +0.002, collapses at high alpha
+  * where_map as a channel — helps seen, hurts unseen
+  * whitening a fusion — actively negative
+
+What is NOT null: normalisation and retained dimensions (whitened-512d 0.376
+-> z-scored-1792d 0.401), and the frozen V-JEPA + SigLIP channels themselves.
+
+**Conclusion: the binding constraint is the POOL, not the model.** 13 hours
+across sim-kitchen and one robot dataset. Every model-side and read-side
+lever has now been tested and found flat. STREAM_PIPELINE.md is the designed
+response and is on hold by owner decision.
+
+Do not start a third training variant on this pool without a new mechanism —
+two objectives as different as SSL admits produced the same number.
 
 ## 7. QUEUE — ranked, each must be self-supervised
 
