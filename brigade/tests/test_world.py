@@ -84,19 +84,45 @@ def check_teleport_onto_counter(r: SimRunner):
 
     moved = float(np.linalg.norm(np.array(result["pos"]) - before))
     assert moved > 0.01, f"bowl_c did not move (delta {moved:.4f} m)"
+    assert result["at_rest"], f"bowl_c never settled: {result}"
     assert result["settled_location"] != "unknown", result
     assert result["label"] == "bowl"
-    print(f"  [teleport] bowl_c moved {moved:.2f}m -> {result['settled_location']}")
+    print(f"  [teleport] bowl_c moved {moved:.2f}m -> {result['settled_location']} "
+          f"(rest after {result['settled_steps']} steps)")
 
 
 def check_teleport_into_cabinet_is_containment(r: SimRunner):
     """Spatial memory needs locate() to name a container, not a surface."""
     cab = r.call(lambda env: env.cab.name)
     result = teleport(r, "bowl_d", cab, seed=3)
+    assert result["at_rest"], f"bowl_d never settled: {result}"
     assert result["settled_location"] == cab, (
         f"expected bowl_d inside {cab}, got {result['settled_location']!r}"
     )
-    print(f"  [teleport] bowl_d -> {result['settled_location']} (containment detected)")
+    print(f"  [teleport] bowl_d -> {result['settled_location']} "
+          f"(containment detected, rest after {result['settled_steps']} steps)")
+
+
+def check_locate_is_robust_across_random_drops(r: SimRunner):
+    """Every drop must be locatable, not just the lucky seeds.
+
+    Regression test with teeth. The single-seed version of the teleport check
+    passed while roughly a third of *randomly seeded* drops reported 'unknown' —
+    objects resting on a sink lip register no counter contact. Spatial memory is
+    written from this read, so it is tested over a distribution, not one sample.
+    """
+    counter = r.call(lambda env: env.counter.name)
+    methods: dict[str, int] = {}
+    unknown = []
+    N = 12
+    for i in range(N):
+        res = teleport(r, "bowl_c", counter)  # unseeded on purpose
+        methods[res["located_by"]] = methods.get(res["located_by"], 0) + 1
+        if res["settled_location"] == "unknown":
+            unknown.append(round(res["pos"][2], 3))
+
+    print(f"  [locate] {N} random drops -> methods={methods}")
+    assert not unknown, f"{len(unknown)}/{N} drops were unlocatable (z={unknown})"
 
 
 def check_control_rate_is_realtime(r: SimRunner):
@@ -147,6 +173,7 @@ CHECKS = (
     check_doors_actuate_and_report,
     check_teleport_onto_counter,
     check_teleport_into_cabinet_is_containment,
+    check_locate_is_robust_across_random_drops,
     check_control_rate_is_realtime,
     check_frames_are_published,
     check_skill_failure_is_reported_not_raised,

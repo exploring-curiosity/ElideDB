@@ -2,26 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "vdesk",
-      "runtimeExecutable": "python",
-      "runtimeArgs": [
-        "native/vdesk.py",
-        "--port",
-        "8788"
-      ],
-      "port": 8788
-    },
-    {
-      "name": "relmo-viewer",
+      "name": "brigade",
       "runtimeExecutable": "python3",
-      "runtimeArgs": [
-        "-m",
-        "http.server",
-        "8765",
-        "--directory",
-        "data/relmo"
-      ],
-      "port": 8765
+      "runtimeArgs": ["brigade/serve.py", "--host", "127.0.0.1", "--port", "8080"],
+      "port": 8080
     }
   ]
 }

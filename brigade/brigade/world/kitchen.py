@@ -190,33 +190,103 @@ class BrigadeKitchen(Kitchen):
         return out
 
     def locate(self, instance_id: str) -> str:
-        """Which fixture is this object in or on?
+        """Which fixture is this object in or on?"""
+        return self.locate_detail(instance_id)["location"]
 
-        Containment wins over contact: a bowl inside an open cabinet is "in the
-        cabinet", not "on the shelf it rests against". Falls back to the nearest
-        counter, then to 'unknown' — an honest answer the memory layer records as
-        low confidence rather than guessing.
+    def locate_detail(self, instance_id: str) -> dict:
+        """Locate an object, and say how the answer was reached.
+
+        Four layers, most specific first. The layering exists because a single
+        test is not enough: requiring physical *contact* with a counter geom
+        reported 'unknown' for roughly a third of drops that were visibly sitting
+        on the counter — the object had come to rest on a sink lip or a raised
+        edge, which is a counter to any human and not a counter geom to MuJoCo.
+        Spatial memory is written from this, so a brittle answer here becomes a
+        robot that cannot find a bowl it is looking straight at.
+
+        `method` is returned so the memory layer can set confidence from it, and
+        so 'unknown' is distinguishable from 'guessed'.
         """
+        pos = self.object_pose(instance_id)
+
+        # 1. Inside a container. Wins outright: a bowl in an open cabinet is in
+        #    the cabinet, not on the shelf it happens to touch.
         for name, fxtr in self.storage_fixtures().items():
             try:
                 if OU.obj_inside_of(self, instance_id, fxtr):
-                    return name
+                    return dict(location=name, method="containment", confidence=1.0)
             except Exception:
                 continue
+
+        surfaces = {n: f for n, f in self.fixtures.items() if "counter" in n or "island" in n}
+
+        # 2. Physically resting on a counter. Most precise when it fires.
         try:
-            if OU.check_obj_any_counter_contact(self, instance_id):
-                pos = self.object_pose(instance_id)
-                counters = {
-                    n: f for n, f in self.fixtures.items() if "counter" in n or "island" in n
-                }
-                if counters:
-                    return min(
-                        counters,
-                        key=lambda n: float(np.linalg.norm(np.array(counters[n].pos)[:2] - pos[:2])),
-                    )
+            if OU.check_obj_any_counter_contact(self, instance_id) and surfaces:
+                nearest = min(
+                    surfaces,
+                    key=lambda n: float(np.linalg.norm(np.array(surfaces[n].pos)[:2] - pos[:2])),
+                )
+                return dict(location=nearest, method="contact", confidence=1.0)
         except Exception:
             pass
-        return "unknown"
+
+        # 3. Standing within a surface's footprint, whatever it is resting on.
+        for name, fxtr in surfaces.items():
+            try:
+                if OU.point_in_fixture(pos, fxtr, only_2d=True):
+                    return dict(location=name, method="footprint", confidence=0.8)
+            except Exception:
+                continue
+
+        # 4. Near something, at counter height. Reported at low confidence, which
+        #    is the memory layer's cue to re-verify by looking before trusting it.
+        if surfaces:
+            nearest = min(
+                surfaces,
+                key=lambda n: float(np.linalg.norm(np.array(surfaces[n].pos)[:2] - pos[:2])),
+            )
+            gap = float(np.linalg.norm(np.array(surfaces[nearest].pos)[:2] - pos[:2]))
+            if gap < 1.5:
+                return dict(location=nearest, method="proximity", confidence=0.5)
+
+        return dict(location="unknown", method="none", confidence=0.0)
+
+    def placement_targets(self) -> list[dict]:
+        """Fixtures an object can be put on or in.
+
+        Used by the console's drop/move controls and, later, by the agent when it
+        has to choose somewhere to put a thing down. Reports whether each target
+        is a container (has a door) so the caller knows an open is required.
+        """
+        out = []
+        for name, fxtr in self.fixtures.items():
+            is_store = any(
+                k in name for k in ("cab_", "drawer", "fridge", "microwave", "oven")
+            )
+            is_surface = "counter" in name or "island" in name
+            if not (is_store or is_surface):
+                continue
+            try:
+                regions = fxtr.get_reset_regions(env=self)
+            except TypeError:
+                try:
+                    regions = fxtr.get_reset_regions(self)
+                except Exception:
+                    regions = {}
+            except Exception:
+                regions = {}
+            if not regions:
+                continue  # nowhere to actually put anything
+            out.append(
+                dict(
+                    name=name,
+                    kind="container" if is_store else "surface",
+                    openable=hasattr(fxtr, "open_door"),
+                    is_open=self.fixture_is_open(name),
+                )
+            )
+        return sorted(out, key=lambda d: (d["kind"], d["name"]))
 
     def fixture_is_open(self, fixture_name: str) -> bool | None:
         """True/False for openable fixtures, None for ones with no door."""
@@ -238,10 +308,13 @@ class BrigadeKitchen(Kitchen):
         objects = {}
         for item in POOL:
             try:
+                where = self.locate_detail(item.instance_id)
                 objects[item.instance_id] = dict(
                     label=self.object_label(item.instance_id),
                     pos=self.object_pose(item.instance_id).tolist(),
-                    location=self.locate(item.instance_id),
+                    location=where["location"],
+                    located_by=where["method"],
+                    location_confidence=where["confidence"],
                     grasped=bool(OU.check_obj_grasped(self, item.instance_id)),
                 )
             except Exception as exc:  # an object can be mid-teleport

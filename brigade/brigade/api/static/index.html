@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BRIGADE · THE PASS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#0B0B0C;          /* graphite, the station at night */
+  --ink-2:#131316;
+  --ink-3:#1B1B20;
+  --rule:#2A2A31;
+  --steel:#8A97A6;
+  --steel-dim:#5D6875;
+  --bone:#E8E4DC;         /* ticket paper */
+  --heat:#FF8A1E;         /* heat lamp */
+  --heat-dim:#8A4B10;
+  --fire:#FF4438;         /* stale / failed */
+  --cool:#5EC8C0;         /* verified / open */
+  --tick:#0F0F12;
+  --shadow:0 18px 40px -18px rgba(0,0,0,.9);
+  --mono:"JetBrains Mono","SF Mono",Menlo,ui-monospace,monospace;
+  --sign:"Barlow Condensed","Avenir Next Condensed","Haettenschweiler",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--ink);
+  color:var(--bone);
+  font-family:var(--mono);
+  font-size:13px;
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;
+}
+/* fine grain so the black has a surface rather than being a void */
+body::after{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:999;opacity:.5;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='.045'/%3E%3C/svg%3E");
+}
+
+/* ─── frame ─────────────────────────────────────────────────────────── */
+.shell{display:grid;grid-template-rows:auto 1fr auto;height:100vh}
+
+header{
+  display:flex;align-items:stretch;gap:0;
+  border-bottom:1px solid var(--rule);
+  background:linear-gradient(180deg,var(--ink-2),var(--ink));
+}
+.brand{
+  padding:14px 22px 11px;border-right:1px solid var(--rule);
+  display:flex;align-items:baseline;gap:12px;
+}
+.brand h1{
+  font-family:var(--sign);font-weight:700;font-size:30px;letter-spacing:.14em;
+  text-transform:uppercase;line-height:1;
+  color:var(--bone);
+}
+.brand .sub{
+  font-family:var(--sign);font-size:15px;letter-spacing:.34em;text-transform:uppercase;
+  color:var(--heat);font-weight:600;
+}
+.slug{
+  display:flex;align-items:center;gap:26px;padding:0 22px;flex:1;
+  font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--steel-dim);
+}
+.slug b{display:block;color:var(--steel);font-weight:500;letter-spacing:.06em;font-size:12px}
+.pill{
+  display:inline-flex;align-items:center;gap:7px;padding:5px 11px;
+  border:1px solid var(--rule);border-radius:2px;background:var(--ink-3);
+  font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--steel);
+}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--steel-dim);flex:none}
+.dot.on{background:var(--heat);box-shadow:0 0 0 3px rgba(255,138,30,.16);animation:pulse 2s ease-in-out infinite}
+.dot.bad{background:var(--fire);box-shadow:0 0 0 3px rgba(255,68,56,.16)}
+@keyframes pulse{50%{opacity:.45}}
+.rail-head{display:flex;gap:10px;align-items:center;padding:0 20px;border-left:1px solid var(--rule)}
+
+/* ─── body ──────────────────────────────────────────────────────────── */
+main{display:grid;grid-template-columns:1fr 400px;min-height:0}
+.line{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--rule)}
+
+/* min-height is load-bearing: with flex:1 and min-height:0 the camera row
+   collapses to nothing as soon as the deck below it gets tall. The feeds are the
+   point of this screen; they never shrink away. */
+.cams{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--rule);flex:1;min-height:300px}
+.cam{position:relative;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.cam img{width:100%;height:100%;object-fit:contain;display:block;image-rendering:auto}
+.cam figcaption{
+  position:absolute;top:10px;left:12px;z-index:3;
+  font-family:var(--sign);font-size:14px;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--bone);text-shadow:0 1px 6px #000;
+  display:flex;align-items:center;gap:8px;
+}
+.cam figcaption::before{content:"";width:5px;height:14px;background:var(--heat)}
+.cam .corner{position:absolute;bottom:10px;right:12px;font-size:10px;color:var(--steel-dim);letter-spacing:.1em;z-index:3}
+
+.deck{
+  border-top:1px solid var(--rule);background:var(--ink-2);
+  padding:14px 20px 16px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:22px;
+}
+.deck h3,.rail h3{
+  font-family:var(--sign);font-size:13px;letter-spacing:.26em;text-transform:uppercase;
+  color:var(--heat);font-weight:600;margin-bottom:10px;
+  display:flex;align-items:center;gap:9px;
+}
+.deck h3::after,.rail h3::after{content:"";flex:1;height:1px;background:var(--rule)}
+
+.row{display:flex;gap:6px;margin-bottom:7px;flex-wrap:wrap}
+select,button,input{font-family:var(--mono);font-size:12px}
+select{
+  background:var(--ink-3);color:var(--bone);border:1px solid var(--rule);
+  padding:6px 8px;border-radius:2px;flex:1;min-width:0;
+}
+select:focus{outline:none;border-color:var(--heat-dim)}
+button{
+  background:var(--ink-3);color:var(--steel);border:1px solid var(--rule);
+  padding:6px 12px;border-radius:2px;cursor:pointer;letter-spacing:.08em;
+  text-transform:uppercase;font-size:11px;transition:all .13s ease;
+}
+button:hover:not(:disabled){border-color:var(--heat);color:var(--heat);background:#1E1811}
+button:active:not(:disabled){transform:translateY(1px)}
+button:disabled{opacity:.35;cursor:not-allowed}
+button.hot{border-color:var(--heat-dim);color:var(--heat)}
+button.wide{flex:1}
+.jog{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.jog button{padding:7px 0;font-size:11px}
+.jog .lbl{
+  grid-column:1/-1;font-size:10px;letter-spacing:.16em;color:var(--steel-dim);
+  text-transform:uppercase;margin-top:4px;
+}
+label.chk{
+  display:flex;align-items:center;gap:7px;font-size:11px;letter-spacing:.08em;
+  color:var(--steel-dim);text-transform:uppercase;cursor:pointer;user-select:none;
+}
+label.chk input{accent-color:var(--heat)}
+
+/* ─── ticket rail ───────────────────────────────────────────────────── */
+.rail{display:flex;flex-direction:column;min-height:0;background:var(--ink)}
+.rail>.pad{padding:14px 18px 0}
+.tickets{overflow-y:auto;padding:2px 18px 18px;display:flex;flex-direction:column;gap:9px;min-height:0}
+.tickets::-webkit-scrollbar{width:7px}
+.tickets::-webkit-scrollbar-thumb{background:var(--rule);border-radius:4px}
+
+.ticket{
+  background:var(--bone);color:#15151A;border-radius:1px;position:relative;
+  padding:10px 12px 11px;box-shadow:var(--shadow);
+  animation:slide .26s cubic-bezier(.2,.8,.3,1) both;
+}
+@keyframes slide{from{opacity:0;transform:translateY(-6px)}}
+/* perforated top edge, like a torn ticket */
+.ticket::before{
+  content:"";position:absolute;top:-4px;left:0;right:0;height:5px;
+  background:radial-gradient(circle at 4px 0, transparent 0 3.4px, var(--bone) 3.6px) 0 0/8px 5px repeat-x;
+}
+.ticket .hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px}
+.ticket .name{
+  font-family:var(--sign);font-size:19px;font-weight:700;letter-spacing:.07em;
+  text-transform:uppercase;line-height:1;
+}
+.ticket .id{font-size:10px;color:#6C6C78;letter-spacing:.07em}
+.ticket .loc{
+  font-size:11px;letter-spacing:.03em;color:#2E2E38;
+  border-top:1px dashed #B9B3A8;padding-top:6px;
+  display:flex;justify-content:space-between;gap:8px;
+}
+.ticket .loc .where{font-weight:700}
+.ticket .how{
+  font-weight:400;font-size:9px;letter-spacing:.13em;text-transform:uppercase;
+  color:#7A7466;border:1px solid #C3BCAE;border-radius:1px;padding:0 4px;margin-left:6px;
+}
+.ticket.held{box-shadow:0 0 0 2px var(--heat),var(--shadow)}
+.ticket .flag{
+  display:inline-block;padding:1px 6px;border-radius:1px;font-size:9px;
+  letter-spacing:.14em;text-transform:uppercase;font-weight:700;
+}
+.flag.hold{background:var(--heat);color:#1A1005}
+.flag.lost{background:var(--fire);color:#fff}
+
+.doors{padding:0 18px 14px}
+.door{
+  display:flex;align-items:center;gap:9px;padding:6px 0;
+  border-bottom:1px solid var(--rule);font-size:11px;color:var(--steel);
+}
+.door .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:.03em}
+.door .st{font-size:10px;letter-spacing:.14em;text-transform:uppercase;width:52px}
+.door .st.open{color:var(--cool)}
+.door .st.shut{color:var(--steel-dim)}
+.door button{padding:3px 8px;font-size:10px}
+
+/* ─── status bar ────────────────────────────────────────────────────── */
+footer{
+  border-top:1px solid var(--rule);background:var(--ink-2);
+  display:flex;align-items:center;gap:0;font-size:11px;
+}
+.stat{
+  padding:9px 18px;border-right:1px solid var(--rule);
+  display:flex;gap:9px;align-items:baseline;white-space:nowrap;
+}
+.stat .k{color:var(--steel-dim);letter-spacing:.14em;text-transform:uppercase;font-size:10px}
+.stat .v{color:var(--bone);font-weight:500;font-variant-numeric:tabular-nums}
+.stat .v.hot{color:var(--heat)}
+.log{
+  flex:1;padding:9px 18px;color:var(--steel-dim);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;letter-spacing:.03em;
+}
+.log b{color:var(--heat);font-weight:500}
+.log.err b{color:var(--fire)}
+
+/* Narrow screens: drop the rail under the line rather than crushing both. */
+@media (max-width:1100px){
+  main{grid-template-columns:1fr;grid-template-rows:1fr auto;overflow-y:auto}
+  .line{border-right:none;border-bottom:1px solid var(--rule)}
+  .deck{grid-template-columns:1fr 1fr}
+  .rail{max-height:420px}
+  body{overflow:auto}
+}
+@media (max-width:760px){
+  .cams{grid-template-columns:1fr}
+  .deck{grid-template-columns:1fr}
+  header{flex-wrap:wrap}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header>
+    <div class="brand">
+      <h1>Brigade</h1><span class="sub">The&nbsp;Pass</span>
+    </div>
+    <div class="slug">
+      <div>Kitchen<b id="s-kitchen">—</b></div>
+      <div>Station<b id="s-robot">—</b></div>
+      <div>Home<b id="s-home">—</b></div>
+      <div>Staging<b id="s-stage">—</b></div>
+    </div>
+    <div class="rail-head">
+      <span class="pill"><i class="dot" id="d-sim"></i><span id="s-sim">booting</span></span>
+      <span class="pill"><i class="dot" id="d-mem"></i><span id="s-mem">memory</span></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="line">
+      <div class="cams" id="cams"></div>
+
+      <div class="deck">
+        <div>
+          <h3>Service</h3>
+          <div class="row">
+            <select id="obj"></select>
+            <select id="dest"></select>
+          </div>
+          <div class="row">
+            <button class="hot wide" id="btn-drop">Fire to pass</button>
+            <button class="wide" id="btn-return">Return to staging</button>
+          </div>
+          <label class="chk"><input type="checkbox" id="secret"> Move unobserved (memory not told)</label>
+        </div>
+
+        <div>
+          <h3>Station</h3>
+          <div class="jog">
+            <div class="lbl">Base</div>
+            <button data-jog="base_x"  data-amt="1">Fwd</button>
+            <button data-jog="base_x"  data-amt="-1">Back</button>
+            <button data-jog="base_yaw" data-amt="1">Turn</button>
+            <div class="lbl">Arm</div>
+            <button data-jog="arm_z" data-amt="1">Up</button>
+            <button data-jog="arm_z" data-amt="-1">Down</button>
+            <button data-jog="arm_x" data-amt="1">Reach</button>
+            <div class="lbl">Gripper</div>
+            <button data-jog="gripper" data-amt="1">Close</button>
+            <button data-jog="gripper" data-amt="-1">Open</button>
+            <button id="btn-refresh">Refresh</button>
+          </div>
+        </div>
+
+        <div>
+          <h3>Notes</h3>
+          <p style="font-size:11px;line-height:1.65;color:var(--steel-dim);letter-spacing:.02em">
+            World layer only. The robot is under manual control — skills, perception
+            and memory are not wired yet.
+            <b style="color:var(--steel)">Fire to pass</b> teleports an object onto the
+            selected fixture (opening it first if it has a door).
+            <b style="color:var(--steel)">Move unobserved</b> is the same motion but is
+            deliberately not reported, so that later the robot's memory will be wrong
+            and has to notice.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <aside class="rail">
+      <div class="pad"><h3>On the rail</h3></div>
+      <div class="tickets" id="tickets"></div>
+      <div class="pad"><h3>Doors</h3></div>
+      <div class="doors" id="doors"></div>
+    </aside>
+  </main>
+
+  <footer>
+    <div class="stat"><span class="k">Rate</span><span class="v hot" id="f-hz">—</span></div>
+    <div class="stat"><span class="k">Tick</span><span class="v" id="f-tick">—</span></div>
+    <div class="stat"><span class="k">Job</span><span class="v" id="f-job">idle</span></div>
+    <div class="stat"><span class="k">Queue</span><span class="v" id="f-q">0</span></div>
+    <div class="stat"><span class="k">Up</span><span class="v" id="f-up">—</span></div>
+    <div class="log" id="f-log">standing by</div>
+  </footer>
+
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let CAMS = [], TARGETS = [], booted = false;
+
+function say(msg, err){
+  const el = $("#f-log");
+  el.className = "log" + (err ? " err" : "");
+  const t = new Date().toLocaleTimeString([], {hour12:false});
+  el.innerHTML = `${t} <b>${msg}</b>`;
+}
+
+async function post(path, body){
+  const r = await fetch(path, {
+    method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)
+  });
+  const j = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(j.detail || r.statusText);
+  return j;
+}
+
+function mountCams(cams){
+  if(JSON.stringify(cams) === JSON.stringify(CAMS)) return;
+  CAMS = cams;
+  $("#cams").innerHTML = cams.map(c => `
+    <figure class="cam">
+      <figcaption>${c.replace(/^robot0_/,"").replace(/_/g," ")}</figcaption>
+      <img src="/stream/${c}" alt="${c}">
+      <span class="corner">MJPEG · 15 fps</span>
+    </figure>`).join("");
+}
+
+function ticket(id, o){
+  const held = o.grasped ? '<span class="flag hold">In hand</span>' : "";
+  const lost = o.location === "unknown" ? '<span class="flag lost">Adrift</span>' : "";
+  // Show HOW the location was established whenever it was not certain. A bowl
+  // located by proximity is a bowl the robot ought to look at again before it
+  // trusts the answer, and hiding that would make the rail lie by omission.
+  const soft = (o.location_confidence ?? 1) < 1
+    ? `<span class="how">${o.located_by}</span>` : "";
+  return `<article class="ticket ${o.grasped ? "held" : ""}">
+    <div class="hd"><span class="name">${o.label ?? "?"}</span><span class="id">${id}</span></div>
+    <div class="loc">
+      <span class="where">${(o.location ?? "—").replace(/_main_group$/,"")}${soft}</span>
+      <span>${held}${lost}</span>
+    </div>
+  </article>`;
+}
+
+function renderDoors(doors){
+  $("#doors").innerHTML = Object.entries(doors).map(([n, open]) => `
+    <div class="door">
+      <span class="nm">${n.replace(/_main_group$/,"")}</span>
+      <span class="st ${open ? "open" : "shut"}">${open ? "open" : "shut"}</span>
+      <button data-door="${n}" data-act="${open ? "close" : "open"}">${open ? "Shut" : "Open"}</button>
+    </div>`).join("");
+}
+
+function fillSelects(objects){
+  const obj = $("#obj");
+  const want = Object.keys(objects).sort();
+  if(obj.dataset.keys !== want.join()){
+    obj.dataset.keys = want.join();
+    obj.innerHTML = want.map(k => `<option value="${k}">${k} · ${objects[k].label ?? "?"}</option>`).join("");
+  }
+}
+
+async function loadTargets(){
+  const r = await fetch("/api/targets");
+  if(!r.ok) return;
+  TARGETS = await r.json();
+  $("#dest").innerHTML = TARGETS.map(t =>
+    `<option value="${t.name}">${t.kind === "container" ? "▣" : "▭"} ${t.name.replace(/_main_group$/,"")}</option>`
+  ).join("");
+}
+
+async function poll(){
+  try{
+    const s = await (await fetch("/api/state")).json();
+    const simOk = s.ready && s.status.running;
+    $("#d-sim").className = "dot " + (simOk ? "on" : "bad");
+    $("#s-sim").textContent = simOk ? "kitchen live" : "kitchen down";
+
+    if(!s.ready){ setTimeout(poll, 700); return; }
+
+    mountCams(s.cameras);
+    $("#s-kitchen").textContent = s.kitchen_id;
+    $("#s-robot").textContent   = s.robot_id;
+    $("#s-home").textContent    = s.fixtures.home_cabinet.replace(/_main_group$/,"");
+    $("#s-stage").textContent   = s.fixtures.stage_cabinet.replace(/_main_group$/,"");
+
+    $("#tickets").innerHTML = Object.entries(s.objects)
+      .sort((a,b) => (a[1].label ?? "").localeCompare(b[1].label ?? "") || a[0].localeCompare(b[0]))
+      .map(([id,o]) => ticket(id,o)).join("");
+    renderDoors(s.doors);
+    fillSelects(s.objects);
+
+    $("#f-hz").textContent   = (s.status.hz ?? 0).toFixed(1) + " Hz";
+    $("#f-tick").textContent = s.status.tick;
+    $("#f-job").textContent  = s.status.current_job ?? "idle";
+    $("#f-q").textContent    = s.status.queued_jobs;
+    $("#f-up").textContent   = Math.floor(s.uptime_s) + "s";
+
+    if(!booted){ booted = true; await loadTargets(); say("kitchen live · world layer only"); }
+  }catch(e){
+    $("#d-sim").className = "dot bad";
+    $("#s-sim").textContent = "unreachable";
+    say("console lost the kitchen: " + e.message, true);
+  }
+  setTimeout(poll, 1000);
+}
+
+async function health(){
+  try{
+    const h = await (await fetch("/api/health")).json();
+    const ok = h.memory && h.memory.connected;
+    $("#d-mem").className = "dot " + (ok ? "on" : "bad");
+    $("#s-mem").textContent = ok ? "memory online" : "memory offline";
+    $("#s-mem").title = h.memory?.error || h.memory?.dsn || "";
+  }catch{ /* footer already reports sim health */ }
+  setTimeout(health, 5000);
+}
+
+/* ── controls ─────────────────────────────────────────────────────── */
+$("#btn-drop").onclick = async e => {
+  const b = e.target; b.disabled = true;
+  try{
+    const r = await post("/api/drop", {
+      instance_id: $("#obj").value, fixture: $("#dest").value, secret: $("#secret").checked
+    });
+    say(`${r.label} ${r.instance_id} → ${r.settled_location.replace(/_main_group$/,"")}`
+        + (r.opened_door ? " (door opened)" : "")
+        + ($("#secret").checked ? " · unobserved" : ""));
+  }catch(err){ say("drop failed: " + err.message, true); }
+  b.disabled = false;
+};
+
+$("#btn-return").onclick = async e => {
+  const b = e.target; b.disabled = true;
+  try{
+    const stage = (await (await fetch("/api/state")).json()).fixtures.stage_cabinet;
+    const r = await post("/api/drop", {instance_id: $("#obj").value, fixture: stage, secret: true});
+    say(`${r.instance_id} returned to staging · unobserved`);
+  }catch(err){ say("return failed: " + err.message, true); }
+  b.disabled = false;
+};
+
+document.addEventListener("click", async ev => {
+  const jog = ev.target.closest("[data-jog]");
+  if(jog){
+    jog.disabled = true;
+    try{
+      const r = await post("/api/jog", {axis: jog.dataset.jog, amount: +jog.dataset.amt});
+      say(`jog ${r.axis} ${r.ok ? "ok" : "failed"} · ${r.seconds}s`, !r.ok);
+    }catch(err){ say("jog failed: " + err.message, true); }
+    jog.disabled = false;
+    return;
+  }
+  const door = ev.target.closest("[data-door]");
+  if(door){
+    door.disabled = true;
+    try{
+      const r = await post("/api/door", {fixture: door.dataset.door, action: door.dataset.act});
+      say(`${r.fixture.replace(/_main_group$/,"")} is now ${r.is_open ? "open" : "shut"}`);
+    }catch(err){ say("door failed: " + err.message, true); }
+    door.disabled = false;
+  }
+});
+
+$("#btn-refresh").onclick = () => { loadTargets(); say("targets refreshed"); };
+
+poll(); health();
+</script>
+</body>
+</html>

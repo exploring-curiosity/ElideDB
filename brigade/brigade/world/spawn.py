@@ -26,8 +26,21 @@ from .sim import SimRunner
 # object cannot spawn interpenetrating a shelf; small enough that it does not
 # bounce off the counter.
 _DROP_CLEARANCE = 0.06
-# Steps of physics to let it come to rest before anyone looks.
-_SETTLE_STEPS = 60
+# Settle until the object is actually at rest, not for a fixed count. A fixed 60
+# steps (~0.12 s of sim time) is almost exactly the freefall time for a 6 cm drop,
+# so it returned "still moving" about half the time and locate() reported
+# 'unknown' for an object that was a moment away from resting on the counter.
+# Spatial memory is written from that read, so it has to be a settled one.
+#
+# Rest is measured by POSITION STABILITY, not velocity. An object resting on a
+# stack of other objects keeps a persistent contact jitter — a bowl parked on two
+# other bowls never gets below 1e-3 m/s and looked "never settled" for 600 steps
+# while sitting perfectly still. What we actually care about is whether it has
+# stopped going anywhere.
+_SETTLE_MAX_STEPS = 800
+_SETTLE_MIN_STEPS = 40
+_REST_WINDOW = 25       # steps to look back over
+_REST_DRIFT = 5e-4      # metres of travel across that window that still counts as still
 
 
 def _region_world_pos(env, fixture, rng: np.random.Generator) -> np.ndarray | None:
@@ -96,17 +109,37 @@ def teleport(runner: SimRunner, instance_id: str, fixture_name: str, seed: int |
         # Upright, so a bowl lands as a bowl rather than on its rim.
         qpos[3:7] = np.array([1.0, 0.0, 0.0, 0.0])
         env.sim.data.set_joint_qpos(joint, qpos)
-        env.sim.forward()
-        for _ in range(_SETTLE_STEPS):
-            env.sim.step()
+        # Zero the velocity too: a free joint keeps whatever it had, so an object
+        # nudged a moment ago would launch itself off the new surface.
+        env.sim.data.set_joint_qvel(joint, np.zeros(6))
         env.sim.forward()
 
-        settled = np.array(env.sim.data.body_xpos[env.obj_body_id[instance_id]], dtype=float)
+        body = env.obj_body_id[instance_id]
+        history: list[np.ndarray] = []
+        steps, at_rest = 0, False
+        for i in range(_SETTLE_MAX_STEPS):
+            env.sim.step()
+            steps = i + 1
+            history.append(np.array(env.sim.data.body_xpos[body], dtype=float))
+            if steps < max(_SETTLE_MIN_STEPS, _REST_WINDOW):
+                continue
+            drift = float(np.linalg.norm(history[-1] - history[-_REST_WINDOW]))
+            if drift < _REST_DRIFT:
+                at_rest = True
+                break
+        env.sim.forward()
+
+        settled = np.array(env.sim.data.body_xpos[body], dtype=float)
+        where = env.locate_detail(instance_id)
         return dict(
             instance_id=instance_id,
             label=env.object_label(instance_id),
             requested_fixture=fixture_name,
-            settled_location=env.locate(instance_id),
+            settled_location=where["location"],
+            located_by=where["method"],
+            location_confidence=where["confidence"],
+            settled_steps=steps,
+            at_rest=at_rest,
             pos=settled.tolist(),
             opened_door=opened,
         )
