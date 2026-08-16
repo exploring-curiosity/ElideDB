@@ -96,14 +96,24 @@ def _dtw(C, free_ends=False, lens=None, band=0.0):
         St = np.zeros((n, r), np.int64)
 
     INF = np.float64(1e18)
-    # band limits per query row, around the diagonal of the LONGEST reference
+    # band limits PER REFERENCE. The first version banded around the PADDED
+    # width r: references are right-padded to the batch maximum, so a short
+    # reference's true diagonal is much shallower than the padded one, the
+    # band marches into the padding and FORBIDS the short reference's real
+    # cells. Store bench caught it: band=0.1 collapsed P@10 0.765 -> 0.203 at
+    # every prefilter M in a store whose lengths run 16-256 steps, while
+    # band=0 matched the full scan exactly. Bounds must follow each
+    # reference's OWN diagonal, from `lens`.
     if band > 0:
-        w = max(2, int(round(band * r)))
-        slope = (r - 1) / max(q - 1, 1)
-        lo_all = np.maximum(0, (np.arange(q) * slope - w).astype(int))
-        hi_all = np.minimum(r - 1, (np.arange(q) * slope + w).astype(int))
+        w_n = np.maximum(2, np.round(band * lens).astype(np.int64))
+        slope_n = (lens - 1) / max(q - 1, 1)
+        ctr = np.arange(q)[None, :] * slope_n[:, None]
+        lo_all = np.maximum(0, np.floor(ctr - w_n[:, None])).astype(np.int64)
+        hi_all = np.minimum((lens - 1)[:, None],
+                            np.ceil(ctr + w_n[:, None])).astype(np.int64)
+        cols = np.arange(r)[None, :]
         if not free_ends:
-            D[:, hi_all[0] + 1:] = INF
+            D[cols > hi_all[:, 0:1]] = INF
     for i in range(1, q):
         c = C[:, i, :]
         diag = np.concatenate([np.full((n, 1), INF), D[:, :-1]], 1) + 2.0 * c
@@ -116,15 +126,19 @@ def _dtw(C, free_ends=False, lens=None, band=0.0):
         runS = np.where(take_d,
                         np.concatenate([np.zeros((n, 1), np.int64),
                                         St[:, :-1]], 1), St)
-        j0, j1 = (1, r) if band <= 0 else (max(1, lo_all[i]), hi_all[i] + 1)
+        if band <= 0:
+            j0, j1 = 1, r
+        else:
+            j0 = max(1, int(lo_all[:, i].min()))
+            j1 = int(hi_all[:, i].max()) + 1
         for j in range(j0, j1):                 # reference advances, query holds
             alt = run[:, j - 1] + c[:, j]
             better = alt < run[:, j]
             run[:, j] = np.where(better, alt, run[:, j])
             runS[:, j] = np.where(better, runS[:, j - 1], runS[:, j])
-        if band > 0:                            # outside the band is forbidden
-            run[:, :lo_all[i]] = INF
-            run[:, hi_all[i] + 1:] = INF
+        if band > 0:                            # outside EACH ref's band is forbidden
+            out = (cols < lo_all[:, i:i + 1]) | (cols > hi_all[:, i:i + 1])
+            run[out] = INF
         D, St = run, runS
 
     rows = np.arange(n)
