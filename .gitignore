@@ -101,3 +101,4 @@ backups/
 vendor_arctic/
 vendor_robocasa/
 vendor_robosuite/
+.venv-libero/
