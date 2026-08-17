@@ -1,0 +1,112 @@
+[
+ {
+  "clip": "../eval_logs/g1/g4_0.mp4",
+  "goal": 4,
+  "subject": "black bowl",
+  "truth": [
+   "cabinet",
+   "cupboard"
+  ],
+  "instruction": "put the bowl on top of the cabinet",
+  "success": true,
+  "ended": {
+   "bowl": "wooden cabinet",
+   "cheese": "table",
+   "bottle": "table",
+   "plate": "table"
+  },
+  "res": 512
+ },
+ {
+  "clip": "../eval_logs/g1/g1_0.mp4",
+  "goal": 1,
+  "subject": "black bowl",
+  "truth": [
+   "stove",
+   "burner",
+   "hob",
+   "cooktop"
+  ],
+  "instruction": "put the bowl on the stove",
+  "success": true,
+  "ended": {
+   "bowl": "flat stove",
+   "cheese": "table",
+   "bottle": "table",
+   "plate": "table"
+  },
+  "res": 512
+ },
+ {
+  "clip": "../eval_logs/g1/g8_0.mp4",
+  "goal": 8,
+  "subject": "black bowl",
+  "truth": [
+   "plate",
+   "dish"
+  ],
+  "instruction": "put the bowl on the plate",
+  "success": true,
+  "ended": {
+   "bowl": "plate",
+   "cheese": "table",
+   "bottle": "table",
+   "plate": "akita black bowl"
+  },
+  "res": 512
+ },
+ {
+  "clip": "../eval_logs/g1/g9_0.mp4",
+  "goal": 9,
+  "subject": "wine bottle",
+  "truth": [
+   "rack",
+   "wine rack",
+   "holder"
+  ],
+  "instruction": "put the wine bottle on the rack",
+  "success": true,
+  "ended": {
+   "bowl": "table",
+   "cheese": "table",
+   "bottle": "wine rack",
+   "plate": "table"
+  },
+  "res": 512
+ },
+ {
+  "clip": "../eval_logs/g1/g6_0.mp4",
+  "goal": 6,
+  "subject": "cream cheese",
+  "truth": [
+   "bowl"
+  ],
+  "instruction": "put the cream cheese in the bowl",
+  "success": true,
+  "ended": {
+   "bowl": "table",
+   "cheese": "akita black bowl",
+   "bottle": "akita black bowl",
+   "plate": "table"
+  },
+  "res": 512
+ },
+ {
+  "clip": "../eval_logs/g1/g2_0.mp4",
+  "goal": 2,
+  "subject": "wine bottle",
+  "truth": [
+   "cabinet",
+   "cupboard"
+  ],
+  "instruction": "put the wine bottle on top of the cabinet",
+  "success": true,
+  "ended": {
+   "bowl": "table",
+   "cheese": "table",
+   "bottle": "wooden cabinet",
+   "plate": "table"
+  },
+  "res": 512
+ }
+]

@@ -1,0 +1,26 @@
+[
+ {
+  "reader": "Moondream2      agentview ",
+  "correct": 1,
+  "n": 6,
+  "median_ms": 786.996603012085,
+  "load_s": 1.5608057975769043,
+  "distinct": 6
+ },
+ {
+  "reader": "Moondream2-crop agentview ",
+  "correct": 1,
+  "n": 6,
+  "median_ms": 1564.2480850219727,
+  "load_s": 1.0943841934204102,
+  "distinct": 5
+ },
+ {
+  "reader": "FastVLM-0.5B    agentview ",
+  "correct": 0,
+  "n": 6,
+  "median_ms": 202.73089408874512,
+  "load_s": 0.8186779022216797,
+  "distinct": 3
+ }
+]

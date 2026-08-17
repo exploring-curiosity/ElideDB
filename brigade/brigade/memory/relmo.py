@@ -138,9 +138,8 @@ def write_clip(frames, path: str, fps: int = 20) -> str:
 
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     arr = np.stack([np.asarray(f, dtype=np.uint8) for f in frames])
-    # LIBERO's agentview arrives bottom-up; flip so the stored clip is the right
-    # way round for both the encoder and any human who opens the file.
-    iio.imwrite(path, arr[:, ::-1], fps=fps, codec="libx264",
+    # Already upright: Pilot.memory_frame() un-flips MuJoCo's bottom-up render.
+    iio.imwrite(path, arr, fps=fps, codec="libx264",
                 out_pixel_format="yuv420p", plugin="pyav")
     return path
 

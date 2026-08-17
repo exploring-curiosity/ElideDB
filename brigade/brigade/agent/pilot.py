@@ -163,6 +163,30 @@ class Pilot:
         """LIBERO's own env wrapper, which owns state save/restore."""
         return self.env.envs[0]._env
 
+    # ---- the memory camera --------------------------------------------------
+
+    MEM_CAM = "agentview"
+    MEM_RES = 512
+
+    def memory_frame(self, cam: str | None = None) -> np.ndarray:
+        """A high-resolution frame for the MEMORY, not for the policy.
+
+        The clips written to memory were previously whatever the policy ate —
+        256x256, because that is what pi0.5 wants. That resolution is a property
+        of the POLICY, and the memory has no reason to inherit it: measured, a
+        reader could pick the cabinet and the wine rack off those clips but not
+        the stove, the plate, or inside-the-bowl, and end-weighted sampling made
+        no difference. Fine detail simply was not in the pixels.
+
+        This is a separate render pass at 512, costing ~5 ms, and it leaves the
+        policy's own observation pipeline completely untouched — verified, the
+        256 observations and the GL context both survive it.
+        """
+        img = self._sim().render(width=self.MEM_RES, height=self.MEM_RES,
+                                 camera_name=cam or self.MEM_CAM)
+        # MuJoCo renders bottom-up.
+        return np.asarray(img, dtype=np.uint8)[::-1]
+
     # ---- world continuity ---------------------------------------------------
 
     def save_state(self) -> np.ndarray:
@@ -360,7 +384,8 @@ class Pilot:
             if on_frame is not None:
                 on_frame(self.scene.frame_bytes(), step)
             if keep_frames and step % 2 == 0:
-                frames.append(np.asarray(obs["pixels"]["image"][0], dtype=np.uint8))
+                # The MEMORY camera, not the policy's. See memory_frame().
+                frames.append(self.memory_frame())
 
         return EpisodeResult(
             instruction=instruction, success=succeeded, steps=step,
