@@ -42,7 +42,7 @@ BEATS = [
     ("II", "libero_10",   3, "bowl into bottom drawer, then CLOSE it"),
     ("II", "libero_10",   2, "turn on the stove AND put the moka pot on it"),
     ("II", "libero_10",   9, "mug into the microwave, then CLOSE it"),
-    ("II", "libero_10",   0, "TWO objects into the basket"),
+    ("II", "libero_10",   1, "TWO objects into the basket"),
     ("II", "libero_10",   4, "two similar mugs, told apart only by language"),
 ]
 
