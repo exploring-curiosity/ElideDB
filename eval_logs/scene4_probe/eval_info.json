@@ -1,0 +1,244 @@
+{
+  "per_task": [
+    {
+      "task_group": "libero_90",
+      "task_id": 22,
+      "metrics": {
+        "sum_rewards": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "max_rewards": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "successes": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "video_paths": [
+          "eval_logs/scene4_probe/videos/libero_90_22/eval_episode_0.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_22/eval_episode_1.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_22/eval_episode_2.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_22/eval_episode_3.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_22/eval_episode_4.mp4"
+        ]
+      }
+    },
+    {
+      "task_group": "libero_90",
+      "task_id": 24,
+      "metrics": {
+        "sum_rewards": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "max_rewards": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "successes": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "video_paths": [
+          "eval_logs/scene4_probe/videos/libero_90_24/eval_episode_0.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_24/eval_episode_1.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_24/eval_episode_2.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_24/eval_episode_3.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_24/eval_episode_4.mp4"
+        ]
+      }
+    },
+    {
+      "task_group": "libero_90",
+      "task_id": 25,
+      "metrics": {
+        "sum_rewards": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max_rewards": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "successes": [
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "video_paths": [
+          "eval_logs/scene4_probe/videos/libero_90_25/eval_episode_0.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_25/eval_episode_1.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_25/eval_episode_2.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_25/eval_episode_3.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_25/eval_episode_4.mp4"
+        ]
+      }
+    },
+    {
+      "task_group": "libero_90",
+      "task_id": 26,
+      "metrics": {
+        "sum_rewards": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max_rewards": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "successes": [
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "video_paths": [
+          "eval_logs/scene4_probe/videos/libero_90_26/eval_episode_0.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_26/eval_episode_1.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_26/eval_episode_2.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_26/eval_episode_3.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_26/eval_episode_4.mp4"
+        ]
+      }
+    },
+    {
+      "task_group": "libero_90",
+      "task_id": 27,
+      "metrics": {
+        "sum_rewards": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max_rewards": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "successes": [
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "video_paths": [
+          "eval_logs/scene4_probe/videos/libero_90_27/eval_episode_0.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_27/eval_episode_1.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_27/eval_episode_2.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_27/eval_episode_3.mp4",
+          "eval_logs/scene4_probe/videos/libero_90_27/eval_episode_4.mp4"
+        ]
+      }
+    }
+  ],
+  "per_group": {
+    "libero_90": {
+      "avg_sum_reward": 0.4,
+      "avg_max_reward": 0.4,
+      "pc_success": 40.0,
+      "n_episodes": 25,
+      "video_paths": [
+        "eval_logs/scene4_probe/videos/libero_90_22/eval_episode_0.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_22/eval_episode_1.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_22/eval_episode_2.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_22/eval_episode_3.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_22/eval_episode_4.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_24/eval_episode_0.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_24/eval_episode_1.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_24/eval_episode_2.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_24/eval_episode_3.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_24/eval_episode_4.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_25/eval_episode_0.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_25/eval_episode_1.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_25/eval_episode_2.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_25/eval_episode_3.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_25/eval_episode_4.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_26/eval_episode_0.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_26/eval_episode_1.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_26/eval_episode_2.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_26/eval_episode_3.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_26/eval_episode_4.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_27/eval_episode_0.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_27/eval_episode_1.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_27/eval_episode_2.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_27/eval_episode_3.mp4",
+        "eval_logs/scene4_probe/videos/libero_90_27/eval_episode_4.mp4"
+      ]
+    }
+  },
+  "overall": {
+    "avg_sum_reward": 0.4,
+    "avg_max_reward": 0.4,
+    "pc_success": 40.0,
+    "n_episodes": 25,
+    "eval_s": 522.9164419174194,
+    "eval_ep_s": 20.916657676696776,
+    "video_paths": [
+      "eval_logs/scene4_probe/videos/libero_90_22/eval_episode_0.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_22/eval_episode_1.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_22/eval_episode_2.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_22/eval_episode_3.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_22/eval_episode_4.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_24/eval_episode_0.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_24/eval_episode_1.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_24/eval_episode_2.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_24/eval_episode_3.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_24/eval_episode_4.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_25/eval_episode_0.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_25/eval_episode_1.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_25/eval_episode_2.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_25/eval_episode_3.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_25/eval_episode_4.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_26/eval_episode_0.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_26/eval_episode_1.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_26/eval_episode_2.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_26/eval_episode_3.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_26/eval_episode_4.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_27/eval_episode_0.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_27/eval_episode_1.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_27/eval_episode_2.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_27/eval_episode_3.mp4",
+      "eval_logs/scene4_probe/videos/libero_90_27/eval_episode_4.mp4"
+    ]
+  }
+}

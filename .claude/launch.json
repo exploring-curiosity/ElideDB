@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "brigade",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["brigade/serve.py", "--host", "127.0.0.1", "--port", "8080"],
-      "port": 8080
+      "name": "brigade-ui",
+      "runtimeExecutable": ".venv-libero/bin/python",
+      "runtimeArgs": ["-u", "brigade/uidev.py"],
+      "port": 8099
     }
   ]
 }

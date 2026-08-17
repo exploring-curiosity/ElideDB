@@ -289,7 +289,7 @@ class Database:
 
     def drop_all(self) -> None:
         """Tear the memory down. Used by tests; never by the agent."""
-        for t in ("decisions", "tasks", "skill_stats", "norms",
+        for t in ("decisions", "tasks", "skill_stats", "norm_evidence", "norms",
                   "object_beliefs", "relmo_recordings", "events"):
             self.execute(f"DROP TABLE IF EXISTS {t} CASCADE")
 

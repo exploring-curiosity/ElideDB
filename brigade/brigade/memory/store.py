@@ -176,42 +176,74 @@ class Memory:
 
     @retry_serializable
     def learn_norm(self, label: str, location: str) -> dict:
-        """Reinforce 'things of this kind live here' from one more episode.
+        """Count one more episode of `label` ending up at `location`.
+
+        The home is then the place with the most episodes, and confidence is
+        the share of this label's episodes that went there — so a norm says
+        "the bowl went to the cabinet 3 times out of 4" rather than "the last
+        person to touch the bowl put it on the plate".
+
+        That distinction is not academic: with last-write-wins, one contrary
+        episode out of four flipped the norm outright and "put the bowl away"
+        resolved to the wrong place. Measured, then fixed here.
 
         An instructed norm is never overwritten by observation — being told
-        outranks having noticed, and it must keep outranking it or act 3 would
-        silently decay back to what the robot used to do.
+        outranks having noticed, and it must keep outranking it, or a norm the
+        human set would silently decay back to whatever the robot used to do.
         """
+        self.db.execute(
+            """INSERT INTO norm_evidence (kitchen_id, label, location, n_episodes)
+               VALUES (%s,%s,%s,1)
+               ON CONFLICT (kitchen_id, label, location) DO UPDATE SET
+                 n_episodes = norm_evidence.n_episodes + 1, updated_at = now()""",
+            (self.kitchen, label, location),
+        )
         existing = self.home_for(label)
-        if existing and existing["source"] == "instructed" and existing["home_location"] != location:
+        if existing and existing["source"] == "instructed":
             return existing
-        if existing and existing["home_location"] == location:
-            self.db.execute(
-                """UPDATE norms SET n_episodes = n_episodes + 1,
-                     confidence = LEAST(0.99, confidence + (1 - confidence) * 0.5),
-                     updated_at = now()
-                   WHERE kitchen_id = %s AND label = %s""",
-                (self.kitchen, label),
-            )
-        else:
-            self.db.execute(
-                """INSERT INTO norms (kitchen_id, label, home_location, confidence,
-                                      n_episodes, source)
-                   VALUES (%s,%s,%s,%s,1,'learned')
-                   ON CONFLICT (kitchen_id, label) DO UPDATE SET
-                     home_location = EXCLUDED.home_location, confidence = 0.5,
-                     n_episodes = 1, source = 'learned', updated_at = now()""",
-                (self.kitchen, label, location, 0.5),
-            )
+
+        rows = self.db.query(
+            """SELECT location, n_episodes FROM norm_evidence
+               WHERE kitchen_id = %s AND label = %s
+               ORDER BY n_episodes DESC, updated_at DESC""",
+            (self.kitchen, label),
+        )
+        best = rows[0]
+        total = sum(int(r["n_episodes"]) for r in rows)
+        # Share of this label's episodes that went to the winning place. A tie
+        # lands at 0.5, which is exactly the right amount of confidence to have.
+        confidence = float(best["n_episodes"]) / total
+        self.db.execute(
+            """INSERT INTO norms (kitchen_id, label, home_location, confidence,
+                                  n_episodes, n_total, source)
+               VALUES (%s,%s,%s,%s,%s,%s,'learned')
+               ON CONFLICT (kitchen_id, label) DO UPDATE SET
+                 home_location = EXCLUDED.home_location,
+                 confidence = EXCLUDED.confidence,
+                 n_episodes = EXCLUDED.n_episodes, n_total = EXCLUDED.n_total,
+                 source = 'learned', updated_at = now()""",
+            (self.kitchen, label, best["location"], confidence,
+             int(best["n_episodes"]), total),
+        )
         return self.home_for(label)
+
+    def norm_evidence(self, label: str) -> list[dict]:
+        """Every place this label has ended up, with counts. The audit trail
+        behind a norm — a claim about habit should show its tally."""
+        return self.db.query(
+            """SELECT location, n_episodes FROM norm_evidence
+               WHERE kitchen_id = %s AND label = %s
+               ORDER BY n_episodes DESC""",
+            (self.kitchen, label),
+        )
 
     @retry_serializable
     def instruct_norm(self, label: str, location: str) -> dict:
         """A human said where these go. Outranks anything learned."""
         self.db.execute(
             """INSERT INTO norms (kitchen_id, label, home_location, confidence,
-                                  n_episodes, source)
-               VALUES (%s,%s,%s,0.95,1,'instructed')
+                                  n_episodes, n_total, source)
+               VALUES (%s,%s,%s,0.95,1,1,'instructed')
                ON CONFLICT (kitchen_id, label) DO UPDATE SET
                  home_location = EXCLUDED.home_location, confidence = 0.95,
                  source = 'instructed', updated_at = now()""",
@@ -394,5 +426,6 @@ class Memory:
 
     def wipe(self) -> None:
         """Forget everything. Demo reset; never called by the agent."""
-        for t in ("decisions", "tasks", "skill_stats", "norms", "object_beliefs", "events"):
+        for t in ("decisions", "tasks", "skill_stats", "norm_evidence", "norms",
+                  "object_beliefs", "events"):
             self.db.execute(f"DELETE FROM {t}")

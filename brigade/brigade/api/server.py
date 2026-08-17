@@ -1,395 +1,239 @@
-"""The Pass — Brigade's operator console.
+"""The dashboard: a web thread reading a sim that owns the main thread.
 
-An HTTP surface over the running kitchen so a human can watch it and poke it.
-Runs in a background thread; the simulation owns the main thread (see
-world/sim.py for why that is not negotiable on macOS).
+The thread split is not a style choice. MuJoCo on macOS renders through CGL and
+a GL context belongs to the thread that created it, so the policy's camera
+observations must be produced on the process's main thread. Uvicorn therefore
+runs in a daemon thread and the simulation keeps the main one — the inverse of
+the usual arrangement, and the reason `run.py` is the entry point rather than
+`uvicorn brigade.api.server:app`.
 
-Every endpoint reaches the world through `runner.call(...)`. None of them touch
-`runner.env`. Frames are the one exception and they are safe: `runner.frame()`
-returns a copy taken under a lock by the sim thread.
+Between the two sits `Live`, one lock and a few slots. The sim never writes to a
+socket and never awaits anything: it drops the latest transform buffer into a
+slot and moves on. A broadcast task in the event loop samples that slot at its
+own rate. Consequences worth stating, because they are the design:
+
+  * a slow or absent browser cannot slow the robot down — frames are dropped,
+    never queued, so the viewer shows the present rather than a backlog;
+  * the sim's clock is the robot's control loop (57 ms/step measured), and the
+    viewer's is 30 Hz, and neither has to know about the other.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import os
+import queue
 import threading
 import time
+from collections import deque
+from dataclasses import dataclass, field
+from pathlib import Path
 
-import cv2
-import numpy as np
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, Response, StreamingResponse
-from pydantic import BaseModel
-
-from ..config import CFG
-from ..world.sim import SimRunner
-from ..world.spawn import move_secretly, teleport
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 log = logging.getLogger("brigade.api")
-
-_STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-
-
-class DropRequest(BaseModel):
-    instance_id: str
-    fixture: str | None = None
-    secret: bool = False
+STATIC = Path(__file__).parent / "static"
 
 
-class DoorRequest(BaseModel):
-    fixture: str
-    action: str  # open | close
+def _dumps(obj) -> str:
+    """JSON for the wire, with `default=str`.
 
-
-class JogRequest(BaseModel):
-    axis: str  # base_x | base_y | base_yaw | arm_x | arm_y | arm_z | gripper
-    amount: float = 1.0
-    steps: int = 12
-
-
-# Which slice of the 12-d action vector each control drives.
-# Verified layout: arm 0:6, gripper 6:7, base 7:10, torso 10, mode 11.
-_JOG_AXES = {
-    "base_x": (7, 1.0),
-    "base_y": (8, 1.0),
-    "base_yaw": (9, 1.0),
-    "arm_x": (0, 1.0),
-    "arm_y": (1, 1.0),
-    "arm_z": (2, 1.0),
-    "gripper": (6, 1.0),
-}
-
-
-class InstructRequest(BaseModel):
-    """A human telling the robot something. Two shapes only.
-
-    A rule ("bowls go in the cabinet") writes a NORM and changes future
-    unprompted behaviour. A job ("put the bowl away") writes a high-priority
-    TASK. Both enter the same queue the robot writes to itself.
+    Rows come back from psycopg2 with real `datetime` and `Decimal` values in
+    them — a norm carries `updated_at` — and one of those anywhere inside a
+    status frame raises mid-send, killing the websocket and freezing the whole
+    dashboard for a field nothing was going to display anyway.
     """
-
-    text: str
-    label: str | None = None
-    location: str | None = None
-    instance_id: str | None = None
+    return json.dumps(obj, default=str)
 
 
-def create_app(runner: SimRunner, memory=None, agent=None) -> FastAPI:
-    app = FastAPI(title="Brigade — The Pass", docs_url="/api/docs")
-    started = time.time()
+@dataclass
+class Live:
+    """Everything the web thread may look at. Guarded by one lock."""
 
-    # ---- page ------------------------------------------------------------
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    frame: bytes | None = None
+    seq: int = 0
+    scene_header: dict | None = None
+    scene_blob: bytes = b""
+    scene_epoch: int = 0            # bumped when the geometry itself changes
+    status: dict = field(default_factory=lambda: dict(state="booting", detail=""))
+    feed: deque = field(default_factory=lambda: deque(maxlen=200))
+    ledger: list = field(default_factory=list)
+    commands: "queue.Queue[dict]" = field(default_factory=queue.Queue)
+
+    # ---- written by the sim thread -----------------------------------------
+
+    def publish_frame(self, buf: bytes) -> None:
+        with self.lock:
+            self.frame = buf
+            self.seq += 1
+
+    def publish_scene(self, header: dict, blob: bytes) -> None:
+        with self.lock:
+            self.scene_header, self.scene_blob = header, blob
+            self.scene_epoch += 1
+            self.frame = None
+
+    def set_status(self, state: str, detail: str = "", **extra) -> None:
+        with self.lock:
+            self.status = dict(state=state, detail=detail, ts=time.time(), **extra)
+
+    def say(self, kind: str, text: str, **extra) -> None:
+        """One line for the on-screen feed. This is the narration a viewer reads."""
+        with self.lock:
+            self.feed.append(dict(ts=time.time(), kind=kind, text=text, **extra))
+
+    def record(self, row: dict) -> None:
+        with self.lock:
+            self.ledger.append(row)
+
+    # ---- read by the web thread --------------------------------------------
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            return dict(status=self.status, seq=self.seq,
+                        scene_epoch=self.scene_epoch,
+                        feed=list(self.feed)[-60:], ledger=list(self.ledger))
+
+
+LIVE = Live()
+
+
+def create_app(live: Live, memory_getter) -> FastAPI:
+    app = FastAPI(title="Brigade")
 
     @app.get("/", response_class=HTMLResponse)
     def index():
-        with open(os.path.join(_STATIC, "index.html")) as fh:
-            return fh.read()
+        return FileResponse(STATIC / "index.html")
 
-    # ---- world -----------------------------------------------------------
+    app.mount("/vendor", StaticFiles(directory=STATIC / "vendor"), name="vendor")
 
-    def _require_running():
-        if not runner.running:
-            raise HTTPException(503, "kitchen is not running")
+    # ---- the scene ---------------------------------------------------------
 
-    @app.get("/api/state")
-    def state():
-        if not runner.running:
-            return dict(ready=False, status=runner.status(), uptime_s=time.time() - started)
-        snap = runner.call(lambda env: env.world_snapshot())
-        meta = runner.call(lambda env: env.get_ep_meta()["brigade_fixtures"])
-        return dict(
-            ready=True,
-            uptime_s=round(time.time() - started, 1),
-            status=runner.status(),
-            fixtures=meta,
-            cameras=list(CFG.world.cameras),
-            objects=snap["objects"],
-            doors=snap["doors"],
-            kitchen_id=CFG.world.kitchen_id,
-            robot_id=CFG.world.robot_id,
-        )
+    @app.get("/api/scene")
+    def scene():
+        with live.lock:
+            if live.scene_header is None:
+                return JSONResponse(dict(ready=False), status_code=503)
+            return JSONResponse(dict(ready=True, epoch=live.scene_epoch, **live.scene_header))
 
-    @app.get("/api/targets")
-    def targets():
-        _require_running()
-        return runner.call(lambda env: env.placement_targets())
+    @app.get("/api/scene.bin")
+    def scene_bin():
+        with live.lock:
+            blob = live.scene_blob
+        return Response(blob, media_type="application/octet-stream")
 
-    # ---- poke the world --------------------------------------------------
+    # ---- live feed ---------------------------------------------------------
 
-    @app.post("/api/drop")
-    def drop(req: DropRequest):
-        _require_running()
-        fixture = req.fixture or runner.call(lambda env: env.counter.name)
-        fn = move_secretly if req.secret else teleport
+    @app.websocket("/ws")
+    async def ws(sock: WebSocket):
+        await sock.accept()
+        last_seq, last_epoch, last_status = -1, -1, 0.0
         try:
-            return fn(runner, req.instance_id, fixture)
-        except KeyError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            while True:
+                with live.lock:
+                    seq, frame = live.seq, live.frame
+                    epoch = live.scene_epoch
+                if epoch != last_epoch:
+                    # Geometry changed under the client; tell it to refetch
+                    # rather than drawing new transforms onto the old scene.
+                    await sock.send_text(_dumps(dict(t="scene", epoch=epoch)))
+                    last_epoch, last_seq = epoch, -1
+                elif frame is not None and seq != last_seq:
+                    await sock.send_bytes(frame)
+                    last_seq = seq
+                now = time.time()
+                if now - last_status > 0.25:
+                    await sock.send_text(_dumps(dict(t="status", **live.snapshot())))
+                    last_status = now
+                await asyncio.sleep(1 / 30)
+        except (WebSocketDisconnect, RuntimeError):
+            return
 
-    @app.post("/api/door")
-    def door(req: DoorRequest):
-        """Ask the ROBOT to open/close a door. There is no state-write path.
+    # ---- commands ----------------------------------------------------------
 
-        Doors move when the gripper moves them, so this enqueues a high-priority
-        task for the agent rather than touching the hinge. The old direct
-        endpoint was removed deliberately — a door swinging with nobody near it
-        is the fakery this project was told to remove.
-        """
-        _require_running()
-        if req.action not in ("open", "close"):
-            raise HTTPException(400, "action must be open or close")
-        if memory is None:
-            raise HTTPException(503, "memory offline — the robot cannot take jobs")
-        tid = memory.enqueue(
-            f"{req.action} the {req.fixture}", origin="user", priority=8,
-            subject=req.fixture,
-            payload=dict(door=req.fixture, action=req.action),
-        )
-        return dict(kind="task", task_id=tid, note="queued for the robot to do by hand")
+    @app.post("/api/command")
+    async def command(body: dict):
+        req = (body.get("request") or "").strip()
+        if not req:
+            return JSONResponse(dict(error="empty request"), status_code=400)
+        live.commands.put(dict(request=req, use_memory=bool(body.get("use_memory", True))))
+        return dict(queued=True, request=req)
 
-    @app.post("/api/jog")
-    def jog(req: JogRequest):
-        """Manual teleop, so a human can confirm the robot really is controllable.
+    @app.post("/api/teach")
+    async def teach(body: dict):
+        """A human states where something belongs. Outranks anything learned."""
+        mem = memory_getter()
+        label, place = (body.get("label") or "").strip(), (body.get("location") or "").strip()
+        if not (label and place):
+            return JSONResponse(dict(error="label and location required"), status_code=400)
+        norm = mem.instruct_norm(label, place)
+        live.say("memory", f"told: {label} belongs in {place}")
+        return dict(norm=dict(norm) if norm else None)
 
-        Not a skill — skills are built on top of this same submit() path, but
-        this one exists purely so the console can prove the loop is live.
-        """
-        _require_running()
-        if req.axis not in _JOG_AXES:
-            raise HTTPException(400, f"axis must be one of {sorted(_JOG_AXES)}")
-        idx, scale = _JOG_AXES[req.axis]
-        amount = float(np.clip(req.amount, -1.0, 1.0)) * scale
-        steps = int(np.clip(req.steps, 1, 60))
-
-        def controller(env):
-            a = np.zeros(env.action_dim)
-            a[idx] = amount
-            # The base needs its control mode selected; mode is the last slot.
-            if req.axis.startswith("base"):
-                a[11] = -1.0
-            for _ in range(steps):
-                yield a
-
-        res = runner.run_skill("jog", controller, timeout_s=15.0, subject=req.axis)
-        return dict(ok=res.ok, seconds=round(res.seconds, 2), detail=res.detail, axis=req.axis)
-
-    # ---- vision ----------------------------------------------------------
-
-    def _jpeg(frame: np.ndarray, quality: int = 80) -> bytes:
-        ok, buf = cv2.imencode(
-            ".jpg", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR), [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-        )
-        if not ok:
-            raise RuntimeError("jpeg encode failed")
-        return buf.tobytes()
-
-    @app.get("/snapshot/{camera}")
-    def snapshot(camera: str):
-        frame = runner.frame(camera)
-        if frame is None:
-            raise HTTPException(404, f"no frame for {camera}")
-        return Response(_jpeg(frame), media_type="image/jpeg")
-
-    # ---- the 3D view -----------------------------------------------------
-
-    class ViewRequest(BaseModel):
-        azimuth: float | None = None
-        elevation: float | None = None
-        distance: float | None = None
-        lookat_x: float | None = None
-        lookat_y: float | None = None
-        lookat_z: float | None = None
-
-    @app.post("/api/view")
-    def set_view(req: ViewRequest):
-        _require_running()
-        return runner.set_view(**req.model_dump())
-
-    @app.get("/api/view")
-    def get_view():
-        return runner.view()
-
-    @app.get("/stream3d")
-    def stream3d(width: int = 0, height: int = 0):
-        """MJPEG from the free orbit camera — the whole kitchen in 3D.
-
-        Rendered on demand rather than every control step: this is a second
-        render pass and there is no reason to pay for it when nobody is looking.
-        Capped at 12 fps so dragging the view can never starve the 20 Hz control
-        loop it shares a thread with.
-
-        `width`/`height` resize the RESULT. They do not resize the renderer —
-        rebuilding it would destroy the GL context and permanently break every
-        later render.
-        """
-        def gen():
-            period = 1.0 / 12.0
-            while runner.running:
-                t0 = time.time()
-                try:
-                    frame = runner.render_free()
-                except Exception:
-                    break
-                if frame is not None:
-                    if width and height and (frame.shape[1], frame.shape[0]) != (width, height):
-                        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
-                    payload = _jpeg(frame, quality=72)
-                    yield (
-                        b"--frame\r\nContent-Type: image/jpeg\r\n"
-                        b"Content-Length: " + str(len(payload)).encode() + b"\r\n\r\n"
-                        + payload + b"\r\n"
-                    )
-                slack = period - (time.time() - t0)
-                if slack > 0:
-                    time.sleep(slack)
-
-        return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
-
-    @app.get("/stream/{camera}")
-    def stream(camera: str):
-        """MJPEG. Deliberately capped below the control rate — the console must
-        never be the reason the kitchen misses a control step."""
-        if camera not in CFG.world.cameras:
-            raise HTTPException(404, f"unknown camera {camera}")
-
-        def gen():
-            period = 1.0 / 15.0
-            while runner.running:
-                t0 = time.time()
-                frame = runner.frame(camera)
-                if frame is not None:
-                    payload = _jpeg(frame)
-                    yield (
-                        b"--frame\r\nContent-Type: image/jpeg\r\n"
-                        b"Content-Length: " + str(len(payload)).encode() + b"\r\n\r\n"
-                        + payload + b"\r\n"
-                    )
-                slack = period - (time.time() - t0)
-                if slack > 0:
-                    time.sleep(slack)
-
-        return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
-
-    # ---- events ----------------------------------------------------------
-
-    # ---- the agent -------------------------------------------------------
-
-    @app.get("/api/agent")
-    def agent_state():
-        """What the robot is doing and why — the console's whole point."""
-        if agent is None:
-            return dict(present=False, feed=[], status=dict(running=False))
-        return dict(present=True, status=agent.status(), feed=agent.feed(50))
-
-    @app.post("/api/agent/pause")
-    def agent_pause(on: bool = True):
-        if agent is None:
-            raise HTTPException(503, "no agent")
-        agent.paused = bool(on)
-        return dict(paused=agent.paused)
+    # ---- what is in the memory --------------------------------------------
 
     @app.get("/api/memory")
-    def memory_state():
-        if memory is None:
-            raise HTTPException(503, "memory offline")
+    def memory():
+        mem = memory_getter()
         return dict(
-            stats=memory.stats(),
-            beliefs=memory.beliefs(),
-            norms=memory.norms(),
-            tasks=memory.task_board(12),
-            decisions=memory.decision_log(8),
-            events=memory.recent(14),
-            skills=memory.skill_table(),
+            stats=mem.stats(),
+            norms=[dict(r) for r in mem.norms()],
+            events=[_jsonable(r) for r in mem.recent(24)],
+            decisions=[_jsonable(r) for r in mem.decision_log(12)],
         )
 
-    @app.get("/api/memory/recall")
-    def memory_recall(q: str, k: int = 5):
-        """Search the robot's memory the way the robot does."""
-        if memory is None:
-            raise HTTPException(503, "memory offline")
-        t0 = time.time()
-        hits = memory.recall(q, k=k, floor=0.0)
-        return dict(
-            query=q,
-            latency_ms=round((time.time() - t0) * 1000, 1),
-            hits=[dict(score=round(h.score, 3), text=h.text, kind=h.kind,
-                       outcome=h.outcome, subject=h.subject) for h in hits],
-        )
+    @app.post("/api/recall")
+    def recall(body: dict):
+        """Run a recall by hand — the search box over the robot's own past."""
+        mem = memory_getter()
+        q = (body.get("query") or "").strip()
+        t0 = time.perf_counter()
+        hits = mem.recall(q, k=int(body.get("k", 8)), floor=0.0)
+        ms = (time.perf_counter() - t0) * 1e3
+        return dict(query=q, latency_ms=round(ms, 2), hits=[
+            dict(id=h.id, text=h.text, score=round(h.score, 4),
+                 outcome=h.outcome, subject=h.subject, kind=h.kind) for h in hits])
 
-    @app.post("/api/instruct")
-    def instruct(req: InstructRequest):
-        """Give the robot a rule or a job. Both are memory writes."""
-        if memory is None:
-            raise HTTPException(503, "memory offline")
-        if req.label and req.location:
-            norm = memory.instruct_norm(req.label, req.location)
-            return dict(kind="norm", label=req.label, location=req.location,
-                        confidence=norm["confidence"], source=norm["source"])
-        if req.instance_id:
-            label = runner.call(lambda env: env.object_label(req.instance_id))
-            tid = memory.enqueue(req.text or f"put the {label} away", origin="user",
-                                 priority=9, subject=req.instance_id,
-                                 payload=dict(instance_id=req.instance_id, label=label))
-            memory.remember(f"asked to: {req.text}", kind="instruction",
-                            subject=req.instance_id)
-            return dict(kind="task", task_id=tid, priority=9)
-        raise HTTPException(400, "give either (label, location) for a rule, or instance_id")
+    @app.get("/api/similar")
+    def similar(recording_id: str = "", k: int = 5):
+        """RelMo: the same question asked of video instead of text."""
+        from ..memory.relmo import similar_recordings
+
+        return dict(hits=similar_recordings(memory_getter().db, recording_id, k))
 
     @app.post("/api/forget")
     def forget():
-        """Wipe memory so the cold-start behaviour can be shown again."""
-        if memory is None:
-            raise HTTPException(503, "memory offline")
-        memory.wipe()
-        if agent is not None:
-            agent._known_locations.clear()
-        return dict(ok=True, stats=memory.stats())
-
-    @app.get("/api/health")
-    def health():
-        return dict(
-            sim=runner.status(),
-            memory=_memory_health(memory),
-            agent=(agent.status() if agent is not None else dict(running=False)),
-            uptime_s=round(time.time() - started, 1),
-        )
+        memory_getter().wipe()
+        live.say("memory", "memory wiped — the robot has no history")
+        return dict(ok=True)
 
     return app
 
 
-def _memory_health(memory=None) -> dict:
-    """Report the memory layer honestly, including when it is absent.
-
-    The console shows this in red when it is down, because "the agent stops when
-    its memory stops" is the claim being made and it should be visible, not
-    hidden behind a fallback.
-    """
-    try:
-        from ..memory.db import DB
-
-        ok = DB.healthy()
-        out = dict(connected=ok, dsn=DB._safe_dsn())
-        if ok:
-            out["flavor"] = DB.flavor
-            out["native_vectors"] = DB.supports_vector()
-        return out
-    except Exception as exc:
-        return dict(connected=False, error=str(exc)[:200])
+def _jsonable(row: dict) -> dict:
+    out = {}
+    for k, v in row.items():
+        out[k] = v.isoformat() if hasattr(v, "isoformat") else (
+            str(v) if not isinstance(v, (str, int, float, bool, type(None), list, dict)) else v)
+    return out
 
 
-def serve_in_background(runner: SimRunner, host: str = "127.0.0.1", port: int = 8080,
-                        memory=None, agent=None) -> threading.Thread:
-    """Start uvicorn on a worker thread and return it.
+def serve_in_thread(app: FastAPI, host: str = "0.0.0.0", port: int = 8099) -> threading.Thread:
+    """Run uvicorn off the main thread, which the simulator needs for itself.
 
-    The main thread must go on to run the simulation loop.
+    Bound to 0.0.0.0 rather than 127.0.0.1 because `localhost` resolves to ::1
+    first on macOS: an IPv4-only bind then refuses the browser's connection
+    while `lsof` cheerfully shows the port listening, which reads as "the server
+    crashed" and is not that at all.
     """
     import uvicorn
 
-    app = create_app(runner, memory=memory, agent=agent)
-    config = uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False)
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, name="brigade-http", daemon=True)
-    thread.start()
-    return thread
+    cfg = uvicorn.Config(app, host=host, port=port, log_level="warning", ws_ping_interval=None)
+    server = uvicorn.Server(cfg)
+    th = threading.Thread(target=server.run, daemon=True, name="brigade-web")
+    th.start()
+    return th

@@ -59,13 +59,31 @@ CREATE TABLE IF NOT EXISTS object_beliefs (
 -- PROCEDURAL (1): where things BELONG. The difference between this and
 -- object_beliefs is the whole point of act 3 — a belief is "the bowl is on the
 -- counter", a norm is "bowls go in the cabinet". Norms outlive the objects.
+--
+-- TWO tables, not one, and the reason is a bug that was measured rather than
+-- imagined. With a single row per label, "where does this belong" was whatever
+-- happened most RECENTLY: three episodes of the bowl going on the cabinet
+-- followed by one of it going on the plate left the norm reading "plate,
+-- 1 episode", and "put the bowl away" then resolved to the plate. A habit is a
+-- frequency, not a most-recent-write, so the evidence is tallied per place and
+-- the norm is the argmax over it.
 -- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS norm_evidence (
+    kitchen_id    STRING NOT NULL,
+    label         STRING NOT NULL,
+    location      STRING NOT NULL,
+    n_episodes    INT NOT NULL DEFAULT 0,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (kitchen_id, label, location)
+);
+
 CREATE TABLE IF NOT EXISTS norms (
     kitchen_id    STRING NOT NULL,
     label         STRING NOT NULL,
     home_location STRING NOT NULL,
     confidence    FLOAT NOT NULL DEFAULT 0.5,
     n_episodes    INT NOT NULL DEFAULT 1,
+    n_total       INT NOT NULL DEFAULT 1,   -- episodes about this label anywhere
     source        STRING NOT NULL DEFAULT 'learned',   -- learned|instructed
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (kitchen_id, label)

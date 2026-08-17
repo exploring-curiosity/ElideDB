@@ -1,0 +1,142 @@
+{
+ "rows": [
+  {
+   "memory": true,
+   "ok": true,
+   "instruction": "put the bowl on top of the cabinet",
+   "seconds": 8.26,
+   "goal": "put the bowl on top of the cabinet",
+   "request": "put the bowl away"
+  },
+  {
+   "memory": true,
+   "ok": true,
+   "instruction": "put the bowl on top of the cabinet",
+   "seconds": 6.85,
+   "goal": "put the bowl on top of the cabinet",
+   "request": "put the bowl away"
+  },
+  {
+   "memory": true,
+   "ok": true,
+   "instruction": "put the bowl on top of the cabinet",
+   "seconds": 5.73,
+   "goal": "put the bowl on top of the cabinet",
+   "request": "put the bowl away"
+  },
+  {
+   "memory": false,
+   "ok": false,
+   "instruction": "put the bowl away",
+   "seconds": 17.99,
+   "goal": "put the bowl on top of the cabinet",
+   "request": "put the bowl away"
+  },
+  {
+   "memory": false,
+   "ok": false,
+   "instruction": "put the bowl away",
+   "seconds": 20.98,
+   "goal": "put the bowl on top of the cabinet",
+   "request": "put the bowl away"
+  },
+  {
+   "memory": false,
+   "ok": false,
+   "instruction": "put the bowl away",
+   "seconds": 21.02,
+   "goal": "put the bowl on top of the cabinet",
+   "request": "put the bowl away"
+  },
+  {
+   "memory": true,
+   "ok": true,
+   "instruction": "put the wine bottle on the rack",
+   "seconds": 11.77,
+   "goal": "put the wine bottle on the rack",
+   "request": "put the bottle away"
+  },
+  {
+   "memory": true,
+   "ok": true,
+   "instruction": "put the wine bottle on the rack",
+   "seconds": 10.51,
+   "goal": "put the wine bottle on the rack",
+   "request": "put the bottle away"
+  },
+  {
+   "memory": true,
+   "ok": true,
+   "instruction": "put the wine bottle on the rack",
+   "seconds": 8.59,
+   "goal": "put the wine bottle on the rack",
+   "request": "put the bottle away"
+  },
+  {
+   "memory": false,
+   "ok": false,
+   "instruction": "put the bottle away",
+   "seconds": 18.41,
+   "goal": "put the wine bottle on the rack",
+   "request": "put the bottle away"
+  },
+  {
+   "memory": false,
+   "ok": false,
+   "instruction": "put the bottle away",
+   "seconds": 22.76,
+   "goal": "put the wine bottle on the rack",
+   "request": "put the bottle away"
+  },
+  {
+   "memory": false,
+   "ok": false,
+   "instruction": "put the bottle away",
+   "seconds": 24.95,
+   "goal": "put the wine bottle on the rack",
+   "request": "put the bottle away"
+  }
+ ],
+ "norms": [
+  {
+   "kitchen_id": "kitchen-1",
+   "label": "bottle",
+   "home_location": "rack",
+   "confidence": 1.0,
+   "n_episodes": 5,
+   "n_total": 5,
+   "source": "learned",
+   "updated_at": "2026-08-16 23:33:46.722971-04:00"
+  },
+  {
+   "kitchen_id": "kitchen-1",
+   "label": "bowl",
+   "home_location": "cabinet",
+   "confidence": 0.8571428571428571,
+   "n_episodes": 6,
+   "n_total": 7,
+   "source": "learned",
+   "updated_at": "2026-08-16 23:32:11.944885-04:00"
+  },
+  {
+   "kitchen_id": "kitchen-1",
+   "label": "cheese",
+   "home_location": "bowl",
+   "confidence": 1.0,
+   "n_episodes": 1,
+   "n_total": 1,
+   "source": "learned",
+   "updated_at": "2026-08-16 23:31:42.175281-04:00"
+  }
+ ],
+ "stats": {
+  "events": 14,
+  "beliefs": 0,
+  "norms": 3,
+  "tasks": 12,
+  "decisions": 12,
+  "skills": 0,
+  "flavor": "postgres",
+  "native_vectors": true
+ }
+}

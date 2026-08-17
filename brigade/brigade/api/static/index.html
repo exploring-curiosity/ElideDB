@@ -1,445 +1,535 @@
-<!doctype html>
-<html lang="en">
-<head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BRIGADE · THE PASS</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<title>BRIGADE — memory-driven robot control</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<!--
+  The 3D view is not a video feed. The browser holds the simulator's own
+  geometry and redraws it from `geom_xpos`/`geom_xmat` — the arrays mj_step
+  writes — so orbiting is free, and what you see moving is the physics rather
+  than a recording of it.
+-->
+<script type="importmap">
+{ "imports": { "three": "/vendor/three.module.js" } }
+</script>
+
 <style>
 :root{
-  --ink:#0B0B0C; --ink-2:#131316; --ink-3:#1B1B20; --rule:#2A2A31;
-  --steel:#8A97A6; --steel-dim:#5D6875; --bone:#E8E4DC;
-  --heat:#FF8A1E; --heat-dim:#8A4B10; --fire:#FF4438; --cool:#5EC8C0; --moss:#8FBF6A;
-  --shadow:0 18px 40px -18px rgba(0,0,0,.9);
-  --mono:"JetBrains Mono","SF Mono",Menlo,ui-monospace,monospace;
-  --sign:"Barlow Condensed","Avenir Next Condensed",sans-serif;
+  --ink:#07070a; --ink2:#0d0e13; --panel:#101219; --line:#1e2130;
+  --amber:#ff9124; --amber-dim:#7a4a15; --phos:#5fe08a;
+  --coral:#ff5a49; --ice:#8fb3d9; --text:#e8e6e1; --mute:#6b7280;
+  --mono:"SF Mono",Menlo,"Roboto Mono",monospace;
+  --disp:Futura,"Avenir Next Condensed","Gill Sans",sans-serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
-body{background:var(--ink);color:var(--bone);font-family:var(--mono);font-size:13px;
-  -webkit-font-smoothing:antialiased;overflow:hidden}
-body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:999;opacity:.5;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='.045'/%3E%3C/svg%3E")}
-
-.shell{display:grid;grid-template-rows:auto 1fr auto;height:100vh}
-
-/* header */
-header{display:flex;align-items:stretch;border-bottom:1px solid var(--rule);
-  background:linear-gradient(180deg,var(--ink-2),var(--ink))}
-.brand{padding:12px 20px 10px;border-right:1px solid var(--rule);display:flex;align-items:baseline;gap:11px}
-.brand h1{font-family:var(--sign);font-weight:700;font-size:27px;letter-spacing:.14em;
-  text-transform:uppercase;line-height:1}
-.brand .sub{font-family:var(--sign);font-size:14px;letter-spacing:.32em;text-transform:uppercase;
-  color:var(--heat);font-weight:600}
-.slug{display:flex;align-items:center;gap:22px;padding:0 20px;flex:1;font-size:10px;
-  letter-spacing:.1em;text-transform:uppercase;color:var(--steel-dim)}
-.slug b{display:block;color:var(--steel);font-weight:500;letter-spacing:.05em;font-size:12px}
-.pills{display:flex;gap:8px;align-items:center;padding:0 18px;border-left:1px solid var(--rule)}
-.pill{display:inline-flex;align-items:center;gap:7px;padding:5px 10px;border:1px solid var(--rule);
-  border-radius:2px;background:var(--ink-3);font-size:10px;letter-spacing:.1em;
-  text-transform:uppercase;color:var(--steel);white-space:nowrap}
-.dot{width:7px;height:7px;border-radius:50%;background:var(--steel-dim);flex:none}
-.dot.on{background:var(--heat);box-shadow:0 0 0 3px rgba(255,138,30,.16);animation:pulse 2s ease-in-out infinite}
-.dot.good{background:var(--moss);box-shadow:0 0 0 3px rgba(143,191,106,.16)}
-.dot.bad{background:var(--fire);box-shadow:0 0 0 3px rgba(255,68,56,.16)}
-@keyframes pulse{50%{opacity:.45}}
-
-/* body: 3D | rail */
-main{display:grid;grid-template-columns:1fr 392px;min-height:0}
-.stage{display:grid;grid-template-rows:1fr auto;min-height:0;border-right:1px solid var(--rule)}
-
-.viewwrap{position:relative;background:#000;overflow:hidden;min-height:340px}
-#view3d{width:100%;height:100%;object-fit:contain;display:block;cursor:grab}
-#view3d.drag{cursor:grabbing}
-.tag{position:absolute;z-index:4;font-family:var(--sign);font-size:13px;letter-spacing:.2em;
-  text-transform:uppercase;color:var(--bone);text-shadow:0 1px 6px #000;display:flex;align-items:center;gap:8px}
-.tag::before{content:"";width:5px;height:13px;background:var(--heat)}
-.tag.tl{top:10px;left:12px}
-.hint{position:absolute;bottom:9px;left:12px;z-index:4;font-size:10px;color:var(--steel-dim);letter-spacing:.08em}
-.eyes{position:absolute;top:10px;right:10px;z-index:5;display:flex;flex-direction:column;gap:8px}
-.eye{width:168px;height:126px;border:1px solid var(--rule);background:#000;position:relative;
-  box-shadow:var(--shadow);overflow:hidden}
-.eye img{width:100%;height:100%;object-fit:cover;display:block}
-.eye span{position:absolute;bottom:0;left:0;right:0;padding:3px 6px;font-size:9px;letter-spacing:.12em;
-  text-transform:uppercase;color:var(--bone);background:linear-gradient(0deg,rgba(0,0,0,.85),transparent)}
-
-/* deck */
-.deck{border-top:1px solid var(--rule);background:var(--ink-2);padding:12px 18px 14px;
-  display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:20px}
-h3{font-family:var(--sign);font-size:12px;letter-spacing:.26em;text-transform:uppercase;
-  color:var(--heat);font-weight:600;margin-bottom:9px;display:flex;align-items:center;gap:9px}
-h3::after{content:"";flex:1;height:1px;background:var(--rule)}
-.row{display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap}
-select,button,input{font-family:var(--mono);font-size:12px}
-select,input{background:var(--ink-3);color:var(--bone);border:1px solid var(--rule);
-  padding:6px 8px;border-radius:2px;flex:1;min-width:0}
-select:focus,input:focus{outline:none;border-color:var(--heat-dim)}
-button{background:var(--ink-3);color:var(--steel);border:1px solid var(--rule);padding:6px 11px;
-  border-radius:2px;cursor:pointer;letter-spacing:.08em;text-transform:uppercase;font-size:10px;
-  transition:all .13s ease}
-button:hover:not(:disabled){border-color:var(--heat);color:var(--heat);background:#1E1811}
-button:disabled{opacity:.35;cursor:not-allowed}
-button.hot{border-color:var(--heat-dim);color:var(--heat)}
-button.wide{flex:1}
-
-/* rail */
-.rail{display:flex;flex-direction:column;min-height:0;background:var(--ink);overflow-y:auto}
-.rail::-webkit-scrollbar{width:7px}
-.rail::-webkit-scrollbar-thumb{background:var(--rule);border-radius:4px}
-.rail section{padding:12px 16px 4px}
-
-/* the agent's stream of consciousness */
-.beats{display:flex;flex-direction:column;gap:0}
-.beat{display:grid;grid-template-columns:64px 1fr;gap:9px;padding:7px 0;
-  border-bottom:1px solid var(--rule);animation:slide .25s ease both}
-@keyframes slide{from{opacity:0;transform:translateY(-5px)}}
-.beat .ph{font-size:9px;letter-spacing:.14em;text-transform:uppercase;padding-top:2px;font-weight:700}
-.ph.notice{color:var(--cool)} .ph.decide{color:var(--heat)}
-.ph.act{color:var(--steel)} .ph.learn{color:var(--moss)} .ph.idle{color:var(--steel-dim)}
-.beat .tx{font-size:12px;line-height:1.4;color:var(--bone)}
-.beat .dt{font-size:10.5px;color:var(--steel-dim);margin-top:2px;line-height:1.4}
-.beat.fail .tx{color:var(--fire)}
-.beat .mem{margin-top:4px;padding-left:8px;border-left:2px solid var(--heat-dim);
-  font-size:10px;color:var(--steel-dim);line-height:1.45}
-
-/* memory cards */
-.mtable{width:100%;border-collapse:collapse;font-size:11px}
-.mtable td{padding:4px 0;border-bottom:1px solid var(--rule);color:var(--steel)}
-.mtable td.k{color:var(--bone);width:44%}
-.mtable td.v{text-align:right;color:var(--steel-dim)}
-.chip{display:inline-block;padding:1px 5px;border:1px solid var(--rule);border-radius:1px;
-  font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--steel-dim)}
-.chip.learned{border-color:var(--moss);color:var(--moss)}
-.chip.instructed{border-color:var(--heat);color:var(--heat)}
-.chip.self{border-color:var(--cool);color:var(--cool)}
-.chip.user{border-color:var(--heat);color:var(--heat)}
-.chip.done{border-color:var(--moss);color:var(--moss)}
-.chip.failed{border-color:var(--fire);color:var(--fire)}
-.chip.running{border-color:var(--heat);color:var(--heat)}
-.empty{font-size:11px;color:var(--steel-dim);padding:6px 0;font-style:italic}
-
-footer{border-top:1px solid var(--rule);background:var(--ink-2);display:flex;align-items:center;font-size:11px}
-.stat{padding:8px 16px;border-right:1px solid var(--rule);display:flex;gap:8px;align-items:baseline;white-space:nowrap}
-.stat .k{color:var(--steel-dim);letter-spacing:.14em;text-transform:uppercase;font-size:9px}
-.stat .v{color:var(--bone);font-weight:500;font-variant-numeric:tabular-nums}
-.stat .v.hot{color:var(--heat)}
-.log{flex:1;padding:8px 16px;color:var(--steel-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.log b{color:var(--heat);font-weight:500}
-.log.err b{color:var(--fire)}
-
-@media (max-width:1180px){
-  main{grid-template-columns:1fr;grid-template-rows:1fr auto;overflow-y:auto}
-  .rail{max-height:460px}.deck{grid-template-columns:1fr 1fr}body{overflow:auto}
+body{
+  background:var(--ink); color:var(--text); font-family:var(--mono);
+  font-size:12px; overflow:hidden;
+  display:grid; grid-template-columns:1fr 400px; grid-template-rows:44px 1fr 132px;
+  grid-template-areas:"top rail" "view rail" "cmd rail";
 }
+/* faint grain so the black is a surface, not a void */
+body::after{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:99; opacity:.035;
+  background-image:repeating-linear-gradient(0deg,#fff 0 1px,transparent 1px 3px);
+}
+
+/* ── top bar ─────────────────────────────────────────── */
+#top{
+  grid-area:top; display:flex; align-items:center; gap:20px; padding:0 18px;
+  border-bottom:1px solid var(--line); background:var(--ink2);
+}
+#top h1{
+  font-family:var(--disp); font-size:18px; letter-spacing:.34em; font-weight:500;
+  color:var(--amber); text-transform:uppercase;
+}
+#top .sub{color:var(--mute); letter-spacing:.08em; font-size:10px}
+.spacer{flex:1}
+.chip{
+  padding:3px 9px; border:1px solid var(--line); border-radius:2px;
+  color:var(--mute); letter-spacing:.06em; font-size:10px; white-space:nowrap;
+}
+.chip b{color:var(--ice); font-weight:400}
+.chip.live{border-color:var(--amber-dim); color:var(--amber)}
+
+/* ── viewport ────────────────────────────────────────── */
+#view{grid-area:view; position:relative; background:
+  radial-gradient(ellipse at 50% 32%,#171a24 0%,#08080c 72%)}
+/* A canvas is a replaced element with an intrinsic 300x150 size, so `inset:0`
+   alone does NOT stretch it — width/height must be stated or the scene renders
+   into a postage stamp in the corner while the viewport sits empty. */
+#gl{position:absolute; inset:0; width:100%; height:100%; display:block}
+#hud{position:absolute; left:18px; top:16px; pointer-events:none; max-width:62%}
+#hud .lbl{color:var(--mute); font-size:10px; letter-spacing:.22em; margin-bottom:5px}
+#hud .instr{
+  font-family:var(--disp); font-size:23px; line-height:1.25; letter-spacing:.01em;
+  color:var(--text); text-shadow:0 2px 22px #000;
+}
+#hud .instr.none{color:var(--coral)}
+#hud .req{color:var(--amber); font-size:12px; margin-bottom:9px; letter-spacing:.04em}
+#stage{
+  position:absolute; right:16px; top:16px; text-align:right; pointer-events:none;
+}
+#stage .st{
+  font-family:var(--disp); font-size:13px; letter-spacing:.2em; color:var(--amber);
+  text-transform:uppercase;
+}
+#stage .dt{color:var(--mute); font-size:10px; margin-top:3px}
+#memflag{
+  position:absolute; left:18px; bottom:16px; padding:5px 12px; border-radius:2px;
+  font-family:var(--disp); letter-spacing:.2em; font-size:12px; border:1px solid;
+}
+#memflag.on{color:var(--phos); border-color:#20512f; background:#0b1a11}
+#memflag.off{color:var(--coral); border-color:#4d1d18; background:#1a0c0a}
+#viewhint{position:absolute;right:16px;bottom:14px;color:#3a4050;font-size:10px;letter-spacing:.1em}
+
+/* ── command strip ───────────────────────────────────── */
+#cmd{
+  grid-area:cmd; border-top:1px solid var(--line); background:var(--ink2);
+  padding:13px 18px; display:flex; flex-direction:column; gap:10px;
+}
+#cmdrow{display:flex; gap:10px; align-items:stretch}
+#say{
+  flex:1; background:#07080c; border:1px solid var(--line); color:var(--text);
+  font-family:var(--mono); font-size:15px; padding:0 14px; border-radius:2px;
+  outline:none; letter-spacing:.02em;
+}
+#say:focus{border-color:var(--amber-dim); box-shadow:0 0 0 1px var(--amber-dim),0 0 26px #ff912410 inset}
+#say::placeholder{color:#3a4050}
+button{
+  font-family:var(--disp); letter-spacing:.15em; font-size:12px; text-transform:uppercase;
+  background:transparent; color:var(--text); border:1px solid var(--line);
+  padding:9px 16px; border-radius:2px; cursor:pointer; transition:.14s;
+}
+button:hover{border-color:var(--amber-dim); color:var(--amber)}
+button.go{background:var(--amber); color:#140c02; border-color:var(--amber); font-weight:600}
+button.go:hover{background:#ffa646; color:#140c02}
+button:disabled{opacity:.35; cursor:not-allowed}
+/* the memory switch — deliberately physical, it is the point of the demo */
+#memsw{
+  display:flex; align-items:center; gap:11px; padding:0 15px; border:1px solid var(--line);
+  border-radius:2px; cursor:pointer; user-select:none; background:#07080c;
+}
+#memsw .track{width:44px;height:20px;border-radius:11px;background:#2a1614;
+  border:1px solid #4d1d18; position:relative; transition:.2s}
+#memsw .knob{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+  background:var(--coral); transition:.2s}
+#memsw.on .track{background:#0d2417;border-color:#20512f}
+#memsw.on .knob{left:26px;background:var(--phos);box-shadow:0 0 12px var(--phos)}
+#memsw .cap{font-family:var(--disp);letter-spacing:.16em;font-size:11px;color:var(--coral)}
+#memsw.on .cap{color:var(--phos)}
+#quick{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+#quick span{color:#3a4050;font-size:10px;letter-spacing:.16em;margin-right:2px}
+.pill{
+  padding:4px 11px;border:1px solid var(--line);border-radius:11px;cursor:pointer;
+  color:var(--mute); font-size:11px; transition:.14s;
+}
+.pill:hover{border-color:var(--amber-dim);color:var(--amber)}
+
+/* ── right rail ──────────────────────────────────────── */
+#rail{
+  grid-area:rail; border-left:1px solid var(--line); background:var(--panel);
+  overflow-y:auto; overflow-x:hidden;
+}
+#rail::-webkit-scrollbar{width:7px}
+#rail::-webkit-scrollbar-thumb{background:#23273a}
+.sec{border-bottom:1px solid var(--line); padding:14px 16px}
+.sec h2{
+  font-family:var(--disp); font-size:11px; letter-spacing:.26em; color:var(--amber);
+  text-transform:uppercase; margin-bottom:11px; display:flex; justify-content:space-between;
+  align-items:baseline;
+}
+.sec h2 em{font-style:normal; color:var(--mute); font-size:10px; letter-spacing:.08em;
+  font-family:var(--mono)}
+.empty{color:#3a4050; font-size:11px; font-style:italic}
+
+/* recall rows — the money shot: real pgvector output */
+.hit{margin-bottom:9px; animation:slide .3s ease both}
+@keyframes slide{from{opacity:0;transform:translateX(9px)}to{opacity:1;transform:none}}
+.hit .t{display:flex; gap:8px; align-items:baseline; margin-bottom:3px}
+.hit .cos{color:var(--ice); font-size:10px; min-width:38px; letter-spacing:.02em}
+.hit .txt{flex:1; color:#b9bcc6; line-height:1.35; font-size:11px}
+.hit.win .txt{color:var(--text)}
+.hit .bar{height:2px; background:#1a1d2a; border-radius:1px; overflow:hidden}
+.hit .bar i{display:block; height:100%; background:var(--amber-dim); transition:width .4s}
+.hit.win .bar i{background:var(--amber); box-shadow:0 0 8px var(--amber)}
+.hit .mark{font-size:9px;letter-spacing:.1em}
+.ok{color:var(--phos)} .bad{color:var(--coral)}
+
+.kv{display:flex; justify-content:space-between; gap:9px; padding:3px 0; font-size:11px}
+.kv b{color:var(--mute); font-weight:400}
+.kv span{color:var(--text); text-align:right}
+
+.norm{display:flex; justify-content:space-between; gap:8px; padding:5px 0;
+  border-bottom:1px dotted #1a1d2a; font-size:11px}
+.norm .l{color:var(--amber)}
+.norm .r{color:#b9bcc6; text-align:right}
+.norm .n{color:#3a4050; font-size:9px}
+
+#feed{max-height:200px; overflow-y:auto}
+#feed div{padding:2px 0; color:#7a8090; line-height:1.4; font-size:11px}
+#feed .k-memory{color:var(--ice)} #feed .k-act{color:var(--amber)}
+#feed .k-ok{color:var(--phos)} #feed .k-fail{color:var(--coral)}
+
+table{width:100%; border-collapse:collapse; font-size:10px}
+th{color:var(--mute); text-align:left; font-weight:400; letter-spacing:.1em;
+  padding:0 0 5px; border-bottom:1px solid var(--line)}
+td{padding:5px 0; border-bottom:1px dotted #1a1d2a; color:#b9bcc6; vertical-align:top}
+td.res{text-align:right; white-space:nowrap}
+.tally{display:flex; gap:12px; margin-top:10px}
+.tally div{flex:1; border:1px solid var(--line); padding:8px; border-radius:2px; text-align:center}
+.tally .n{font-family:var(--disp); font-size:23px; letter-spacing:.04em}
+.tally .c{font-size:9px; letter-spacing:.14em; color:var(--mute); margin-top:2px}
+.tally .on .n{color:var(--phos)} .tally .off .n{color:var(--coral)}
 </style>
-</head>
-<body>
-<div class="shell">
 
-  <header>
-    <div class="brand"><h1>Brigade</h1><span class="sub">The&nbsp;Pass</span></div>
-    <div class="slug">
-      <div>Kitchen<b id="s-kitchen">—</b></div>
-      <div>Station<b id="s-robot">—</b></div>
-      <div>Doing<b id="s-doing">—</b></div>
-    </div>
-    <div class="pills">
-      <span class="pill"><i class="dot" id="d-sim"></i><span id="s-sim">booting</span></span>
-      <span class="pill"><i class="dot" id="d-agent"></i><span id="s-agent">agent</span></span>
-      <span class="pill"><i class="dot" id="d-mem"></i><span id="s-mem">memory</span></span>
-    </div>
-  </header>
-
-  <main>
-    <section class="stage">
-      <div class="viewwrap" id="viewwrap">
-        <!-- src is set from JS once the kitchen reports ready. Setting it here
-             races the boot: the browser requests the stream while MuJoCo is
-             still loading meshes, gets nothing, and never retries — a black
-             panel for the rest of the session. -->
-        <img id="view3d" alt="kitchen">
-        <div class="tag tl">Kitchen · 3D</div>
-        <div class="hint">drag to orbit · scroll to zoom · shift-drag to pan</div>
-        <div class="eyes" id="eyes"></div>
-      </div>
-
-      <div class="deck">
-        <div>
-          <h3>Tell the robot</h3>
-          <div class="row">
-            <select id="i-label"></select>
-            <select id="i-loc"></select>
-          </div>
-          <div class="row">
-            <button class="hot wide" id="btn-rule">Set the rule</button>
-          </div>
-          <div class="row">
-            <select id="i-obj"></select>
-            <button id="btn-fetch">Fetch it</button>
-          </div>
-          <p style="font-size:10px;color:var(--steel-dim);line-height:1.5;margin-top:4px">
-            A rule changes what it does <i>unprompted</i>, forever. A job is one errand.
-          </p>
-        </div>
-
-        <div>
-          <h3>Poke the kitchen</h3>
-          <div class="row">
-            <select id="d-obj"></select>
-            <select id="d-dest"></select>
-          </div>
-          <div class="row">
-            <button class="hot wide" id="btn-drop">Leave it out</button>
-            <button class="wide" id="btn-secret">Move unseen</button>
-          </div>
-          <p style="font-size:10px;color:var(--steel-dim);line-height:1.5;margin-top:4px">
-            <b style="color:var(--steel)">Move unseen</b> does not tell the robot — its memory
-            is then wrong and it has to find that out.
-          </p>
-        </div>
-
-        <div>
-          <h3>Ask its memory</h3>
-          <div class="row">
-            <input id="q" placeholder="a grasp that did not work">
-            <button id="btn-ask">Ask</button>
-          </div>
-          <div id="qout" style="font-size:10.5px;color:var(--steel-dim);line-height:1.5;max-height:96px;overflow:auto"></div>
-          <div class="row" style="margin-top:6px">
-            <button id="btn-pause">Pause agent</button>
-            <button id="btn-forget">Make it forget</button>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <aside class="rail">
-      <section>
-        <h3>What it is thinking</h3>
-        <div class="beats" id="beats"><div class="empty">waiting for the agent…</div></div>
-      </section>
-      <section>
-        <h3>Where things belong <span style="font-size:9px;letter-spacing:.1em;color:var(--steel-dim)">· norms</span></h3>
-        <table class="mtable" id="norms"></table>
-      </section>
-      <section>
-        <h3>Work</h3>
-        <table class="mtable" id="tasks"></table>
-      </section>
-      <section>
-        <h3>Where things are <span style="font-size:9px;letter-spacing:.1em;color:var(--steel-dim)">· beliefs</span></h3>
-        <table class="mtable" id="beliefs"></table>
-      </section>
-      <section>
-        <h3>Decisions <span style="font-size:9px;letter-spacing:.1em;color:var(--steel-dim)">· with the memories used</span></h3>
-        <table class="mtable" id="decisions"></table>
-      </section>
-      <section style="padding-bottom:18px">
-        <h3>Grip experience</h3>
-        <table class="mtable" id="skills"></table>
-      </section>
-    </aside>
-  </main>
-
-  <footer>
-    <div class="stat"><span class="k">Rate</span><span class="v hot" id="f-hz">—</span></div>
-    <div class="stat"><span class="k">Noticed</span><span class="v" id="f-noticed">0</span></div>
-    <div class="stat"><span class="k">Done</span><span class="v" id="f-done">0</span></div>
-    <div class="stat"><span class="k">Failed</span><span class="v" id="f-failed">0</span></div>
-    <div class="stat"><span class="k">Events</span><span class="v" id="f-events">0</span></div>
-    <div class="stat"><span class="k">Vectors</span><span class="v" id="f-vec">—</span></div>
-    <div class="log" id="f-log">standing by</div>
-  </footer>
+<div id="top">
+  <h1>Brigade</h1>
+  <div class="sub">MEMORY-DRIVEN ROBOT CONTROL</div>
+  <div class="spacer" style="flex:1"></div>
+  <div class="chip" id="c-policy">policy <b>π0.5 · 3.6B</b></div>
+  <div class="chip" id="c-db">memory <b>—</b></div>
+  <div class="chip" id="c-relmo">relmo <b>—</b></div>
+  <div class="chip live" id="c-fps">— fps</div>
 </div>
 
-<script>
-const $ = s => document.querySelector(s);
-let CAMS=[], TARGETS=[], OBJECTS={}, booted=false, lastBeat=0;
+<div id="view">
+  <canvas id="gl"></canvas>
+  <div id="hud">
+    <div class="lbl">HUMAN SAID</div>
+    <div class="req" id="h-req">—</div>
+    <div class="lbl">ROBOT IS DOING</div>
+    <div class="instr" id="h-instr">idle</div>
+  </div>
+  <div id="stage"><div class="st" id="s-state">booting</div><div class="dt" id="s-detail"></div></div>
+  <div id="memflag" class="on">MEMORY ON</div>
+  <div id="viewhint">drag to orbit · scroll to zoom</div>
+</div>
 
-function say(m,err){const e=$("#f-log");e.className="log"+(err?" err":"");
-  e.innerHTML=`${new Date().toLocaleTimeString([],{hour12:false})} <b>${m}</b>`}
-async function post(p,b){const r=await fetch(p,{method:"POST",headers:{"Content-Type":"application/json"},
-  body:JSON.stringify(b||{})});const j=await r.json().catch(()=>({}));
-  if(!r.ok) throw new Error(j.detail||r.statusText); return j}
-const short = s => (s||"").replace(/_main_group$/,"");
+<div id="cmd">
+  <div id="cmdrow">
+    <input id="say" placeholder="tell the robot something underspecified — e.g. “put the bowl away”" autocomplete="off">
+    <div id="memsw" class="on" title="Turn memory off to see what the policy can do with the raw words">
+      <div class="track"><div class="knob"></div></div><div class="cap">MEMORY</div>
+    </div>
+    <button class="go" id="run">Run</button>
+  </div>
+  <div id="quick"><span>TRY</span></div>
+</div>
 
-/* ── 3D orbit ─────────────────────────────────────────────────────── */
-let drag=null, view={azimuth:135,elevation:-50,distance:3.8};
-const img3d=$("#view3d");
-img3d.addEventListener("mousedown",e=>{drag={x:e.clientX,y:e.clientY,shift:e.shiftKey};img3d.classList.add("drag")});
-addEventListener("mouseup",()=>{drag=null;img3d.classList.remove("drag")});
-addEventListener("mousemove",e=>{
-  if(!drag) return;
-  const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
-  drag.x=e.clientX; drag.y=e.clientY;
-  if(drag.shift){ pushView({lookat_x:null,lookat_y:null}, dx, dy); }
-  else { view.azimuth+=dx*0.4; view.elevation=Math.max(-85,Math.min(-5,view.elevation+dy*0.3));
-         pushView({azimuth:view.azimuth, elevation:view.elevation}); }
-});
-img3d.addEventListener("wheel",e=>{e.preventDefault();
-  view.distance=Math.max(0.8,Math.min(12,view.distance+e.deltaY*0.004));
-  pushView({distance:view.distance})},{passive:false});
-let viewPending=false;
-async function pushView(v){
-  if(viewPending) return; viewPending=true;
-  try{ const got=await post("/api/view",v); Object.assign(view,got); }catch{}
-  setTimeout(()=>viewPending=false,60);
-}
+<div id="rail">
+  <div class="sec">
+    <h2>Resolution <em id="r-lat"></em></h2>
+    <div id="r-body"><div class="empty">nothing asked yet</div></div>
+  </div>
+  <div class="sec">
+    <h2>Recall <em id="k-lat">pgvector · HNSW · cosine</em></h2>
+    <div id="hits"><div class="empty">no query yet</div></div>
+  </div>
+  <div class="sec">
+    <h2>Norms <em>where things belong</em></h2>
+    <div id="norms"><div class="empty">nothing learned yet</div></div>
+  </div>
+  <div class="sec">
+    <h2>Video memory <em id="v-sub">RelMo · V-JEPA2+SigLIP2</em></h2>
+    <div id="relmo"><div class="empty">no episodes encoded</div></div>
+  </div>
+  <div class="sec">
+    <h2>Ledger <em>memory on vs off</em></h2>
+    <div id="ledger"><div class="empty">no runs yet</div></div>
+    <div class="tally">
+      <div class="on"><div class="n" id="t-on">—</div><div class="c">MEMORY ON</div></div>
+      <div class="off"><div class="n" id="t-off">—</div><div class="c">MEMORY OFF</div></div>
+    </div>
+  </div>
+  <div class="sec">
+    <h2>Feed</h2>
+    <div id="feed"><div class="empty">—</div></div>
+  </div>
+</div>
 
-/* ── panels ───────────────────────────────────────────────────────── */
-function renderBeats(feed){
-  if(!feed.length) return;
-  $("#beats").innerHTML = feed.map(b=>`
-    <div class="beat ${b.ok===false?"fail":""}">
-      <div class="ph ${b.phase}">${b.phase}</div>
-      <div>
-        <div class="tx">${b.text}</div>
-        ${b.detail?`<div class="dt">${b.detail}</div>`:""}
-        ${b.recalled&&b.recalled.length?`<div class="mem">recalled: ${b.recalled.map(r=>`“${r}”`).join("<br>")}</div>`:""}
-      </div>
-    </div>`).join("");
-}
-function table(id, rows){ $(id).innerHTML = rows.length?rows.join(""):`<tr><td class="empty">nothing yet</td></tr>` }
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from '/vendor/OrbitControls.js';
 
-function renderMemory(m){
-  table("#norms", (m.norms||[]).map(n=>`<tr>
-      <td class="k">${n.label}</td>
-      <td class="v">${short(n.home_location)} <span class="chip ${n.source}">${n.source}</span>
-        <span style="color:var(--steel)">${(+n.confidence).toFixed(2)}</span></td></tr>`));
-  table("#tasks", (m.tasks||[]).map(t=>`<tr>
-      <td class="k">${t.goal}</td>
-      <td class="v"><span class="chip ${t.origin}">${t.origin}</span> <span class="chip ${t.state}">${t.state}</span></td></tr>`));
-  table("#beliefs", (m.beliefs||[]).map(b=>`<tr>
-      <td class="k">${b.label} <span style="color:var(--steel-dim)">${b.instance_id}</span></td>
-      <td class="v">${short(b.location)}${b.stale?' <span class="chip failed">stale</span>':""}</td></tr>`));
-  table("#decisions", (m.decisions||[]).map(d=>`<tr>
-      <td class="k">${d.chose}</td>
-      <td class="v">${d.n_recalled} mem · ${(+d.recall_latency_ms).toFixed(0)}ms</td></tr>`));
-  table("#skills", (m.skills||[]).map(s=>`<tr>
-      <td class="k">${s.skill} ${s.object_label} <span class="chip">${s.strategy}</span></td>
-      <td class="v">${s.n_ok}/${s.n_try}</td></tr>`));
-  $("#f-events").textContent = m.stats?.events ?? 0;
-  $("#f-vec").textContent = m.stats?.native_vectors ? "pgvector" : "array";
-}
+/* ══ 3D: the simulator's geometry, drawn here ═══════════════════════════
+   MuJoCo is Z-up and three.js defaults to Y-up, so rather than rotating
+   every object we simply tell the camera which way is up and keep world
+   coordinates identical to the simulator's. Debugging a mismatch is much
+   easier when a position printed by Python is the position in the scene. */
+const cv = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({canvas:cv, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-function mountEyes(cams){
-  if(JSON.stringify(cams)===JSON.stringify(CAMS)) return; CAMS=cams;
-  $("#eyes").innerHTML = cams.map(c=>`<figure class="eye">
-      <img src="/stream/${c}" alt="${c}"><span>${c.replace(/^robot0_/,"").replace(/_/g," ")}</span></figure>`).join("");
-}
-function fillSelect(sel, opts, keep){
-  const cur = $(sel).value;
-  const want = opts.map(o=>o.v).join();
-  if($(sel).dataset.k===want) return;
-  $(sel).dataset.k=want;
-  $(sel).innerHTML = opts.map(o=>`<option value="${o.v}">${o.t}</option>`).join("");
-  if(keep && opts.some(o=>o.v===cur)) $(sel).value=cur;
-}
+const scene = new THREE.Scene();
+scene.background = null;
+scene.fog = new THREE.Fog(0x0b0c11, 3.2, 9);
 
-/* ── polling ──────────────────────────────────────────────────────── */
-async function poll(){
-  try{
-    const s = await (await fetch("/api/state")).json();
-    const ok = s.ready && s.status.running;
-    $("#d-sim").className="dot "+(ok?"on":"bad");
-    $("#s-sim").textContent = ok?"kitchen live":"kitchen down";
-    if(!s.ready){ setTimeout(poll,700); return; }
-    mountEyes(s.cameras);
-    OBJECTS = s.objects;
-    $("#s-kitchen").textContent=s.kitchen_id; $("#s-robot").textContent=s.robot_id;
-    $("#f-hz").textContent=(s.status.hz??0).toFixed(1)+" Hz";
+const cam = new THREE.PerspectiveCamera(42, 1, 0.02, 60);
+cam.up.set(0,0,1);
+cam.position.set(1.5, -1.35, 1.5);
 
-    const objOpts = Object.entries(s.objects).sort()
-      .map(([k,o])=>({v:k,t:`${k} · ${o.label??"?"}`}));
-    fillSelect("#d-obj",objOpts,true); fillSelect("#i-obj",objOpts,true);
-    const labels=[...new Set(Object.values(s.objects).map(o=>o.label).filter(Boolean))].sort();
-    fillSelect("#i-label",labels.map(l=>({v:l,t:l})),true);
+const ctl = new OrbitControls(cam, cv);
+ctl.enableDamping = true; ctl.dampingFactor = .07;
+ctl.target.set(-0.1, 0, 0.92);
+ctl.minDistance = .35; ctl.maxDistance = 7;
 
-    if(!booted){
-      booted=true;
-      img3d.src = "/stream3d?width=880&height=660";
-      await loadTargets();
-      say("kitchen live · agent deciding for itself");
+scene.add(new THREE.HemisphereLight(0xbcd0ff, 0x1a1206, 1.05));
+const key = new THREE.DirectionalLight(0xfff2e0, 2.0);
+key.position.set(1.6, -1.9, 3.1); key.castShadow = true;
+key.shadow.mapSize.set(2048,2048);
+const cs = key.shadow.camera; cs.left=-2.2; cs.right=2.2; cs.top=2.2; cs.bottom=-2.2; cs.far=9;
+scene.add(key);
+const rim = new THREE.DirectionalLight(0xff9124, .55);
+rim.position.set(-2.1, 1.6, 1.1); scene.add(rim);
+
+const grid = new THREE.GridHelper(9, 36, 0x1d2233, 0x14171f);
+grid.rotation.x = Math.PI/2; grid.position.z = -0.001; scene.add(grid);
+
+let root = new THREE.Group(); scene.add(root);
+let meshes = [], geomInfo = [], nGeom = 0, epoch = -1;
+
+function buildGeom(g, meshBufs){
+  let geo;
+  const s = g.size;
+  switch(g.type){
+    case 'box':      geo = new THREE.BoxGeometry(2*s[0], 2*s[1], 2*s[2]); break;
+    case 'sphere':   geo = new THREE.SphereGeometry(s[0], 24, 16); break;
+    case 'ellipsoid':geo = new THREE.SphereGeometry(1, 24, 16); geo.scale(s[0],s[1],s[2]); break;
+    // MuJoCo's cylinder/capsule axis is Z; three builds them along Y.
+    case 'cylinder': geo = new THREE.CylinderGeometry(s[0], s[0], 2*s[1], 22); geo.rotateX(Math.PI/2); break;
+    case 'capsule':  geo = new THREE.CapsuleGeometry(s[0], 2*s[1], 6, 16); geo.rotateX(Math.PI/2); break;
+    case 'plane':{
+      const a = s[0] > 0 ? 2*s[0] : 18, b = s[1] > 0 ? 2*s[1] : 18;
+      geo = new THREE.PlaneGeometry(a, b); break;
     }
-  }catch(e){ $("#d-sim").className="dot bad"; $("#s-sim").textContent="unreachable"; }
-  setTimeout(poll,1200);
+    case 'mesh':{
+      const mb = meshBufs[g.mesh];
+      if(!mb) return null;
+      geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(mb.v, 3));
+      if(mb.n) geo.setAttribute('normal', new THREE.BufferAttribute(mb.n, 3));
+      geo.setIndex(new THREE.BufferAttribute(mb.f, 1));
+      if(!mb.n) geo.computeVertexNormals();
+      break;
+    }
+    default: return null;
+  }
+  const c = g.rgba;
+  const mat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(c[0], c[1], c[2]),
+    roughness:.72, metalness:.06,
+    transparent: c[3] < .99, opacity: c[3],
+    side: g.type === 'plane' ? THREE.DoubleSide : THREE.FrontSide,
+  });
+  const m = new THREE.Mesh(geo, mat);
+  m.castShadow = g.type !== 'plane'; m.receiveShadow = true;
+  m.matrixAutoUpdate = false;
+  return m;
 }
 
-async function pollAgent(){
+async function loadScene(){
+  const hdr = await (await fetch('/api/scene')).json();
+  if(!hdr.ready) return false;
+  const buf = await (await fetch('/api/scene.bin')).arrayBuffer();
+
+  const meshBufs = hdr.meshes.map(m => ({
+    v: new Float32Array(buf, m.verts,   m.nv*3),
+    n: m.normals != null ? new Float32Array(buf, m.normals, m.nv*3) : null,
+    f: new Uint32Array (buf, m.faces,   m.nf*3),
+  }));
+
+  scene.remove(root); root = new THREE.Group(); scene.add(root);
+  meshes = hdr.geoms.map(g => { const m = buildGeom(g, meshBufs); if(m) root.add(m); return m; });
+  geomInfo = hdr.geoms;
+  nGeom = hdr.geoms.length; epoch = hdr.epoch; needsFit = true;
+  return true;
+}
+
+const M = new THREE.Matrix4();
+function applyFrame(buf){
+  const f = new Float32Array(buf);
+  const n = Math.min(nGeom, f.length/12|0);
+  for(let i=0;i<n;i++){
+    const m = meshes[i]; if(!m) continue;
+    const o = i*12, r = o+3;
+    // MuJoCo geom_xmat is a row-major 3x3; Matrix4.set takes row-major too.
+    M.set(f[r],f[r+1],f[r+2],f[o], f[r+3],f[r+4],f[r+5],f[o+1],
+          f[r+6],f[r+7],f[r+8],f[o+2], 0,0,0,1);
+    m.matrix.copy(M);
+  }
+  if(needsFit){ needsFit = false; frameCamera(f, n); }
+}
+
+/* Aim the camera at the work, not at the room. Fitting the whole scene would
+   include the floor plane and the four walls, which are metres across, and the
+   robot would end up a speck in the middle. Those are excluded by name — they
+   are the only things in a LIBERO scene big enough to ruin the fit. */
+let needsFit = false;
+function frameCamera(f, n){
+  const box = new THREE.Box3();
+  const p = new THREE.Vector3();
+  for(let i=0;i<n;i++){
+    const g = geomInfo[i]; if(!g) continue;
+    if(g.type === 'plane' || /floor|wall|ceiling/i.test(g.name)) continue;
+    p.set(f[i*12], f[i*12+1], f[i*12+2]);
+    box.expandByPoint(p);
+  }
+  if(box.isEmpty()) return;
+  const c = box.getCenter(new THREE.Vector3());
+  const r = Math.max(0.45, box.getBoundingSphere(new THREE.Sphere()).radius);
+  ctl.target.copy(c);
+  const d = r / Math.tan(THREE.MathUtils.degToRad(cam.fov * 0.5)) * 1.15;
+  cam.position.set(c.x + d * 0.62, c.y - d * 0.70, c.z + d * 0.46);
+  cam.lookAt(c); ctl.update();
+  // Shadows follow the work too, or a 4 m frustum wastes its resolution on
+  // empty floor and the gripper's shadow turns into a blur.
+  key.position.set(c.x + 1.4, c.y - 1.7, c.z + 2.2);
+  const s = key.shadow.camera;
+  s.left = -r*1.6; s.right = r*1.6; s.top = r*1.6; s.bottom = -r*1.6;
+  s.updateProjectionMatrix();
+}
+
+function resize(){
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if(cv.width !== w || cv.height !== h){ renderer.setSize(w,h,false); cam.aspect=w/h; cam.updateProjectionMatrix(); }
+}
+let frames=0, tLast=performance.now();
+(function loop(){
+  requestAnimationFrame(loop); resize(); ctl.update(); renderer.render(scene,cam);
+  frames++; const now=performance.now();
+  if(now-tLast>1000){ document.getElementById('c-fps').innerHTML=
+    `<b>${Math.round(frames*1000/(now-tLast))}</b> fps · ${nGeom} geoms`;
+    frames=0; tLast=now; }
+})();
+
+/* ══ live link ══════════════════════════════════════════════════════════ */
+let ws;
+function connect(){
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+  ws.onmessage = ev => {
+    if(typeof ev.data !== 'string'){ applyFrame(ev.data); return; }
+    const m = JSON.parse(ev.data);
+    if(m.t === 'scene'){ if(m.epoch !== epoch) loadScene(); }
+    else if(m.t === 'status') paint(m);
+  };
+  ws.onclose = () => setTimeout(connect, 900);
+}
+
+/* ══ panels ════════════════════════════════════════════════════════════ */
+const $ = id => document.getElementById(id);
+const esc = s => String(s??'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+function paint(m){
+  const st = m.status || {};
+  $('s-state').textContent = st.state || '—';
+  $('s-detail').textContent = st.detail || '';
+  if(st.request !== undefined) $('h-req').textContent = st.request || '—';
+  if(st.instruction !== undefined){
+    const el = $('h-instr');
+    el.textContent = st.instruction || 'could not resolve — nothing in memory matches';
+    el.classList.toggle('none', !st.instruction);
+  }
+  if(st.memory_used !== undefined){
+    const f = $('memflag');
+    f.className = st.memory_used ? 'on' : 'off';
+    f.textContent = st.memory_used ? 'MEMORY ON' : 'MEMORY OFF';
+  }
+  if(st.resolution) showResolution(st.resolution);
+  if(m.feed) $('feed').innerHTML = m.feed.slice(-40).reverse()
+    .map(f => `<div class="k-${f.kind}">${esc(f.text)}</div>`).join('') || '<div class="empty">—</div>';
+  if(m.ledger) showLedger(m.ledger);
+}
+
+function showResolution(r){
+  $('r-lat').textContent = r.latency_ms != null ? `${r.latency_ms} ms` : '';
+  const rows = [];
+  rows.push(`<div class="kv"><b>asked</b><span>${esc(r.request)}</span></div>`);
+  rows.push(`<div class="kv"><b>resolved</b><span style="color:${r.instruction?'var(--phos)':'var(--coral)'}">${
+      esc(r.instruction || 'ABSTAINED')}</span></div>`);
+  if(r.norm) rows.push(`<div class="kv"><b>norm</b><span>${esc(r.norm.label)} → ${esc(r.norm.home_location)} <span class="norm n">(${r.norm.n_episodes} ep)</span></span></div>`);
+  rows.push(`<div class="kv" style="margin-top:6px"><b>why</b><span style="color:#8f96a5;text-align:right">${esc(r.rationale)}</span></div>`);
+  $('r-body').innerHTML = rows.join('');
+
+  const hits = r.recalled || [];
+  $('k-lat').textContent = r.memory_used
+    ? `pgvector · ${hits.length} rows · ${r.latency_ms} ms`
+    : 'memory disabled — no query issued';
+  $('hits').innerHTML = hits.length ? hits.map((h,i) => {
+    const pct = Math.max(0, Math.min(100, h.score*100));
+    return `<div class="hit ${i===0?'win':''}">
+      <div class="t"><div class="cos">${h.score.toFixed(3)}</div>
+      <div class="txt">${esc(h.text)}</div>
+      <div class="mark ${h.outcome==='success'?'ok':'bad'}">${h.outcome==='success'?'✓':'✗'}</div></div>
+      <div class="bar"><i style="width:${pct}%"></i></div></div>`;
+  }).join('') : '<div class="empty">nothing recalled</div>';
+}
+
+function showLedger(rows){
+  if(!rows.length) return;
+  $('ledger').innerHTML = `<table><tr><th>asked</th><th>mem</th><th class="res">result</th></tr>` +
+    rows.slice(-9).reverse().map(r => `<tr>
+      <td>${esc(r.request)}<div style="color:#3a4050;font-size:9px">${esc(r.instruction||'abstained')}</div></td>
+      <td style="color:${r.memory?'var(--phos)':'var(--coral)'}">${r.memory?'ON':'OFF'}</td>
+      <td class="res ${r.success?'ok':'bad'}">${r.success?'✓ done':'✗ failed'}<div style="color:#3a4050;font-size:9px">${r.seconds?r.seconds.toFixed(0)+'s':''}</div></td>
+    </tr>`).join('') + '</table>';
+  const on = rows.filter(r=>r.memory), off = rows.filter(r=>!r.memory);
+  const f = a => a.length ? `${a.filter(r=>r.success).length}/${a.length}` : '—';
+  $('t-on').textContent = f(on); $('t-off').textContent = f(off);
+}
+
+async function refreshMemory(){
   try{
-    const a = await (await fetch("/api/agent")).json();
-    $("#d-agent").className="dot "+(a.present&&a.status.running?(a.status.paused?"bad":"good"):"bad");
-    $("#s-agent").textContent = !a.present?"no agent":(a.status.paused?"agent paused":"agent thinking");
-    $("#s-doing").textContent = a.status.current || "watching";
-    $("#f-noticed").textContent=a.status.noticed??0;
-    $("#f-done").textContent=a.status.tasks_done??0;
-    $("#f-failed").textContent=a.status.tasks_failed??0;
-    if(a.feed?.length){ renderBeats(a.feed);
-      if(a.feed[0].t!==lastBeat){ lastBeat=a.feed[0].t; } }
-  }catch{}
-  setTimeout(pollAgent,1000);
+    const m = await (await fetch('/api/memory')).json();
+    $('c-db').innerHTML = `memory <b>${m.stats.flavor}${m.stats.native_vectors?' · vec':''}</b> · ${m.stats.events} ev`;
+    $('norms').innerHTML = m.norms.length ? m.norms.map(n =>
+      `<div class="norm"><div class="l">${esc(n.label)}</div>
+       <div class="r">${esc(n.home_location)}
+       <div class="n">${n.source} · ${n.n_episodes} ep · conf ${(+n.confidence).toFixed(2)}</div></div></div>`
+    ).join('') : '<div class="empty">nothing learned yet</div>';
+  }catch(e){}
 }
 
-async function pollMemory(){
+/* ══ commands ══════════════════════════════════════════════════════════ */
+const sw = $('memsw');
+sw.onclick = () => sw.classList.toggle('on');
+$('run').onclick = send;
+$('say').onkeydown = e => { if(e.key === 'Enter') send(); };
+
+async function send(){
+  const request = $('say').value.trim(); if(!request) return;
+  $('run').disabled = true;
+  await fetch('/api/command', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({request, use_memory: sw.classList.contains('on')})});
+  setTimeout(()=>{$('run').disabled=false;}, 700);
+}
+
+fetch('/api/prompts').then(r=>r.json()).then(p => {
+  $('quick').innerHTML = '<span>TRY</span>' + p.prompts.map(t =>
+    `<div class="pill">${esc(t)}</div>`).join('');
+  document.querySelectorAll('.pill').forEach(el => el.onclick = () => {
+    $('say').value = el.textContent; send();
+  });
+}).catch(()=>{});
+
+async function relmoPanel(){
   try{
-    const m = await (await fetch("/api/memory")).json();
-    $("#d-mem").className="dot good"; $("#s-mem").textContent="memory online";
-    renderMemory(m);
-  }catch{ $("#d-mem").className="dot bad"; $("#s-mem").textContent="memory offline" }
-  setTimeout(pollMemory,1500);
+    const d = await (await fetch('/api/videomem')).json();
+    $('v-sub').textContent = d.basis ? `RelMo · basis ${d.basis} · ${d.n} clips` : 'RelMo · idle';
+    $('relmo').innerHTML = d.hits && d.hits.length ? d.hits.map(h =>
+      `<div class="hit"><div class="t"><div class="cos">${(+h.score).toFixed(3)}</div>
+       <div class="txt">${esc(h.lang || h.recording_id)}</div></div>
+       <div class="bar"><i style="width:${Math.max(0,Math.min(100,h.score*100))}%"></i></div></div>`
+    ).join('') : '<div class="empty">' + (d.note || 'no episodes encoded') + '</div>';
+    $('c-relmo').innerHTML = `relmo <b>${d.ready?'ready':'off'}</b>${d.n?' · '+d.n:''}`;
+  }catch(e){}
 }
 
-async function loadTargets(){
-  const r=await fetch("/api/targets"); if(!r.ok) return;
-  TARGETS=await r.json();
-  const opts=TARGETS.map(t=>({v:t.name,t:`${t.kind==="container"?"▣":"▭"} ${short(t.name)}`}));
-  fillSelect("#d-dest",opts,true); fillSelect("#i-loc",opts,true);
-}
-
-/* ── controls ─────────────────────────────────────────────────────── */
-$("#btn-drop").onclick = async e=>{ e.target.disabled=true;
-  try{ const r=await post("/api/drop",{instance_id:$("#d-obj").value,fixture:$("#d-dest").value});
-       say(`${r.label} left on ${short(r.settled_location)} — the robot will notice`); }
-  catch(err){ say("failed: "+err.message,true) } e.target.disabled=false };
-
-$("#btn-secret").onclick = async e=>{ e.target.disabled=true;
-  try{ const r=await post("/api/drop",{instance_id:$("#d-obj").value,fixture:$("#d-dest").value,secret:true});
-       say(`moved ${r.instance_id} to ${short(r.settled_location)} — robot NOT told`); }
-  catch(err){ say("failed: "+err.message,true) } e.target.disabled=false };
-
-$("#btn-rule").onclick = async e=>{ e.target.disabled=true;
-  try{ const r=await post("/api/instruct",{text:"",label:$("#i-label").value,location:$("#i-loc").value});
-       say(`rule set: ${r.label}s go in ${short(r.location)} — applies from now on`); }
-  catch(err){ say("failed: "+err.message,true) } e.target.disabled=false };
-
-$("#btn-fetch").onclick = async e=>{ e.target.disabled=true;
-  try{ const id=$("#i-obj").value; const r=await post("/api/instruct",{text:`bring me the ${id}`,instance_id:id});
-       say(`asked for ${id} — queued above its own work (priority ${r.priority})`); }
-  catch(err){ say("failed: "+err.message,true) } e.target.disabled=false };
-
-$("#btn-ask").onclick = async ()=>{
-  const q=$("#q").value.trim(); if(!q) return;
-  try{ const r=await (await fetch(`/api/memory/recall?q=${encodeURIComponent(q)}&k=4`)).json();
-    $("#qout").innerHTML = r.hits.length
-      ? r.hits.map(h=>`<div style="padding:3px 0"><b style="color:var(--heat)">${h.score.toFixed(3)}</b> ${h.text}</div>`).join("")
-      : `<div class="empty">no memory of that</div>`;
-    say(`recall "${q}" — ${r.hits.length} hits in ${r.latency_ms}ms`);
-  }catch(e){ say("recall failed: "+e.message,true) } };
-$("#q").addEventListener("keydown",e=>{ if(e.key==="Enter") $("#btn-ask").click() });
-
-$("#btn-pause").onclick = async e=>{
-  const on = e.target.textContent.startsWith("Pause");
-  try{ const r=await post(`/api/agent/pause?on=${on}`); e.target.textContent=r.paused?"Resume agent":"Pause agent";
-       say(r.paused?"agent paused":"agent resumed") }catch(err){ say(err.message,true) } };
-
-$("#btn-forget").onclick = async ()=>{
-  if(!confirm("Wipe the robot's memory? It will start over knowing nothing.")) return;
-  try{ await post("/api/forget"); say("memory wiped — it knows nothing again") }
-  catch(e){ say(e.message,true) } };
-
-poll(); pollAgent(); pollMemory();
+loadScene(); connect();
+refreshMemory(); relmoPanel();
+setInterval(refreshMemory, 2500);
+setInterval(relmoPanel, 4000);
 </script>
-</body>
-</html>
