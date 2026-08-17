@@ -76,6 +76,17 @@ So "where is the bowl?" is **not a column read**. It is: retrieve clips →
 watch them → say what you saw. Every semantic fact is derived at read time from
 video. Nothing about the world is written down as a number.
 
+Ruled on explicitly (2026-08-17), closing the last loophole: the **human's own
+words are not stored either** —
+
+> "no it cant. See the one and only purpose of the hackathon that can make
+> this survive is the **video database and reasoning and action on top of
+> it.** research properly on how to do this. **no hardwiring no handrolling.**"
+
+So the instruction that drives π0.5 must itself be produced at read time, by
+the reasoning layer, from retrieved video plus the human's live request. The
+research and the resulting design are in `RESEARCH.md`.
+
 What was built instead, and is therefore wrong: `object_beliefs` rows holding
 label/location/xyz/confidence, a `norms` table holding label → home_location
 with episode counts, and an `events` table of MiniLM **text** embeddings. All

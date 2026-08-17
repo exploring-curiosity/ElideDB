@@ -2479,3 +2479,10 @@ pi05 12.5 s/episode vs smolvla 50.1 s/episode, because pi05 chunks actions
 checkpoint infers every step. Episode wall-clock is set by NUMBER OF FORWARD
 PASSES, not parameters. Also required on Apple Silicon: compile_model=false,
 since torch.compile raises InductorError NoValidChoicesError on MPS.
+
+2026-08-17 - video-only memory, ruled
+Human words are NOT stored alongside clips ("no it cant"). The product = video
+database + reasoning + action. All text derived at read time. Research in
+brigade/RESEARCH.md: MemER (2510.20328) validates the exact split (keyframe
+memory -> VLM reader -> pi0.5); readers must be gated, off-the-shelf failed
+(2/5 Qwen3-30B, SmolVLM2 constant). Gate ladder G1-G5 before building.
