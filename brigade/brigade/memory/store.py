@@ -1,431 +1,252 @@
-"""The robot's memory, as four kinds of remembering.
+"""The video store. Cameras in, segments out, nothing else.
 
-  episodic   events        — what happened, as text the robot wrote about itself
-  spatial    beliefs       — where things are, with confidence and staleness
-  procedural norms         — where things BELONG, learned or instructed
-  procedural skill_stats   — which way of doing a thing actually works
-  working    tasks         — what to do next, claimed with SKIP LOCKED
-  audit      decisions     — what was chosen, and which memories were read
+This replaces the previous `store.py`, which held beliefs, norms, skill stats
+and text-embedded events. Every one of those was a derived fact saved as state,
+which the owner's ruling forbids. What is left is deliberately thin: write
+video, index it by RelMo vector and time, retrieve by similarity.
 
-The distinction that carries the whole project is between a *belief* ("the bowl
-is on the counter") and a *norm* ("bowls go in the cabinet"). Beliefs are about
-the present and go stale. Norms outlive the objects they describe and are what
-makes the robot behave differently tomorrow.
+**Segments, not episodes.** The cameras run on a clock and are cut every
+`SEGMENT_S` seconds whether or not the robot is doing anything. A memory that
+only records during tasks cannot answer a question about the time between them,
+and it also makes the memory depend on the agent correctly deciding when
+something interesting is happening — which is the very judgement the memory
+exists to support.
+
+**The encode is not on the write path.** Cutting a segment writes an mp4 and
+enqueues it; a background worker asks the RelMo sidecar for the vector and
+fills it in. Encoding takes ~3 s and the simulator's clock does not stop for
+it. Rows therefore exist briefly with a NULL embedding, which retrieval skips —
+a clip is in the store the moment it is on disk and becomes *findable* a few
+seconds later.
 """
 
 from __future__ import annotations
 
-import json
 import logging
+import os
+import queue
+import threading
 import time
-from dataclasses import dataclass, field
-from typing import Any, Sequence
+import uuid
+from dataclasses import dataclass
+
+import numpy as np
 
 from ..config import CFG
-from . import embed
-from .db import DB, Database, retry_serializable
+from .db import DB, Database
 
-log = logging.getLogger("brigade.memory")
+log = logging.getLogger("brigade.store")
+
+# RelMo's encoder window is 4.0 s and it REFUSES a shorter clip outright
+# ("clip is 3.0s; the encoder window is 4.0s"). A 3 s segment therefore wrote
+# 75 rows and indexed none of them — present in the store, invisible to
+# retrieval. 5 s leaves margin for the last, short segment of an episode.
+SEGMENT_S = 5.0          # seconds of video per stored clip
+FPS = 10.0               # memory-camera rate (every other 20 Hz control step)
 
 
 @dataclass
-class Recalled:
-    id: str
-    text: str
-    kind: str
-    score: float
-    outcome: str | None
-    subject: str | None
-    payload: dict = field(default_factory=dict)
-    ts: Any = None
+class Clip:
+    clip_id: str
+    path: str
+    t0: float
+    t1: float
+    score: float = 0.0
 
 
-class Memory:
-    """Everything the robot knows, over one database."""
+class VideoStore:
+    """Continuous camera -> segments -> RelMo vectors -> the database."""
 
-    def __init__(self, db: Database | None = None, kitchen_id: str | None = None,
-                 robot_id: str | None = None):
+    def __init__(self, db: Database | None = None, relmo=None,
+                 root: str | None = None, camera: str = "agentview"):
         self.db = db or DB
-        self.kitchen = kitchen_id or CFG.world.kitchen_id
-        self.robot = robot_id or CFG.world.robot_id
+        self.relmo = relmo
+        self.camera = camera
+        self.root = root or os.path.join(CFG.artifacts, "clips")
+        self.kitchen = CFG.world.kitchen_id
+        self.robot = CFG.world.robot_id
 
-    def setup(self) -> dict:
-        info = self.db.apply_schema()
-        log.info("memory ready: %s (native vectors: %s)", info["flavor"], info["native_vectors"])
-        return info
+        self._buf: list[np.ndarray] = []
+        self._t0 = time.time()
+        self._lock = threading.Lock()
+        self._encode_q: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        self._worker: threading.Thread | None = None
+        self._stop = threading.Event()
+        self.n_written = 0
+        self.n_encoded = 0
 
-    # ---- episodic -----------------------------------------------------------
+    # ---- schema -------------------------------------------------------------
 
-    @retry_serializable
-    def remember(self, text: str, kind: str = "observation", *, subject: str | None = None,
-                 outcome: str | None = None, task_id: str | None = None,
-                 payload: dict | None = None, embed_text: bool = True) -> str:
-        """Write one event. Returns its id.
+    def setup(self, fresh: bool = False) -> dict:
+        """Create the v2 schema. `fresh=True` drops the forbidden v1 tables."""
+        import re
 
-        The embedding is of `text` — the robot's own description — which is why
-        that string is written to read like a search query rather than a log line.
+        from .db import to_postgres
+
+        if fresh:
+            for t in ("object_beliefs", "norms", "norm_evidence", "events",
+                      "skill_stats", "decisions", "relmo_recordings"):
+                self.db.execute(f"DROP TABLE IF EXISTS {t} CASCADE")
+            log.info("dropped v1 fact tables — memory is video only now")
+
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema_v2.sql")
+        body = open(path).read()
+        native = self.db.supports_vector()
+        if self.db.flavor != "cockroach":
+            body = to_postgres(body, native_vectors=native)
+        for stmt in [s.strip() for s in body.split(";") if s.strip()]:
+            if not re.match(r"^\s*--", stmt):
+                self.db.execute(stmt)
+        if self.db.flavor != "cockroach":
+            self.db.execute("CREATE INDEX IF NOT EXISTS clips_by_time "
+                            "ON clips (kitchen_id, t0 DESC)")
+            self.db.execute("CREATE INDEX IF NOT EXISTS turns_by_time "
+                            "ON turns (kitchen_id, ts DESC)")
+        idx = []
+        if native:
+            try:
+                self.db.execute(
+                    "CREATE VECTOR INDEX IF NOT EXISTS ON clips (embedding)"
+                    if self.db.flavor == "cockroach" else
+                    "CREATE INDEX IF NOT EXISTS clips_embedding_hnsw ON clips "
+                    "USING hnsw (embedding vector_cosine_ops)")
+                idx.append("clips.embedding")
+            except Exception as exc:
+                log.warning("no vector index on clips: %s", exc)
+        return dict(native_vectors=native, flavor=self.db.flavor, vector_indexes=idx)
+
+    # ---- the write path -----------------------------------------------------
+
+    def start(self) -> None:
+        if self._worker is None:
+            self._worker = threading.Thread(target=self._encode_loop, daemon=True,
+                                            name="brigade-encode")
+            self._worker.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def write(self, frame: np.ndarray) -> str | None:
+        """Feed one memory-camera frame. Returns a clip_id when a segment cuts.
+
+        Called from the simulator's own loop, so it does nothing expensive: it
+        appends to a list and, every SEGMENT_S, hands a finished buffer to the
+        writer thread.
         """
-        vec = self.db.vector_param(embed.encode(text)[0]) if embed_text else None
-        rows = self.db.execute(
-            """INSERT INTO events (robot_id, kitchen_id, kind, text, embedding,
-                                   payload, task_id, subject, outcome)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
-            (self.robot, self.kitchen, kind, text, vec,
-             json.dumps(payload or {}), task_id, subject, outcome),
-        )
-        return str(rows[0]["id"])
-
-    def recall(self, query: str, k: int = 5, *, kind: str | None = None,
-               floor: float | None = None) -> list[Recalled]:
-        """Semantic recall over the robot's own history.
-
-        `floor` matters more than it looks: a recall that returns nothing above
-        threshold is the signal that the robot has NOT been here before, and that
-        is what makes it explore instead of going straight somewhere. An empty
-        recall is a result, not a failure.
-        """
-        floor = CFG.memory.recall_floor if floor is None else floor
-        qv = self.db.vector_param(embed.encode(query)[0])
-        sim = self.db.similarity_expr("embedding")
-        where = "kitchen_id = %s AND embedding IS NOT NULL"
-        params: list[Any] = [qv, self.kitchen]
-        if kind:
-            where += " AND kind = %s"
-            params.append(kind)
-        params.append(k)
-        rows = self.db.query(
-            f"""SELECT id, text, kind, outcome, subject, payload, ts, {sim} AS score
-                FROM events WHERE {where}
-                ORDER BY score DESC NULLS LAST LIMIT %s""",
-            params,
-        )
-        return [
-            Recalled(str(r["id"]), r["text"], r["kind"], float(r["score"] or 0.0),
-                     r["outcome"], r["subject"], r["payload"] or {}, r["ts"])
-            for r in rows if (r["score"] or 0.0) >= floor
-        ]
-
-    def recent(self, limit: int = 20) -> list[dict]:
-        return self.db.query(
-            """SELECT id, ts, kind, text, outcome, subject FROM events
-               WHERE kitchen_id = %s ORDER BY ts DESC LIMIT %s""",
-            (self.kitchen, limit),
-        )
-
-    # ---- spatial ------------------------------------------------------------
-
-    @retry_serializable
-    def see(self, instance_id: str, label: str, location: str, pos: Sequence[float],
-            confidence: float = 1.0, event_id: str | None = None) -> None:
-        """Record that an object was observed somewhere. Clears staleness."""
-        self.db.execute(
-            """INSERT INTO object_beliefs
-                 (kitchen_id, instance_id, label, location, pos, confidence,
-                  last_seen, last_verified, stale, evidence_event_id)
-               VALUES (%s,%s,%s,%s,%s,%s,now(),now(),false,%s)
-               ON CONFLICT (kitchen_id, instance_id) DO UPDATE SET
-                 label=EXCLUDED.label, location=EXCLUDED.location, pos=EXCLUDED.pos,
-                 confidence=EXCLUDED.confidence, last_seen=now(), last_verified=now(),
-                 stale=false, evidence_event_id=EXCLUDED.evidence_event_id""",
-            (self.kitchen, instance_id, label, location, list(map(float, pos)),
-             float(confidence), event_id),
-        )
-
-    def where_is(self, label_or_instance: str) -> list[dict]:
-        """Where does the robot believe things of this kind are?
-
-        Matches an instance id first, then a label, so "bowl" and "bowl_c" both
-        work. Ordered by confidence then recency: the best guess first.
-        """
-        return self.db.query(
-            """SELECT instance_id, label, location, pos, confidence, stale,
-                      last_seen, last_verified
-               FROM object_beliefs
-               WHERE kitchen_id = %s AND (instance_id = %s OR label = %s)
-               ORDER BY stale ASC, confidence DESC, last_seen DESC""",
-            (self.kitchen, label_or_instance, label_or_instance),
-        )
-
-    @retry_serializable
-    def mark_stale(self, instance_id: str, why: str = "") -> None:
-        """The robot looked where it believed, and the thing was not there."""
-        self.db.execute(
-            """UPDATE object_beliefs SET stale = true, confidence = confidence * 0.4
-               WHERE kitchen_id = %s AND instance_id = %s""",
-            (self.kitchen, instance_id),
-        )
-        self.remember(
-            f"expected {instance_id} but it was not there{(' — ' + why) if why else ''}",
-            kind="observation", subject=instance_id, outcome="failure",
-        )
-
-    def beliefs(self) -> list[dict]:
-        return self.db.query(
-            """SELECT instance_id, label, location, confidence, stale, last_seen
-               FROM object_beliefs WHERE kitchen_id = %s ORDER BY label, instance_id""",
-            (self.kitchen,),
-        )
-
-    # ---- procedural: norms --------------------------------------------------
-
-    def home_for(self, label: str) -> dict | None:
-        rows = self.db.query(
-            "SELECT * FROM norms WHERE kitchen_id = %s AND label = %s", (self.kitchen, label)
-        )
-        return rows[0] if rows else None
-
-    @retry_serializable
-    def learn_norm(self, label: str, location: str) -> dict:
-        """Count one more episode of `label` ending up at `location`.
-
-        The home is then the place with the most episodes, and confidence is
-        the share of this label's episodes that went there — so a norm says
-        "the bowl went to the cabinet 3 times out of 4" rather than "the last
-        person to touch the bowl put it on the plate".
-
-        That distinction is not academic: with last-write-wins, one contrary
-        episode out of four flipped the norm outright and "put the bowl away"
-        resolved to the wrong place. Measured, then fixed here.
-
-        An instructed norm is never overwritten by observation — being told
-        outranks having noticed, and it must keep outranking it, or a norm the
-        human set would silently decay back to whatever the robot used to do.
-        """
-        self.db.execute(
-            """INSERT INTO norm_evidence (kitchen_id, label, location, n_episodes)
-               VALUES (%s,%s,%s,1)
-               ON CONFLICT (kitchen_id, label, location) DO UPDATE SET
-                 n_episodes = norm_evidence.n_episodes + 1, updated_at = now()""",
-            (self.kitchen, label, location),
-        )
-        existing = self.home_for(label)
-        if existing and existing["source"] == "instructed":
-            return existing
-
-        rows = self.db.query(
-            """SELECT location, n_episodes FROM norm_evidence
-               WHERE kitchen_id = %s AND label = %s
-               ORDER BY n_episodes DESC, updated_at DESC""",
-            (self.kitchen, label),
-        )
-        best = rows[0]
-        total = sum(int(r["n_episodes"]) for r in rows)
-        # Share of this label's episodes that went to the winning place. A tie
-        # lands at 0.5, which is exactly the right amount of confidence to have.
-        confidence = float(best["n_episodes"]) / total
-        self.db.execute(
-            """INSERT INTO norms (kitchen_id, label, home_location, confidence,
-                                  n_episodes, n_total, source)
-               VALUES (%s,%s,%s,%s,%s,%s,'learned')
-               ON CONFLICT (kitchen_id, label) DO UPDATE SET
-                 home_location = EXCLUDED.home_location,
-                 confidence = EXCLUDED.confidence,
-                 n_episodes = EXCLUDED.n_episodes, n_total = EXCLUDED.n_total,
-                 source = 'learned', updated_at = now()""",
-            (self.kitchen, label, best["location"], confidence,
-             int(best["n_episodes"]), total),
-        )
-        return self.home_for(label)
-
-    def norm_evidence(self, label: str) -> list[dict]:
-        """Every place this label has ended up, with counts. The audit trail
-        behind a norm — a claim about habit should show its tally."""
-        return self.db.query(
-            """SELECT location, n_episodes FROM norm_evidence
-               WHERE kitchen_id = %s AND label = %s
-               ORDER BY n_episodes DESC""",
-            (self.kitchen, label),
-        )
-
-    @retry_serializable
-    def instruct_norm(self, label: str, location: str) -> dict:
-        """A human said where these go. Outranks anything learned."""
-        self.db.execute(
-            """INSERT INTO norms (kitchen_id, label, home_location, confidence,
-                                  n_episodes, n_total, source)
-               VALUES (%s,%s,%s,0.95,1,1,'instructed')
-               ON CONFLICT (kitchen_id, label) DO UPDATE SET
-                 home_location = EXCLUDED.home_location, confidence = 0.95,
-                 source = 'instructed', updated_at = now()""",
-            (self.kitchen, label, location),
-        )
-        self.remember(
-            f"instructed: {label} belongs in {location}", kind="instruction", subject=label,
-        )
-        return self.home_for(label)
-
-    def norms(self) -> list[dict]:
-        return self.db.query(
-            "SELECT * FROM norms WHERE kitchen_id = %s ORDER BY label", (self.kitchen,)
-        )
-
-    # ---- procedural: skill stats -------------------------------------------
-
-    @retry_serializable
-    def record_attempt(self, skill: str, label: str, strategy: str, ok: bool) -> None:
-        self.db.execute(
-            """INSERT INTO skill_stats (robot_id, skill, object_label, strategy, n_try, n_ok)
-               VALUES (%s,%s,%s,%s,1,%s)
-               ON CONFLICT (robot_id, skill, object_label, strategy) DO UPDATE SET
-                 n_try = skill_stats.n_try + 1,
-                 n_ok = skill_stats.n_ok + EXCLUDED.n_ok, updated_at = now()""",
-            (self.robot, skill, label, strategy, 1 if ok else 0),
-        )
-
-    def best_strategy(self, skill: str, label: str, options: Sequence[str]) -> tuple[str, str]:
-        """Pick how to attempt something, from what has worked before.
-
-        Returns (strategy, why). Untried strategies are preferred over ones known
-        to fail — that is what turns a failure into a different attempt next time
-        rather than the same attempt forever.
-        """
-        rows = self.db.query(
-            """SELECT strategy, n_try, n_ok FROM skill_stats
-               WHERE robot_id = %s AND skill = %s AND object_label = %s""",
-            (self.robot, skill, label),
-        )
-        stats = {r["strategy"]: (r["n_try"], r["n_ok"]) for r in rows}
-        if not stats:
-            return options[0], "no experience; using default"
-
-        untried = [o for o in options if o not in stats]
-        failing = {s for s, (t, ok) in stats.items() if t >= 1 and ok == 0}
-        if untried and stats and all(s in failing for s in stats):
-            return untried[0], f"{sorted(failing)} failed before; trying {untried[0]}"
-
-        def rate(o: str) -> float:
-            t, ok = stats.get(o, (0, 0))
-            return (ok + 1) / (t + 2)  # Laplace: an untried option is not 0
-
-        best = max(options, key=rate)
-        t, ok = stats.get(best, (0, 0))
-        return best, f"{best} succeeded {ok}/{t} before"
-
-    def skill_table(self) -> list[dict]:
-        return self.db.query(
-            """SELECT skill, object_label, strategy, n_try, n_ok FROM skill_stats
-               WHERE robot_id = %s ORDER BY skill, object_label, strategy""",
-            (self.robot,),
-        )
-
-    # ---- working: tasks -----------------------------------------------------
-
-    @retry_serializable
-    def enqueue(self, goal: str, *, origin: str = "self", priority: int = 5,
-                subject: str | None = None, payload: dict | None = None) -> str:
-        rows = self.db.execute(
-            """INSERT INTO tasks (kitchen_id, goal, priority, origin, subject, payload)
-               VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""",
-            (self.kitchen, goal, priority, origin, subject, json.dumps(payload or {})),
-        )
-        return str(rows[0]["id"])
-
-    def has_open_task(self, subject: str) -> bool:
-        rows = self.db.query(
-            """SELECT 1 FROM tasks WHERE kitchen_id = %s AND subject = %s
-               AND state IN ('pending','claimed','running') LIMIT 1""",
-            (self.kitchen, subject),
-        )
-        return bool(rows)
-
-    @retry_serializable
-    def claim(self) -> dict | None:
-        """Take the next task. SKIP LOCKED so N workers never collide.
-
-        This is one transaction, not a select-then-update: two robots polling the
-        same queue must not both get the same job, and the database is the only
-        thing that can promise that.
-        """
-        with self.db.cursor(commit=True) as cur:
-            cur.execute(
-                """SELECT id, goal, priority, origin, subject, payload FROM tasks
-                   WHERE kitchen_id = %s AND state = 'pending'
-                   ORDER BY priority DESC, created_at ASC
-                   LIMIT 1 FOR UPDATE SKIP LOCKED""",
-                (self.kitchen,),
-            )
-            row = cur.fetchone()
-            if row is None:
+        with self._lock:
+            self._buf.append(frame)
+            if len(self._buf) < int(SEGMENT_S * FPS):
                 return None
-            cur.execute(
-                """UPDATE tasks SET state='running', claimed_by=%s, claimed_at=now()
-                   WHERE id = %s""",
-                (self.robot, row["id"]),
-            )
-            return dict(row)
+            buf, t0 = self._buf, self._t0
+            self._buf, self._t0 = [], time.time()
+        return self._cut(buf, t0, time.time())
 
-    @retry_serializable
-    def finish(self, task_id: str, ok: bool, result: str = "") -> None:
+    def _cut(self, buf: list[np.ndarray], t0: float, t1: float) -> str:
+        from .relmo import write_clip
+
+        clip_id = f"c-{uuid.uuid4().hex[:12]}"
+        path = os.path.join(self.root, f"{clip_id}.mp4")
+        write_clip(buf, path, fps=int(FPS))
         self.db.execute(
-            """UPDATE tasks SET state=%s, result=%s, finished_at=now() WHERE id=%s""",
-            ("done" if ok else "failed", result[:400], task_id),
+            """INSERT INTO clips (clip_id, kitchen_id, robot_id, camera,
+                                  t0, t1, n_frames, fps, path)
+               VALUES (%s,%s,%s,%s, to_timestamp(%s), to_timestamp(%s), %s,%s,%s)""",
+            (clip_id, self.kitchen, self.robot, self.camera,
+             t0, t1, len(buf), FPS, path),
         )
+        self.n_written += 1
+        self._encode_q.put((clip_id, path))
+        return clip_id
 
-    @retry_serializable
-    def preempt(self, task_id: str) -> None:
-        """Put a running task back so something more urgent can go first."""
-        self.db.execute(
-            "UPDATE tasks SET state='pending', claimed_by=NULL, claimed_at=NULL WHERE id=%s",
-            (task_id,),
-        )
+    def _encode_loop(self) -> None:
+        """Fill in vectors behind the simulator. See the module docstring."""
+        while not self._stop.is_set():
+            try:
+                clip_id, path = self._encode_q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if self.relmo is None or not self.relmo.ready:
+                continue
+            try:
+                vec, meta = self.relmo.encode(path, clip_id)
+                if vec is None:
+                    log.warning("encode failed for %s: %s", clip_id, meta.get("error"))
+                    continue
+                self.db.execute(
+                    "UPDATE clips SET embedding = %s, basis_id = %s WHERE clip_id = %s",
+                    (self.db.vector_param(vec), self.relmo.basis, clip_id))
+                self.n_encoded += 1
+            except Exception as exc:  # noqa: BLE001 — a bad clip must not end the shift
+                log.warning("encode error on %s: %s", clip_id, exc)
 
-    def task_board(self, limit: int = 20) -> list[dict]:
-        return self.db.query(
-            """SELECT id, goal, state, origin, priority, subject, result, created_at
-               FROM tasks WHERE kitchen_id = %s
-               ORDER BY (state='running') DESC, priority DESC, created_at DESC LIMIT %s""",
-            (self.kitchen, limit),
+    def pending(self) -> int:
+        return self._encode_q.qsize()
+
+    # ---- the read path ------------------------------------------------------
+
+    def similar(self, vector, k: int = 8) -> tuple[list[Clip], float]:
+        """Nearest segments by what they LOOKED like. -> (clips, latency_ms)."""
+        sim = self.db.similarity_expr("embedding")
+        t = time.perf_counter()
+        rows = self.db.query(
+            f"""SELECT clip_id, path, extract(epoch from t0) AS a,
+                       extract(epoch from t1) AS b, {sim} AS score
+                FROM clips
+                WHERE kitchen_id = %s AND embedding IS NOT NULL
+                ORDER BY score DESC LIMIT %s""",
+            (self.db.vector_param(vector), self.kitchen, k),
         )
+        ms = (time.perf_counter() - t) * 1e3
+        return [Clip(r["clip_id"], r["path"], float(r["a"]), float(r["b"]),
+                     float(r["score"])) for r in rows], ms
+
+    def recent(self, k: int = 8) -> list[Clip]:
+        rows = self.db.query(
+            """SELECT clip_id, path, extract(epoch from t0) AS a,
+                      extract(epoch from t1) AS b
+               FROM clips WHERE kitchen_id = %s AND embedding IS NOT NULL
+               ORDER BY t0 DESC LIMIT %s""", (self.kitchen, k))
+        return [Clip(r["clip_id"], r["path"], float(r["a"]), float(r["b"]))
+                for r in rows]
+
+    def vectors_for(self, clip_ids: list[str]) -> np.ndarray:
+        rows = self.db.query(
+            "SELECT clip_id, embedding FROM clips WHERE clip_id = ANY(%s)",
+            (list(clip_ids),))
+        by = {r["clip_id"]: _parse_vec(r["embedding"]) for r in rows}
+        return np.stack([by[c] for c in clip_ids if c in by]) if by else np.zeros((0, 512))
+
+    def stats(self) -> dict:
+        row = self.db.query(
+            """SELECT count(*) AS n,
+                      count(embedding) AS n_vec,
+                      coalesce(sum(n_frames)/nullif(max(fps),0), 0) AS seconds
+               FROM clips WHERE kitchen_id = %s""", (self.kitchen,))[0]
+        return dict(clips=int(row["n"]), indexed=int(row["n_vec"]),
+                    seconds=float(row["seconds"] or 0), pending=self.pending(),
+                    written=self.n_written, encoded=self.n_encoded)
 
     # ---- audit --------------------------------------------------------------
 
-    @retry_serializable
-    def decide(self, chose: str, rationale: str, recalled: Sequence[Recalled] = (),
-               latency_ms: float = 0.0, task_id: str | None = None,
-               source: str = "planner") -> str:
-        """Log a decision together with the memories that produced it.
-
-        If `recalled` is empty, the robot was not using its memory for this
-        decision — which is exactly the thing this table exists to make visible.
-        """
-        ids = [r.id for r in recalled] or None
+    def log_turn(self, heard: str, read_clips: list[str], weights, margin: float,
+                 retrieval_ms: float, reason_ms: float) -> str:
         rows = self.db.execute(
-            # ::uuid[] is required: the ids arrive as Python strings, which
-            # psycopg2 adapts to text[], and Postgres will not implicitly cast
-            # text[] to uuid[].
-            """INSERT INTO decisions (robot_id, kitchen_id, task_id, chose, rationale,
-                                      recalled_event_ids, recall_latency_ms, source)
-               VALUES (%s,%s,%s,%s,%s,%s::uuid[],%s,%s) RETURNING id""",
-            (self.robot, self.kitchen, task_id, chose, rationale[:800], ids,
-             float(latency_ms), source),
-        )
+            """INSERT INTO turns (kitchen_id, heard, read_clips, weights, margin,
+                                  retrieval_ms, reason_ms)
+               VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+            (self.kitchen, heard, list(read_clips),
+             [float(x) for x in (weights if weights is not None else [])],
+             float(margin), float(retrieval_ms), float(reason_ms)))
         return str(rows[0]["id"])
 
-    def decision_log(self, limit: int = 20) -> list[dict]:
-        return self.db.query(
-            """SELECT id, ts, chose, rationale, recall_latency_ms,
-                      COALESCE(array_length(recalled_event_ids,1),0) AS n_recalled
-               FROM decisions WHERE kitchen_id = %s ORDER BY ts DESC LIMIT %s""",
-            (self.kitchen, limit),
-        )
+    def finish_turn(self, turn_id: str, acted: bool, ok: bool | None,
+                    seconds: float) -> None:
+        self.db.execute(
+            "UPDATE turns SET acted=%s, succeeded=%s, seconds=%s WHERE id=%s",
+            (acted, ok, float(seconds), turn_id))
 
-    # ---- housekeeping -------------------------------------------------------
 
-    def stats(self) -> dict:
-        def n(t: str) -> int:
-            try:
-                return int(self.db.query(f"SELECT count(*) AS c FROM {t}")[0]["c"])
-            except Exception:
-                return -1
-
-        return dict(
-            events=n("events"), beliefs=n("object_beliefs"), norms=n("norms"),
-            tasks=n("tasks"), decisions=n("decisions"), skills=n("skill_stats"),
-            flavor=self.db.flavor, native_vectors=self.db.supports_vector(),
-        )
-
-    def wipe(self) -> None:
-        """Forget everything. Demo reset; never called by the agent."""
-        for t in ("decisions", "tasks", "skill_stats", "norm_evidence", "norms",
-                  "object_beliefs", "events"):
-            self.db.execute(f"DELETE FROM {t}")
+def _parse_vec(v) -> np.ndarray:
+    if isinstance(v, str):
+        return np.fromstring(v.strip("[]"), sep=",", dtype=np.float32)
+    return np.asarray(v, dtype=np.float32)

@@ -1,0 +1,182 @@
+[
+ {
+  "clip_id": "c-0be66c5bf0f4",
+  "goal": 0,
+  "instruction": "open the middle drawer of the cabinet",
+  "success": true
+ },
+ {
+  "clip_id": "c-a0eda6f35830",
+  "goal": 0,
+  "instruction": "open the middle drawer of the cabinet",
+  "success": true
+ },
+ {
+  "clip_id": "c-023712ef5c8f",
+  "goal": 1,
+  "instruction": "put the bowl on the stove",
+  "success": true
+ },
+ {
+  "clip_id": "c-ab7ba70cd4a2",
+  "goal": 1,
+  "instruction": "put the bowl on the stove",
+  "success": true
+ },
+ {
+  "clip_id": "c-4a28e80032a1",
+  "goal": 2,
+  "instruction": "put the wine bottle on top of the cabinet",
+  "success": true
+ },
+ {
+  "clip_id": "c-df83da061938",
+  "goal": 2,
+  "instruction": "put the wine bottle on top of the cabinet",
+  "success": true
+ },
+ {
+  "clip_id": "c-a57cb11a178d",
+  "goal": 2,
+  "instruction": "put the wine bottle on top of the cabinet",
+  "success": true
+ },
+ {
+  "clip_id": "c-bd33ee581f55",
+  "goal": 3,
+  "instruction": "open the top drawer and put the bowl inside",
+  "success": true
+ },
+ {
+  "clip_id": "c-26a36deafab4",
+  "goal": 3,
+  "instruction": "open the top drawer and put the bowl inside",
+  "success": true
+ },
+ {
+  "clip_id": "c-63eb27f0b026",
+  "goal": 3,
+  "instruction": "open the top drawer and put the bowl inside",
+  "success": true
+ },
+ {
+  "clip_id": "c-05a49618e337",
+  "goal": 3,
+  "instruction": "open the top drawer and put the bowl inside",
+  "success": true
+ },
+ {
+  "clip_id": "c-4186720966d1",
+  "goal": 3,
+  "instruction": "open the top drawer and put the bowl inside",
+  "success": true
+ },
+ {
+  "clip_id": "c-a09a63217fe3",
+  "goal": 3,
+  "instruction": "open the top drawer and put the bowl inside",
+  "success": true
+ },
+ {
+  "clip_id": "c-f68cf4b4f4bc",
+  "goal": 4,
+  "instruction": "put the bowl on top of the cabinet",
+  "success": true
+ },
+ {
+  "clip_id": "c-f56bc2506696",
+  "goal": 4,
+  "instruction": "put the bowl on top of the cabinet",
+  "success": true
+ },
+ {
+  "clip_id": "c-05b3bd18af0d",
+  "goal": 5,
+  "instruction": "push the plate to the front of the stove",
+  "success": true
+ },
+ {
+  "clip_id": "c-13c2b14ad9fc",
+  "goal": 5,
+  "instruction": "push the plate to the front of the stove",
+  "success": true
+ },
+ {
+  "clip_id": "c-1d4c207d5037",
+  "goal": 5,
+  "instruction": "push the plate to the front of the stove",
+  "success": true
+ },
+ {
+  "clip_id": "c-b55048bb39f4",
+  "goal": 5,
+  "instruction": "push the plate to the front of the stove",
+  "success": true
+ },
+ {
+  "clip_id": "c-9dac576b30f9",
+  "goal": 6,
+  "instruction": "put the cream cheese in the bowl",
+  "success": true
+ },
+ {
+  "clip_id": "c-266a3506d933",
+  "goal": 6,
+  "instruction": "put the cream cheese in the bowl",
+  "success": true
+ },
+ {
+  "clip_id": "c-a7e1bee75f2f",
+  "goal": 6,
+  "instruction": "put the cream cheese in the bowl",
+  "success": true
+ },
+ {
+  "clip_id": "c-9e371a791114",
+  "goal": 7,
+  "instruction": "turn on the stove",
+  "success": true
+ },
+ {
+  "clip_id": "c-ec1377b691a3",
+  "goal": 7,
+  "instruction": "turn on the stove",
+  "success": true
+ },
+ {
+  "clip_id": "c-c19a410b6cac",
+  "goal": 7,
+  "instruction": "turn on the stove",
+  "success": true
+ },
+ {
+  "clip_id": "c-482c761d7812",
+  "goal": 8,
+  "instruction": "put the bowl on the plate",
+  "success": true
+ },
+ {
+  "clip_id": "c-0bc0618c5214",
+  "goal": 8,
+  "instruction": "put the bowl on the plate",
+  "success": true
+ },
+ {
+  "clip_id": "c-f03ff314da4c",
+  "goal": 9,
+  "instruction": "put the wine bottle on the rack",
+  "success": true
+ },
+ {
+  "clip_id": "c-d976e9ac59cf",
+  "goal": 9,
+  "instruction": "put the wine bottle on the rack",
+  "success": true
+ },
+ {
+  "clip_id": "c-8489586155dd",
+  "goal": 9,
+  "instruction": "put the wine bottle on the rack",
+  "success": true
+ }
+]

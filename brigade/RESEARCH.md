@@ -145,6 +145,80 @@ fine-tune of the best G1 reader on RoboCasa's released episodes via
 simulation needed). Fine-tuning on *another corpus's* public labels stores no
 text about *this* kitchen and keeps the no-hardwire rule intact.
 
+## 4a. GATE RESULTS — run 2026-08-17
+
+### G1 — can a fast local reader say what happened? **FAIL**
+
+Six blind clips, re-recorded at **512 px** through a dedicated memory camera,
+**no options offered** (the earlier version's list of six places was scene
+vocabulary in the prompt and has been removed). Every episode succeeded and
+every truth label was verified against the simulator.
+
+| reader | correct | median | distinct answers |
+|---|---|---|---|
+| Moondream2 (agentview) | **1/6** | 787 ms | 6/6 |
+| Moondream2 + point-then-crop | **1/6** | 1564 ms | 5/6 |
+| Moondream2 (frontview) | 0/6 | 788 ms | 4/6 |
+| Moondream2 (sideview) | 0/6 | 782 ms | 6/6 |
+| FastVLM-0.5B | **0/6** | **203 ms** | 3/6 |
+| Qwen2-VL-2B-4bit | 0/6 | 922 ms | 4/6 |
+| *Qwen3-VL-30B-A3B (banned)* | *2/6* | *796 ms* | — |
+
+Pass bar was ≥4/6. Nothing came close. What was tried and did not help:
+**resolution** (256 → 512), **viewpoint** (agentview / frontview / sideview),
+**frame budget** (1, 4, 8, uniform vs end-weighted), and **localise-then-crop**
+using Moondream's native pointing. The failures are not random — readers get
+elevated, distinctive placements (cabinet, wine rack) and answer "table" for
+anything resting on the counter plane.
+
+**G2 passes**: FastVLM-0.5B reads in **203 ms**, comfortably inside the robot's
+~573 ms think interval. Latency was never the problem. Comprehension is.
+
+### G4 — can a noun route to the right clips? **FAIL, and instructively**
+
+SigLIP 2 text tower → the `sig` channel, the one text path `RELMO.md:1405`
+sanctions. 0/3 queries, every one **below chance**:
+
+```
+"a black bowl"  ->  g2 bottle .0766 | g9 bottle .0709 | g6 cheese .0615
+                    g8 bowl .0547 | g1 bowl .0546 | g4 bowl .0519      0/3
+```
+
+The bowl clips ranked **last** for "a black bowl". The diagnosis is structural,
+not a tuning failure: **every clip in this kitchen contains every object.** The
+bowl is present in the wine-bottle clip and the bottle is present in the bowl
+clip, so appearance-based noun matching has nothing to separate. What
+distinguishes these clips is *which object moved* — motion and relation, not
+presence. That is precisely the V-JEPA channel's job and precisely not the
+SigLIP channel's.
+
+So noun routing is the wrong retrieval key **for a fixed single-scene kitchen**.
+RelMo's query-by-example is the right one, and it already works here: querying
+with a bottle clip returned the wine-rack episodes at 0.6747 / 0.6263, ranked
+above the bowl and stove episodes.
+
+### What the gates establish
+
+* **Retrieval is not the bottleneck. Reading is.** Independently the same
+  conclusion as *Retrieve-Reason-Act* ("the bottleneck lies in visual procedural
+  understanding, not retrieval quality") and as this repo's own ladder
+  (label-free readouts 0.31–0.51, supervised probes 0.77–0.86).
+* **MemER fine-tuned its reader, and that is not incidental.** Their Qwen2.5-VL
+  is trained on the task. Every number above is what "off the shelf" costs.
+* **The reader must be trained.** That is the only remaining path to a
+  video-only memory that answers questions, and it is the fallback this document
+  named before the gates were run.
+
+### The training path, unchanged by the results
+
+`native/relmo/vjlerobot.py` already indexes RoboCasa's released LeRobot
+episodes — **26,674 episodes, 80,022 rendered mp4s, 63 task releases, present
+locally, no simulation needed**, each carrying video plus a task label. Training
+a reader on *that* corpus stores nothing about this kitchen: the supervision is
+another dataset's public labels, the same status as any pretrained checkpoint,
+and the no-hardwire rule holds. It is a training job measured in hours, not a
+prompt change.
+
 ## 5. What is deliberately NOT being done
 
 * **No captioning at write time** (ReMEmbR's pattern) — the entire product

@@ -1,0 +1,8 @@
+{
+ "n": 30,
+ "k": 10,
+ "full": 0.125,
+ "clip_ablated": 0.0,
+ "request_ablated": 0.125,
+ "chance": 0.1
+}
