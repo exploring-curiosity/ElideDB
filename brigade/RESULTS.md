@@ -1,15 +1,80 @@
 # Brigade — measured results
 
-Everything below came out of a run on this machine (Apple Silicon, macOS 15.5,
+Everything below came out of runs on this machine (Apple Silicon, macOS 15.5,
 PostgreSQL 18.6 + pgvector 0.8.6, π0.5 on MPS). Raw output is in
-`eval_logs/brigade_full.log` and `eval_logs/brigade_results.json`.
+`eval_logs/brigade_act.log`, `eval_logs/brigade_full.log` and the matching
+`.json` files.
 
 Reproduce:
 
 ```bash
-python -m brigade.run --wipe --seed \
-  --ab "put the bowl away" --ab "put the bottle away" --trials 3
+python -m brigade.act --wipe --seed          # THE SHIFT, both arms
+python -m brigade.run --wipe --seed --ab "put the bowl away" --trials 3
 ```
+
+---
+
+## 0. THE SHIFT — seven beats, each leaning on the one before
+
+**7/7 with memory, 1/7 without.** Each beat is a different kind of remembering,
+and they compound: beat 3 needs what beat 1 did, beat 4 needs what beat 3
+changed, beat 5 needs the verb from beat 3.
+
+| # | the human says | what memory has to supply | mem ON | mem OFF |
+|---|---|---|---|---|
+| 1 | "put the bowl on the stove" | nothing — explicit | ok | **ok** |
+| 2 | "where is the bowl?" | the belief written in beat 1 | ok | fail |
+| 3 | "put it back" | a referent for "it" + the bowl's norm | ok | fail |
+| 4 | "where is the bowl?" | the belief, now **changed** by beat 3 | ok | fail |
+| 5 | "and the bottle too" | the verb from beat 3 + the bottle's norm | ok | fail |
+| 6 | "now get the stove going" | a paraphrase with no shared words | ok | fail |
+| 7 | "feed the cat" | nothing — and it must say so | ok | fail |
+| | | | **7/7** | **1/7** |
+
+Beat 1 succeeding in both arms is the control, and it is the honest part of the
+table: a **complete** instruction does not need memory, and Brigade does not
+pretend otherwise — a fully specified request is passed to the policy untouched.
+
+### The two beats worth reading closely
+
+**Beats 2 and 4 are the same question with different correct answers.**
+
+```
+[2] "where is the bowl?"   robot: the bowl is on the flat stove
+                           truth: the bowl is on the flat stove      CORRECT  (1.4 ms)
+[3] "put it back"          -> put the bowl on top of the cabinet     SUCCESS
+[4] "where is the bowl?"   robot: the bowl is on the wooden cabinet
+                           truth: the bowl is on the wooden cabinet  CORRECT  (1.3 ms)
+```
+
+The belief was written three episodes earlier, survived them, and was *updated*
+by the one that moved the bowl again. That is retention plus revision, which is
+what separates a memory from a cache. With memory off there is no answer at all:
+`"the robot has no record of where anything was put"`.
+
+**Beat 3 contains no noun.**
+
+```
+[3] human: "put it back"
+    rewritten: "put the bowl back"      ("bowl" — the last thing handled)
+    executes:  "put the bowl on top of the cabinet"
+```
+
+Two reads composing: the referent for *it* comes from the last episode's
+subject, and *back* comes from the bowl's norm. A policy handed the three words
+"put it back" has nothing — and measurably does nothing, running to the step
+limit and failing. Beat 5 is the mirror image: "and the bottle too" has no verb,
+which is carried over from beat 3, and resolves to a **different** place because
+the bottle's norm is different.
+
+### How "where is the bowl?" is marked
+
+Against a record the harness keeps itself, of where each episode actually left
+things — not the robot's memory, and not the live simulator. The live sim cannot
+be the answer key here: LIBERO episodes are independent, so the vector env
+resets the kitchen between them, and a look at the sim after beat 1 reports the
+bowl back on the table. That mistake marked a correct answer WRONG in the first
+run of this act.
 
 ---
 
@@ -55,15 +120,31 @@ query rather than a claim:
 ## 2. Where the robot's history came from
 
 Nothing was INSERTed. The robot ran eight episodes, each on an instruction read
-from the benchmark, and wrote down what happened. All eight succeeded.
+from the benchmark, and wrote down both what happened and **what it saw
+afterwards**. All eight succeeded, and every observation matches its
+instruction:
 
 ```
-[1-3/8] put the bowl on top of the cabinet   ok  (12s, 6s, 6s)
-[4-5/8] put the wine bottle on the rack      ok  (14s, 10s)
-[6/8]   turn on the stove                    ok  (5s)
-[7/8]   put the cream cheese in the bowl     ok  (6s)
-[8/8]   put the bowl on the plate            ok  (5s)
+[1-3/8] put the bowl on top of the cabinet   ok   saw  bowl   -> wooden cabinet
+[4-5/8] put the wine bottle on the rack      ok   saw  bottle -> wine rack
+[6/8]   turn on the stove                    ok   (nothing moved — correct)
+[7/8]   put the cream cheese in the bowl     ok   saw  cheese -> akita black bowl
+[8/8]   put the bowl on the plate            ok   saw  bowl   -> plate
 ```
+
+"turn on the stove" moving nothing is not a gap — it is a button press, and a
+system that invented a placement for it would be writing fiction.
+
+Where an object ended up is worked out from the geometry, not from the sentence:
+a place has to contain the object in plan view and either support it from below
+or enclose it. Both halves earned their place by failing:
+
+* **nearest-body** answers "the bottle is at the bowl" whenever four objects
+  share a tabletop — technically the closest thing, useless as a location;
+* **support-only** loses the wine rack, because a bottle in a rack sits *below*
+  the rack's top, so "is it above" says no and the answer falls through to the
+  table;
+* **most-specific** is needed because everything in the room is over the table.
 
 The norms that fell out of it, as tallies rather than last-writes:
 
@@ -181,6 +262,9 @@ reached the demo.
 | assumed | measured | consequence |
 |---|---|---|
 | π0.5 generalises across LIBERO | KITCHEN_SCENE4 `libero_90`: **5/5** on two tasks that overlap training, **0/5** on three that do not | demo moved to `libero_goal`, which is measured at 97% |
+| the world persists after an episode | gymnasium runs `AutoresetMode.NEXT_STEP`: bowl at z=1.138 on the cabinet at step 86, z=0.898 on the table at step 87 | the terminal state is captured *during* the rollout; observing after `run()` returns recorded "nothing moved" for every success |
+| `geom_rbound` bounds a geom | it is a bounding **sphere** radius — a 1.7 m tabletop got a 0.85 m half-height and the table's box reached z=1.66 | per-axis extents from geom type and mesh vertices; nothing was above the table until this was fixed |
+| the live sim is the answer key | episodes are independent, so the kitchen resets between them | "where is the bowl?" is marked against the harness's own record of episode outcomes |
 | success follows the instruction given | `is_success = self._env.check_success()` — the *scene's* BDDL predicate | a resolution must name a goal, so memory stores one |
 | goal scenes differ | identical object sets, init states differ by ≤0.08 across 79 dims | one kitchen, ten goals, honestly |
 | group 0 is the visual mesh | group 0 is the **collision hull** | the kitchen was grey capsules |

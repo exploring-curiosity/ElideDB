@@ -48,6 +48,10 @@ class EpisodeResult:
     suite: str
     task_id: int
     frames: list = field(default_factory=list)   # RGB uint8, for the video memory
+    # Where everything was at the END of the episode, captured mid-rollout
+    # because the vector env resets on the step after termination.
+    final_obs: list = field(default_factory=list)
+    start_obs: list = field(default_factory=list)
 
     def to_json(self) -> dict:
         return dict(instruction=self.instruction, success=self.success,
@@ -142,6 +146,12 @@ class Pilot:
     def scene_payload(self) -> tuple[dict, bytes]:
         return self._scene_header, self._scene_blob
 
+    def look(self) -> list:
+        """What is where, right now. See world/observe.py."""
+        from ..world.observe import observe
+
+        return observe(self.env.envs[0]._env.env.sim) if self.env is not None else []
+
     def close(self) -> None:
         if self.env is not None:
             try:
@@ -174,6 +184,9 @@ class Pilot:
 
         self.policy.reset()
         obs, _ = env.reset(seed=[seed])
+        # AFTER the reset: `before` captured by a caller would otherwise be the
+        # previous episode's leftovers, since run() resets internally.
+        start_obs = self.look()
         limit = max_steps or int(env.call("_max_episode_steps")[0])
 
         frames: list = []
@@ -181,6 +194,15 @@ class Pilot:
         t0 = time.time()
         step = 0
         done = np.array([False])
+        # The terminal state has to be grabbed DURING the rollout, not after it.
+        # Gymnasium's vector env runs AutoresetMode.NEXT_STEP, so the step that
+        # reports termination has already put the kitchen back to its start:
+        # traced directly, the bowl reads z=1.138 on the cabinet at step 86 and
+        # z=0.898 on the table at step 87. Observing after run() returns
+        # therefore records "nothing moved" for every successful episode, and
+        # every belief written from it is wrong in the same silent way.
+        prev_obs: list = []
+        terminal_obs: list | None = None
 
         while not done.all() and step < limit:
             o = add_envs_task(env, preprocess_observation(obs))
@@ -197,9 +219,14 @@ class Pilot:
                 # episode counts as a success if it was EVER satisfied — the
                 # same rule lerobot-eval applies ("b n -> b", "any").
                 succeeded = succeeded or bool(np.any(info["final_info"]["is_success"]))
+                if terminal_obs is None:
+                    # The state entering this step, i.e. before the reset it may
+                    # have just performed.
+                    terminal_obs = prev_obs
             done = terminated | truncated | done
             step += 1
 
+            prev_obs = self.look()
             if on_frame is not None:
                 on_frame(self.scene.frame_bytes(), step)
             if keep_frames and step % 2 == 0:
@@ -208,5 +235,6 @@ class Pilot:
         return EpisodeResult(
             instruction=instruction, success=succeeded, steps=step,
             seconds=time.time() - t0, suite=self.suite, task_id=self.task_id,
-            frames=frames,
+            frames=frames, final_obs=terminal_obs if terminal_obs else prev_obs,
+            start_obs=start_obs,
         )

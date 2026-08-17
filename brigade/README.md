@@ -23,17 +23,33 @@ Same kitchen, same policy, same seeds, same goal predicate deciding what counts
 as done. The only variable is whether the sentence handed to the policy came out
 of the database or straight from the human.
 
-```
-python -m brigade.run --wipe --seed --ab "put the bowl away" --trials 3
+```bash
+python -m brigade.act --wipe --seed     # THE SHIFT — 7 beats, both arms
 ```
 
-See [`RESULTS.md`](RESULTS.md) for the numbers this produced.
+**7/7 with memory. 1/7 without.**
 
-The control matters more than the result. With memory **on**, the robot executes
-`put the bowl on top of the cabinet` — a sentence π0.5 was trained on. With
-memory **off**, it executes `put the bowl away` — a sentence π0.5 has never
-seen, because it is not a LIBERO task string and never was. Both are scored by
-the same BDDL goal predicate. Nothing else differs.
+| # | the human says | needs from memory | ON | OFF |
+|---|---|---|---|---|
+| 1 | "put the bowl on the stove" | nothing — explicit | ok | **ok** |
+| 2 | "where is the bowl?" | the belief written in beat 1 | ok | fail |
+| 3 | "put it back" | a referent for "it" + the bowl's norm | ok | fail |
+| 4 | "where is the bowl?" | the belief, **changed** by beat 3 | ok | fail |
+| 5 | "and the bottle too" | the verb from beat 3 + the bottle's norm | ok | fail |
+| 6 | "now get the stove going" | a paraphrase with no shared words | ok | fail |
+| 7 | "feed the cat" | nothing — and it must say so | ok | fail |
+
+Beat 1 succeeding in both arms is the point of including it: a **complete**
+instruction does not need memory, and Brigade passes one to the policy
+untouched rather than pretending otherwise.
+
+Beats 2 and 4 are the same question with different correct answers — the bowl is
+on the stove, then on the cabinet — because the world moved and the robot
+noticed. Beat 3 contains **no noun at all**; "it" is filled in from the last
+episode and "back" from the norm, two reads composing into one instruction.
+
+See [`RESULTS.md`](RESULTS.md) for the full numbers, including the single-request
+A/B (6/6 vs 0/6) and the timings.
 
 ---
 
@@ -43,6 +59,7 @@ the same BDDL goal predicate. Nothing else differs.
 |---|---|---|
 | **execution** | π0.5 (3.6 B) via LeRobot on LIBERO | measured **98.0%** over 400 episodes on this machine, beating both published reproductions (LeRobot 97.5%, Physical Intelligence 96.85%). Failures in the demo are therefore attributable to the memory layer, not the hands. |
 | **episodic + procedural memory** | PostgreSQL 18 + pgvector 0.8.6, HNSW, `<=>` | the schema is written in CockroachDB dialect and translated for Postgres. Same tables, same queries, same operator — `BRIGADE_DSN` is the only thing that changes to move it. |
+| **spatial memory** | `object_beliefs`, written from what the robot sees after each episode | a *belief* is "the bowl is on the stove" and goes stale; a *norm* is "bowls live on the cabinet" and outlives the object. Conflating them is the classic mistake, so they are separate tables and separate panels. |
 | **video memory** | RelMo (V-JEPA 2 + SigLIP 2), 512-d, HNSW | answers "have I ever *seen* anything like this?", which text cannot. |
 | **view** | three.js over the simulator's own geometry | not a video stream — see below. |
 

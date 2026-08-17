@@ -1,0 +1,242 @@
+{
+ "beats": [
+  {
+   "beat": "1",
+   "said": "put the bowl on the stove",
+   "needs": "nothing \u2014 explicit",
+   "kind": "do"
+  },
+  {
+   "beat": "2",
+   "said": "where is the bowl?",
+   "needs": "spatial belief written in beat 1",
+   "kind": "ask"
+  },
+  {
+   "beat": "3",
+   "said": "put it back",
+   "needs": "referent for 'it' + the norm for bowls",
+   "kind": "do"
+  },
+  {
+   "beat": "4",
+   "said": "where is the bowl?",
+   "needs": "the belief, now CHANGED by beat 3",
+   "kind": "ask"
+  },
+  {
+   "beat": "5",
+   "said": "and the bottle too",
+   "needs": "the verb from beat 3 + the bottle's own norm",
+   "kind": "do"
+  },
+  {
+   "beat": "6",
+   "said": "now get the stove going",
+   "needs": "a paraphrase with no shared words",
+   "kind": "do"
+  },
+  {
+   "beat": "7",
+   "said": "feed the cat",
+   "needs": "nothing \u2014 and it must say so",
+   "kind": "abstain"
+  }
+ ],
+ "rows": [
+  {
+   "beat": "1",
+   "said": "put the bowl on the stove",
+   "kind": "do",
+   "memory": true,
+   "ok": true,
+   "answer": "put the bowl on the stove",
+   "seconds": 6.24,
+   "abstained": false
+  },
+  {
+   "beat": "2",
+   "said": "where is the bowl?",
+   "kind": "ask",
+   "memory": true,
+   "ok": true,
+   "answer": "the bowl is on the flat stove",
+   "place": "flat stove",
+   "actual": "flat stove"
+  },
+  {
+   "beat": "3",
+   "said": "put it back",
+   "kind": "do",
+   "memory": true,
+   "ok": true,
+   "answer": "put the bowl on top of the cabinet",
+   "seconds": 6.23,
+   "abstained": false
+  },
+  {
+   "beat": "4",
+   "said": "where is the bowl?",
+   "kind": "ask",
+   "memory": true,
+   "ok": true,
+   "answer": "the bowl is on the wooden cabinet",
+   "place": "wooden cabinet",
+   "actual": "wooden cabinet"
+  },
+  {
+   "beat": "5",
+   "said": "and the bottle too",
+   "kind": "do",
+   "memory": true,
+   "ok": true,
+   "answer": "put the wine bottle on the rack",
+   "seconds": 12.78,
+   "abstained": false
+  },
+  {
+   "beat": "6",
+   "said": "now get the stove going",
+   "kind": "do",
+   "memory": true,
+   "ok": true,
+   "answer": "turn on the stove",
+   "seconds": 5.44,
+   "abstained": false
+  },
+  {
+   "beat": "7",
+   "said": "feed the cat",
+   "kind": "abstain",
+   "memory": true,
+   "ok": true,
+   "answer": "abstained"
+  },
+  {
+   "beat": "1",
+   "said": "put the bowl on the stove",
+   "kind": "do",
+   "memory": false,
+   "ok": true,
+   "answer": "put the bowl on the stove",
+   "seconds": 6.25,
+   "abstained": false
+  },
+  {
+   "beat": "2",
+   "said": "where is the bowl?",
+   "kind": "ask",
+   "memory": false,
+   "ok": false,
+   "answer": "memory is off \u2014 the robot has no record of where anything was put",
+   "place": null,
+   "actual": null
+  },
+  {
+   "beat": "3",
+   "said": "put it back",
+   "kind": "do",
+   "memory": false,
+   "ok": false,
+   "answer": "put it back",
+   "seconds": 19.54,
+   "abstained": false
+  },
+  {
+   "beat": "4",
+   "said": "where is the bowl?",
+   "kind": "ask",
+   "memory": false,
+   "ok": false,
+   "answer": "memory is off \u2014 the robot has no record of where anything was put",
+   "place": null,
+   "actual": null
+  },
+  {
+   "beat": "5",
+   "said": "and the bottle too",
+   "kind": "do",
+   "memory": false,
+   "ok": false,
+   "answer": "and the bottle too",
+   "seconds": 19.63,
+   "abstained": false
+  },
+  {
+   "beat": "6",
+   "said": "now get the stove going",
+   "kind": "do",
+   "memory": false,
+   "ok": false,
+   "answer": "now get the stove going",
+   "seconds": 21.48,
+   "abstained": false
+  },
+  {
+   "beat": "7",
+   "said": "feed the cat",
+   "kind": "abstain",
+   "memory": false,
+   "ok": false,
+   "answer": "feed the cat"
+  }
+ ],
+ "norms": [
+  {
+   "kitchen_id": "kitchen-1",
+   "label": "bottle",
+   "home_location": "rack",
+   "confidence": 1.0,
+   "n_episodes": 3,
+   "n_total": 3,
+   "source": "learned",
+   "updated_at": "2026-08-17 00:13:04.740295-04:00"
+  },
+  {
+   "kitchen_id": "kitchen-1",
+   "label": "bowl",
+   "home_location": "cabinet",
+   "confidence": 0.6666666666666666,
+   "n_episodes": 4,
+   "n_total": 6,
+   "source": "learned",
+   "updated_at": "2026-08-17 00:12:50.655695-04:00"
+  },
+  {
+   "kitchen_id": "kitchen-1",
+   "label": "cheese",
+   "home_location": "bowl",
+   "confidence": 1.0,
+   "n_episodes": 1,
+   "n_total": 1,
+   "source": "learned",
+   "updated_at": "2026-08-17 00:12:28.906708-04:00"
+  }
+ ],
+ "beliefs": [
+  {
+   "instance_id": "wine_bottle_1",
+   "label": "bottle",
+   "location": "wine rack",
+   "confidence": 1.0,
+   "stale": false,
+   "last_seen": "2026-08-17 00:13:04.728775-04:00"
+  },
+  {
+   "instance_id": "akita_black_bowl_1",
+   "label": "bowl",
+   "location": "wooden cabinet",
+   "confidence": 1.0,
+   "stale": false,
+   "last_seen": "2026-08-17 00:12:50.632000-04:00"
+  },
+  {
+   "instance_id": "cream_cheese_1",
+   "label": "cheese",
+   "location": "akita black bowl",
+   "confidence": 1.0,
+   "stale": false,
+   "last_seen": "2026-08-17 00:12:28.895527-04:00"
+  }
+ ]
+}

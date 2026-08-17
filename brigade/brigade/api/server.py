@@ -182,6 +182,7 @@ def create_app(live: Live, memory_getter) -> FastAPI:
         return dict(
             stats=mem.stats(),
             norms=[dict(r) for r in mem.norms()],
+            beliefs=[_jsonable(r) for r in mem.beliefs()],
             events=[_jsonable(r) for r in mem.recent(24)],
             decisions=[_jsonable(r) for r in mem.decision_log(12)],
         )

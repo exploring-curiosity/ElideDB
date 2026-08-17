@@ -227,7 +227,11 @@ td.res{text-align:right; white-space:nowrap}
     <div id="hits"><div class="empty">no query yet</div></div>
   </div>
   <div class="sec">
-    <h2>Norms <em>where things belong</em></h2>
+    <h2>Beliefs <em>where things ARE</em></h2>
+    <div id="beliefs"><div class="empty">nothing observed yet</div></div>
+  </div>
+  <div class="sec">
+    <h2>Norms <em>where things BELONG</em></h2>
     <div id="norms"><div class="empty">nothing learned yet</div></div>
   </div>
   <div class="sec">
@@ -448,6 +452,11 @@ function showResolution(r){
   $('r-lat').textContent = r.latency_ms != null ? `${r.latency_ms} ms` : '';
   const rows = [];
   rows.push(`<div class="kv"><b>asked</b><span>${esc(r.request)}</span></div>`);
+  // "put it back" -> "put the bowl back" is the most legible memory read in the
+  // system: the sentence gains a noun it did not contain.
+  if(r.expanded && r.expanded !== r.request)
+    rows.push(`<div class="kv"><b>expanded</b><span style="color:var(--amber)">${esc(r.expanded)}
+      <div class="norm n">${esc(r.rewrite_note||'')}</div></span></div>`);
   rows.push(`<div class="kv"><b>resolved</b><span style="color:${r.instruction?'var(--phos)':'var(--coral)'}">${
       esc(r.instruction || 'ABSTAINED')}</span></div>`);
   if(r.norm) rows.push(`<div class="kv"><b>norm</b><span>${esc(r.norm.label)} → ${esc(r.norm.home_location)} <span class="norm n">(${r.norm.n_episodes} ep)</span></span></div>`);
@@ -490,6 +499,14 @@ async function refreshMemory(){
        <div class="r">${esc(n.home_location)}
        <div class="n">${n.source} · ${n.n_episodes} ep · conf ${(+n.confidence).toFixed(2)}</div></div></div>`
     ).join('') : '<div class="empty">nothing learned yet</div>';
+    // A belief is about NOW and can go stale; a norm outlives the object. The
+    // panels are separate because conflating them is the classic mistake — the
+    // bowl being on the stove says nothing about where bowls live.
+    $('beliefs').innerHTML = (m.beliefs || []).length ? m.beliefs.map(b =>
+      `<div class="norm"><div class="l">${esc(b.label)}${b.stale?' <span class="bad">?</span>':''}</div>
+       <div class="r">${esc(b.location)}
+       <div class="n">seen ${esc(String(b.last_seen||'').slice(11,19))} · conf ${(+b.confidence).toFixed(2)}</div></div></div>`
+    ).join('') : '<div class="empty">nothing observed yet</div>';
   }catch(e){}
 }
 

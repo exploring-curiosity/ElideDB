@@ -53,8 +53,8 @@ SCENE_SUITE = "libero_goal"
 
 # What a human types to try it. Not a task list — these are underspecified on
 # purpose, and none of them is a string pi0.5 has ever been trained on.
-PROMPTS = ["put the bowl away", "put the bottle away", "tidy up the bowl",
-           "make the stove ready", "put the cream cheese away"]
+PROMPTS = ["put the bowl on the stove", "where is the bowl?", "put it back",
+           "and the bottle too", "now get the stove going", "feed the cat"]
 
 # The history the robot is given in --seed: (goal id in libero_goal, repeats).
 # The instruction is read from the benchmark, never typed here, so the words the
@@ -75,6 +75,10 @@ class Brigade:
         self.pilot = Pilot(device=device)
         self.relmo = relmo_mod.RelMoSidecar()
         self.clips = os.path.join(CFG.artifacts, "clips")
+        # The harness's independent record of where episodes actually left
+        # things. Deliberately not read by the robot and not stored in the
+        # database — it is the answer key the robot's memory is marked against.
+        self.truth: dict[str, str] = {}
 
     # ---- boot ---------------------------------------------------------------
 
@@ -141,6 +145,14 @@ class Brigade:
         the same definition of having done the thing — otherwise "memory off
         failed" would only mean "it was marked against a different target".
         """
+        # A question is answered from memory and nothing is executed. Routing it
+        # here rather than into the policy is not a shortcut: "where is the
+        # bowl" has no motor answer, and pretending it does would be the exact
+        # kind of fake the rest of this avoids.
+        if self.resolver.is_question(request):
+            return dict(ok=self.where_is(request, use_memory).get("correct", False),
+                        question=True)
+
         self.live.set_status("thinking", "reading memory", request=request,
                              memory_used=use_memory, instruction=None)
 
@@ -178,6 +190,7 @@ class Brigade:
                              resolution=res.to_json())
 
         ep = self.pilot.run(instruction, on_frame=lambda buf, step: self.live.publish_frame(buf))
+        seen = self.observe_after(ep, use_memory)
 
         self.live.say("ok" if ep.success else "fail",
                       f'{"succeeded" if ep.success else "failed"} in {ep.seconds:.0f}s '
@@ -202,6 +215,74 @@ class Brigade:
                              request=request, instruction=instruction,
                              memory_used=use_memory, resolution=res.to_json())
         return dict(ok=ep.success, resolution=res.to_json(), episode=ep.to_json())
+
+    # ---- spatial memory -----------------------------------------------------
+
+    def observe_after(self, ep, use_memory: bool = True) -> list:
+        """Look at what moved during an episode, and write down where it is now.
+
+        Both states come from the episode itself: `start_obs` is captured after
+        the env reset, `final_obs` at termination but before the vector env's
+        NEXT_STEP autoreset undoes it. Comparing anything captured outside
+        `run()` records "nothing moved" for every successful episode.
+
+        Only what actually moved is recorded, so `last_seen` stays a signal of
+        what the robot has been doing rather than a heartbeat.
+
+        With memory off nothing is written — the ablation has to cover *making*
+        memories as well as reading them, or the off arm quietly accumulates the
+        beliefs that the on arm is supposed to be the only one to have.
+        """
+        from .world.observe import moved
+
+        changed = moved(ep.start_obs, ep.final_obs)
+        # The answer key updates whether or not memory is on: what happened in
+        # the world does not depend on whether the robot wrote it down.
+        for o in changed:
+            self.truth[o.label] = o.place
+        if not use_memory:
+            return changed
+        for o in changed:
+            self.mem.see(o.instance, o.label, o.place, o.pos,
+                         confidence=1.0 if o.distance < 0.25 else 0.6)
+        if changed:
+            self.live.say("memory", "observed: " + ", ".join(
+                f"{o.label} → {o.place}" for o in changed))
+        return changed
+
+    def where_is(self, request: str, use_memory: bool = True) -> dict:
+        """Answer a question about the world. No episode runs.
+
+        Scored against `self.truth`, which is the harness's own tally of where
+        each episode actually left things — NOT a second perception system and
+        NOT the robot's memory. It exists because the live simulator cannot be
+        the ground truth here: LIBERO episodes are independent, so the vector
+        env resets the kitchen between them and a look at the sim after beat 1
+        reports the bowl back on the table where it started. Asking "where is
+        the bowl" against that reset world marked a correct answer WRONG.
+
+        What is actually being tested is retention: the belief was written
+        several episodes ago, has to survive them, and has to be *updated* by
+        the one that moved the object again. Beat 4 asking the same question as
+        beat 2 and needing a different answer is the whole point.
+        """
+        if not use_memory:
+            ans = dict(answered=False, latency_ms=0.0, correct=False,
+                       text="memory is off — the robot has no record of where anything was put")
+        else:
+            ans = self.resolver.answer_where(request)
+            if ans.get("answered"):
+                actual = self.truth.get(ans["label"])
+                ans["actual_place"] = actual
+                ans["correct"] = bool(actual and actual == ans["place"])
+        self.live.say("memory" if ans.get("answered") else "fail", "Q: " + request)
+        self.live.say("ok" if ans.get("correct") else "fail", "A: " + ans["text"])
+        self.live.record(dict(request=request, memory=use_memory, question=True,
+                              instruction=ans.get("text"), success=bool(ans.get("correct")),
+                              seconds=0.0, abstained=not ans.get("answered")))
+        self.live.set_status("idle", ans["text"], request=request,
+                             memory_used=use_memory, instruction=ans["text"])
+        return ans
 
     # ---- video memory -------------------------------------------------------
 
@@ -272,10 +353,13 @@ def seed(bg: Brigade, repeats_scale: int = 1) -> None:
             bg.live.set_status("acting", f"seeding {done}/{total}", instruction=instruction)
             ep = bg.pilot.run(instruction,
                               on_frame=lambda b, s: bg.live.publish_frame(b))
+            seen = bg.observe_after(ep)
             eid = bg.resolver.learn(instruction, instruction, ep.success, ep.seconds,
                                     suite=SCENE_SUITE, goal_id=goal_id)
             bg.remember_video(ep, eid, instruction)
-            print(f"{'ok' if ep.success else 'FAILED'} in {ep.seconds:.0f}s", flush=True)
+            print(f"{'ok' if ep.success else 'FAILED'} in {ep.seconds:.0f}s"
+                  + (f"  [saw {', '.join(f'{o.label}→{o.place}' for o in seen)}]" if seen else ""),
+                  flush=True)
     print("\nlearned norms:")
     for n in bg.mem.norms():
         tally = ", ".join(f"{e['location']}x{e['n_episodes']}"

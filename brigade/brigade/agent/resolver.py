@@ -146,6 +146,11 @@ class Resolution:
     # too comes out of memory rather than out of a table in the source.
     suite: str | None = None
     task_id: int | None = None
+    # What the request became once pronouns and ellipsis were expanded against
+    # memory. Shown to the viewer because "put it back" -> "put the bowl back"
+    # is where the memory read is most visible.
+    expanded: str | None = None
+    rewrite_note: str | None = None
 
     @property
     def abstained(self) -> bool:
@@ -162,6 +167,7 @@ class Resolution:
             confidence=round(self.confidence, 4), abstained=self.abstained,
             rationale=self.rationale, latency_ms=round(self.latency_ms, 2),
             memory_used=self.memory_used, suite=self.suite, task_id=self.task_id,
+            expanded=self.expanded, rewrite_note=self.rewrite_note,
             norm=dict(self.norm) if self.norm else None,
             candidates=[dict(instruction=c.instruction, score=round(c.score, 4),
                              n_support=c.n_support) for c in self.candidates],
@@ -177,6 +183,102 @@ class Resolver:
         self.mem = memory
         self.floor = floor
         self.k = k
+
+    # ------------------------------------------------------- anaphora/ellipsis
+
+    def antecedent(self) -> dict | None:
+        """What "it" refers to: the last thing the robot actually handled.
+
+        A pronoun has no referent in the pixels. "Put it back" contains no noun
+        at all, so a policy handed those three words has nothing to act on, and
+        no amount of looking at the kitchen will supply the missing argument —
+        the referent is in the conversation, and the conversation is in the
+        database. This is the sharpest form of the whole claim.
+        """
+        rows = self.mem.db.query(
+            """SELECT subject, payload, ts FROM events
+               WHERE kitchen_id = %s AND kind = 'outcome' AND subject IS NOT NULL
+               ORDER BY ts DESC LIMIT 1""",
+            (self.mem.kitchen,),
+        )
+        return rows[0] if rows else None
+
+    def rewrite(self, request: str) -> tuple[str, str | None]:
+        """Expand pronouns and ellipsis against memory. -> (rewritten, note).
+
+        Two ordinary constructions, both resolved from the robot's own history
+        rather than from any list written here:
+
+          "put it back"      a pronoun with no noun -> the last subject handled
+          "and the bottle too"  a noun with no verb -> the last verb used
+
+        If memory is empty, both are left alone and the request goes through
+        untouched — which is exactly what the memory-off arm sees.
+        """
+        text = request.strip()
+        low = text.lower()
+
+        # pronoun: no known noun in the sentence, but a pronoun standing in
+        if re.search(r"\b(it|that|them|those|the same)\b", low) and not self._names_something(low):
+            ante = self.antecedent()
+            if ante and ante["subject"]:
+                subj = ante["subject"]
+                out = re.sub(r"\b(it|that|them|those|the same)\b", f"the {subj}", text,
+                             count=1, flags=re.I)
+                return out, f'"{ante["subject"]}" — the last thing handled'
+
+        # ellipsis: names a thing, carries no verb ("and the bottle too")
+        if self._names_something(low) and not _VERBS.search(_ARTICLES.sub("", low).strip()) \
+                and not low.startswith(("where", "what", "which", "did", "have", "is")):
+            rows = self.mem.db.query(
+                """SELECT payload FROM events
+                   WHERE kitchen_id = %s AND kind = 'outcome'
+                   ORDER BY ts DESC LIMIT 1""",
+                (self.mem.kitchen,),
+            )
+            if rows and (rows[0]["payload"] or {}).get("request"):
+                prev = rows[0]["payload"]["request"]
+                verb = _VERBS.match(_ARTICLES.sub("", prev.strip()))
+                if verb:
+                    noun = re.sub(r"^\s*(and|also)\s+", "", text, flags=re.I)
+                    noun = re.sub(r"\s+(too|as well|also)\s*$", "", noun, flags=re.I)
+                    return f"{verb.group(1)} {noun}", f'verb "{verb.group(1)}" carried over from "{prev}"'
+        return text, None
+
+    def _names_something(self, low: str) -> bool:
+        """Does this sentence mention anything the robot has a name for?"""
+        known = {n["label"] for n in self.mem.norms()}
+        known |= {b["label"] for b in self.mem.beliefs()}
+        return bool(known & set(tokens(low)))
+
+    # ------------------------------------------------------------- questions
+
+    def is_question(self, request: str) -> bool:
+        return bool(re.match(r"^\s*(where|what|which|did|have|is|was)\b", request.strip(), re.I))
+
+    def answer_where(self, request: str) -> dict:
+        """"where is the bowl?" — answered purely from `object_beliefs`.
+
+        No episode runs. This is the beat that cannot be faked by a policy that
+        happens to be looking at the right thing: it is a read of what the robot
+        recorded when it put the object down, and with memory off there is
+        simply no answer to give.
+        """
+        t0 = time.perf_counter()
+        known = {n["label"] for n in self.mem.norms()} | {b["label"] for b in self.mem.beliefs()}
+        hit = next((t for t in tokens(request) if t in known), None)
+        beliefs = self.mem.where_is(hit) if hit else []
+        ms = (time.perf_counter() - t0) * 1e3
+        if not beliefs:
+            return dict(answered=False, label=hit, latency_ms=round(ms, 2),
+                        text=(f"I have no memory of where the {hit} is" if hit
+                              else "I do not know what you are asking about"))
+        b = beliefs[0]
+        return dict(answered=True, label=hit, place=b["location"],
+                    pos=[round(float(v), 4) for v in (b["pos"] or [])],
+                    confidence=float(b["confidence"]), stale=bool(b["stale"]),
+                    last_seen=str(b["last_seen"]), latency_ms=round(ms, 2),
+                    text=f"the {hit} is on the {b['location']}")
 
     # ---------------------------------------------------------------- resolve
 
@@ -198,10 +300,32 @@ class Resolver:
                 latency_ms=(time.perf_counter() - t0) * 1e3,
             )
 
+        # 0. expand pronouns and ellipsis first. "put it back" carries no noun,
+        # so there is nothing to embed until memory supplies the referent.
+        expanded, note = self.rewrite(request)
+
+        # 0b. If the human named BOTH the thing and the place, the request is
+        # already an instruction and memory has no business editing it. This
+        # keeps the claim honest in the direction that matters: memory is not a
+        # filter every command passes through, it is what fills a gap. Without
+        # this, "put the bowl on the stove" gets "corrected" to whatever the
+        # robot did most recently with a bowl, which is worse than no memory.
+        subj, place = split_instruction(expanded)
+        if subj and place:
+            return Resolution(
+                request=request, instruction=expanded, confidence=1.0,
+                candidates=[], recalled=[], norm=self._norm_for(expanded),
+                rationale=(f"{note + '; ' if note else ''}complete instruction — "
+                           f"names both the object ({subj}) and the place ({place}), "
+                           f"so nothing needed recalling"),
+                latency_ms=(time.perf_counter() - t0) * 1e3,
+                expanded=expanded, rewrite_note=note,
+            )
+
         # 1-2. nearest past successes. `floor=0` here so the caller sees the
         # near misses too: a resolution that abstained is much easier to trust
         # when you can see what it *did* find and how far short it fell.
-        recalled = self.mem.recall(request, k=self.k, floor=0.0)
+        recalled = self.mem.recall(expanded, k=self.k, floor=0.0)
         successes = [r for r in recalled
                      if r.outcome == "success" and r.payload.get("instruction")]
 
@@ -221,19 +345,20 @@ class Resolver:
         candidates = sorted(by_instr.values(), key=lambda c: (-c.score, -c.n_support))
 
         # 4. the norm for whatever the request is about, as corroboration.
-        norm = self._norm_for(request)
+        norm = self._norm_for(expanded)
 
         latency = (time.perf_counter() - t0) * 1e3
+        prefix = f"{note}; " if note else ""
 
         if not candidates or candidates[0].score < self.floor:
             best = candidates[0].score if candidates else 0.0
             return Resolution(
                 request=request, instruction=None, confidence=best,
                 candidates=candidates[:5], recalled=recalled[:5], norm=norm,
-                rationale=(f"nothing in memory resembles this "
+                rationale=(f"{prefix}nothing in memory resembles this "
                            f"(best {best:.2f} < floor {self.floor:.2f}) — "
                            f"the robot has not done anything like it before"),
-                latency_ms=latency,
+                latency_ms=latency, expanded=expanded, rewrite_note=note,
             )
 
         # A norm is evidence about WHERE, so it can promote a lower-scoring
@@ -245,8 +370,9 @@ class Resolver:
         return Resolution(
             request=request, instruction=chosen.instruction, confidence=chosen.score,
             candidates=candidates[:5], recalled=recalled[:5], norm=norm,
-            rationale=why, latency_ms=latency,
+            rationale=prefix + why, latency_ms=latency,
             suite=chosen.suite, task_id=chosen.task_id,
+            expanded=expanded, rewrite_note=note,
         )
 
     def _norm_for(self, request: str) -> dict | None:
