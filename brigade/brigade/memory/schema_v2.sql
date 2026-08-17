@@ -42,14 +42,33 @@ CREATE TABLE IF NOT EXISTS clips (
     -- which is why it is a string and not a blob.
     path          STRING NOT NULL,
 
-    -- RelMo. concat(whitened pooled V-JEPA, whitened pooled SigLIP2)/sqrt(2),
-    -- so the database's cosine IS RelMo's stage-1 prefilter rather than an
-    -- approximation of it — verified to 2.3e-08.
+    -- RelMo STAGE 1. concat(whitened pooled V-JEPA, whitened pooled SigLIP2)
+    -- /sqrt(2), so the database's cosine IS RelMo's prefilter rather than an
+    -- approximation of it — verified to 2.3e-08. This column exists to be
+    -- INDEXED; it is a coarse quantiser, not the memory.
     embedding     VECTOR(512),
     -- The whitening basis is fitted over a store's contents, so vectors under
     -- different bases are incomparable. Carrying the id turns a silent
-    -- corruption into a visible namespace.
+    -- corruption into a visible namespace. It changes when the kitchen refits
+    -- the basis on its own video, which is how RelMo is deployed on a new site.
     basis_id      STRING,
+
+    -- THE MOTION VIEW. The same trace reduced a different way: the per-channel
+    -- standard deviation over time, i.e. how much each feature MOVED while the
+    -- span ran, rather than where it sat. The mean is the same for every
+    -- behaviour here because it is the same kitchen; the spread is not.
+    -- Measured on 59 spans, nearest-neighbour behaviour match with overlapping
+    -- spans barred, chance 0.100: mean 0.475, DTW 0.576, this 0.712.
+    -- Indexed like the other, so a query can be asked of either view.
+    motion        VECTOR(768),
+
+    -- RelMo STAGE 2. The descriptor trace: (steps, 1024) V-JEPA + (steps, 768)
+    -- SigLIP2, on disk beside the video. Stage 1 narrows to a shortlist and DTW
+    -- over these traces ranks it, because neither reduction above sees ORDER —
+    -- a mean and a spread are both invariant to shuffling the frames. Still not
+    -- a fact about the kitchen: two float arrays with no name for anything.
+    trace_path    STRING,
+    steps         INT,
 
     INDEX clips_by_time (kitchen_id, t0 DESC)
 );

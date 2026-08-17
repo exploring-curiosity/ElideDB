@@ -142,6 +142,23 @@ button:disabled{opacity:.35; cursor:not-allowed}
 .sec h2 em{font-style:normal; color:var(--mute); font-size:10px; letter-spacing:.08em;
   font-family:var(--mono)}
 .empty{color:#3a4050; font-size:11px; font-style:italic}
+/* What the store deliberately does NOT contain. Stated on screen because the
+   absence is the design decision, and an absence is invisible otherwise. */
+.absent{margin-top:8px; padding:7px 8px; border:1px dashed #262b38; border-radius:4px;
+  color:#5a6273; font-size:9.5px; line-height:1.5; letter-spacing:.02em}
+.absent b{color:var(--coral); font-weight:600}
+/* The command as K weights over frozen prototypes — a bar chart, not a
+   sentence, because the reasoning layer never writes one. */
+.wbar{display:flex; align-items:flex-end; gap:2px; height:34px; margin:7px 0 3px}
+.wbar i{flex:1; background:#2a3040; border-radius:1px}
+.wbar i.top{background:var(--phos)}
+/* The retrieved clip, played over the scene. A score is a claim; this is the
+   evidence for it. */
+#player{display:none; position:absolute; right:16px; bottom:16px; width:300px;
+  background:#05060a; border:1px solid #2a3040; border-radius:6px; overflow:hidden;
+  cursor:pointer; z-index:20; box-shadow:0 12px 40px rgba(0,0,0,.6)}
+#player video{width:100%; display:block}
+#player .cap{padding:5px 8px; font-size:9.5px; color:#6c7484; letter-spacing:.04em}
 
 /* recall rows — the money shot: real pgvector output */
 .hit{margin-bottom:9px; animation:slide .3s ease both}
@@ -189,7 +206,7 @@ td.res{text-align:right; white-space:nowrap}
   <div class="spacer" style="flex:1"></div>
   <div class="chip" id="c-policy">policy <b>π0.5 · 3.6B</b></div>
   <div class="chip" id="c-db">memory <b>—</b></div>
-  <div class="chip" id="c-relmo">relmo <b>—</b></div>
+  <div class="chip" id="c-relmo">relmo <b>V-JEPA2 + SigLIP2</b></div>
   <div class="chip live" id="c-fps">— fps</div>
 </div>
 
@@ -204,6 +221,8 @@ td.res{text-align:right; white-space:nowrap}
   <div id="stage"><div class="st" id="s-state">booting</div><div class="dt" id="s-detail"></div></div>
   <div id="memflag" class="on">MEMORY ON</div>
   <div id="viewhint">drag to orbit · scroll to zoom</div>
+  <!-- What the memory returned, playable. Click any retrieved span. -->
+  <div id="player"></div>
 </div>
 
 <div id="cmd">
@@ -219,24 +238,20 @@ td.res{text-align:right; white-space:nowrap}
 
 <div id="rail">
   <div class="sec">
-    <h2>Resolution <em id="r-lat"></em></h2>
+    <h2>Command <em id="r-lat"></em></h2>
     <div id="r-body"><div class="empty">nothing asked yet</div></div>
   </div>
   <div class="sec">
-    <h2>Recall <em id="k-lat">pgvector · HNSW · cosine</em></h2>
+    <h2>Retrieval <em id="k-lat">stage 1 SQL · stage 2 DTW</em></h2>
     <div id="hits"><div class="empty">no query yet</div></div>
   </div>
   <div class="sec">
-    <h2>Beliefs <em>where things ARE</em></h2>
-    <div id="beliefs"><div class="empty">nothing observed yet</div></div>
-  </div>
-  <div class="sec">
-    <h2>Norms <em>where things BELONG</em></h2>
-    <div id="norms"><div class="empty">nothing learned yet</div></div>
-  </div>
-  <div class="sec">
-    <h2>Video memory <em id="v-sub">RelMo · V-JEPA2+SigLIP2</em></h2>
-    <div id="relmo"><div class="empty">no episodes encoded</div></div>
+    <h2>The memory <em id="v-sub">RelMo · V-JEPA2 + SigLIP2</em></h2>
+    <div id="relmo"><div class="empty">no video yet</div></div>
+    <div class="absent">stored: video · vector · timestamp<br>
+      <b>not stored:</b> label, caption, instruction, object name, location,
+      outcome — a column a human could read as a fact about the kitchen is a bug
+    </div>
   </div>
   <div class="sec">
     <h2>Ledger <em>memory on vs off</em></h2>
@@ -520,65 +535,86 @@ function paint(m){
   if(m.ledger) showLedger(m.ledger);
 }
 
+/* The turn, as the memory layer produced it. There is no "expanded request"
+   and no "norm" any more: nothing rewrites the sentence, because nothing has
+   a table of what things are called. The command is K weights over frozen
+   prototypes — the panel shows the weights, not a sentence the model wrote. */
 function showResolution(r){
-  $('r-lat').textContent = r.latency_ms != null ? `${r.latency_ms} ms` : '';
+  $('r-lat').textContent = r.reason_ms != null ? `${r.reason_ms} ms` : '';
   const rows = [];
-  rows.push(`<div class="kv"><b>asked</b><span>${esc(r.request)}</span></div>`);
-  // "put it back" -> "put the bowl back" is the most legible memory read in the
-  // system: the sentence gains a noun it did not contain.
-  if(r.expanded && r.expanded !== r.request)
-    rows.push(`<div class="kv"><b>expanded</b><span style="color:var(--amber)">${esc(r.expanded)}
-      <div class="norm n">${esc(r.rewrite_note||'')}</div></span></div>`);
-  rows.push(`<div class="kv"><b>resolved</b><span style="color:${r.instruction?'var(--phos)':'var(--coral)'}">${
-      esc(r.instruction || 'ABSTAINED')}</span></div>`);
-  if(r.norm) rows.push(`<div class="kv"><b>norm</b><span>${esc(r.norm.label)} → ${esc(r.norm.home_location)} <span class="norm n">(${r.norm.n_episodes} ep)</span></span></div>`);
-  rows.push(`<div class="kv" style="margin-top:6px"><b>why</b><span style="color:#8f96a5;text-align:right">${esc(r.rationale)}</span></div>`);
+  rows.push(`<div class="kv"><b>heard</b><span>${esc(r.heard)}</span></div>`);
+  rows.push(`<div class="kv"><b>command</b><span style="color:${r.chose?'var(--phos)':'var(--coral)'}">${
+      esc(r.chose || 'NO COMMAND')}</span></div>`);
+  if(r.weights){
+    const top = Math.max(...r.weights);
+    rows.push(`<div class="kv"><b>weight</b><span>${top.toFixed(2)}
+      <span class="norm n">margin ${(+r.margin).toFixed(2)} · ${
+        top > .5 ? 'above the 0.5 cliff' : 'below the cliff — asking, not guessing'}</span></span></div>`);
+    rows.push(`<div class="wbar">` + r.weights.map((w,i) =>
+      `<i style="height:${Math.max(2, w*100)}%" class="${w===top?'top':''}" title="${i}"></i>`).join('') + `</div>`);
+  }
+  if(r.note) rows.push(`<div class="kv" style="margin-top:6px"><b>note</b><span style="color:#8f96a5;text-align:right">${esc(r.note)}</span></div>`);
   $('r-body').innerHTML = rows.join('');
-
-  const hits = r.recalled || [];
-  $('k-lat').textContent = r.memory_used
-    ? `pgvector · ${hits.length} rows · ${r.latency_ms} ms`
-    : 'memory disabled — no query issued';
-  $('hits').innerHTML = hits.length ? hits.map((h,i) => {
-    const pct = Math.max(0, Math.min(100, h.score*100));
-    return `<div class="hit ${i===0?'win':''}">
-      <div class="t"><div class="cos">${h.score.toFixed(3)}</div>
-      <div class="txt">${esc(h.text)}</div>
-      <div class="mark ${h.outcome==='success'?'ok':'bad'}">${h.outcome==='success'?'✓':'✗'}</div></div>
-      <div class="bar"><i style="width:${pct}%"></i></div></div>`;
-  }).join('') : '<div class="empty">nothing recalled</div>';
+  if(r.clips) showHits(r);
 }
 
+/* Two stages, timed separately, because the split IS the architecture: the
+   database computes RelMo's prefilter over the whole store, RelMo's DTW
+   re-ranks the shortlist. Click a hit to watch what the robot remembered. */
+function showHits(r){
+  const ids = r.clips || [], sc = r.scores || [], st = r.stage || [];
+  $('k-lat').textContent = ids.length
+    ? `${ids.length} spans · ${(+r.retrieval_ms).toFixed(1)} ms · ${st[0]==='dtw'?'stage 1 + DTW':'stage 1'}`
+    : 'memory off — no query issued';
+  $('hits').innerHTML = ids.length ? ids.map((id,i) => {
+    const s = +sc[i] || 0, pct = Math.max(0, Math.min(100, s*100));
+    return `<div class="hit ${i===0?'win':''}" data-clip="${esc(id)}">
+      <div class="t"><div class="cos">${s.toFixed(3)}</div>
+      <div class="txt">${esc(id.slice(2,10))} <span class="norm n">${esc(st[i]||'')}</span></div>
+      <div class="mark ok">▶</div></div>
+      <div class="bar"><i style="width:${pct}%"></i></div></div>`;
+  }).join('') : '<div class="empty">nothing retrieved</div>';
+  document.querySelectorAll('#hits .hit').forEach(el => el.onclick = () => play(el.dataset.clip));
+}
+
+/* A similarity score is a claim; the clip is the evidence. */
+function play(id){
+  const w = $('player');
+  w.innerHTML = `<video src="/api/clip?clip_id=${encodeURIComponent(id)}" autoplay loop muted playsinline></video>
+    <div class="cap">${esc(id)} — what the memory returned</div>`;
+  w.style.display = 'block';
+  w.onclick = () => { w.style.display='none'; w.innerHTML=''; };
+}
+
+/* Memory ON vs OFF. The OFF rows do not show a worse action — they show NO
+   action, because with no clips the head has no input and no command exists. */
 function showLedger(rows){
   if(!rows.length) return;
-  $('ledger').innerHTML = `<table><tr><th>asked</th><th>mem</th><th class="res">result</th></tr>` +
+  $('ledger').innerHTML = `<table><tr><th>heard</th><th>mem</th><th class="res">result</th></tr>` +
     rows.slice(-9).reverse().map(r => `<tr>
-      <td>${esc(r.request)}<div style="color:#3a4050;font-size:9px">${esc(r.instruction||'abstained')}</div></td>
-      <td style="color:${r.memory?'var(--phos)':'var(--coral)'}">${r.memory?'ON':'OFF'}</td>
-      <td class="res ${r.success?'ok':'bad'}">${r.success?'✓ done':'✗ failed'}<div style="color:#3a4050;font-size:9px">${r.seconds?r.seconds.toFixed(0)+'s':''}</div></td>
+      <td>${esc(r.heard)}<div style="color:#3a4050;font-size:9px">${esc(r.chose||'no command')}</div></td>
+      <td style="color:${r.clips&&r.clips.length?'var(--phos)':'var(--coral)'}">${r.clips&&r.clips.length?'ON':'OFF'}</td>
+      <td class="res ${r.succeeded?'ok':'bad'}">${r.acted?(r.succeeded?'✓ done':'✗ ran out'):'— no act'}<div style="color:#3a4050;font-size:9px">${r.act_s?r.act_s.toFixed(0)+'s':''}</div></td>
     </tr>`).join('') + '</table>';
-  const on = rows.filter(r=>r.memory), off = rows.filter(r=>!r.memory);
-  const f = a => a.length ? `${a.filter(r=>r.success).length}/${a.length}` : '—';
+  const on = rows.filter(r=>r.clips&&r.clips.length), off = rows.filter(r=>!(r.clips&&r.clips.length));
+  const f = a => a.length ? `${a.filter(r=>r.acted).length}/${a.length}` : '—';
   $('t-on').textContent = f(on); $('t-off').textContent = f(off);
 }
 
 async function refreshMemory(){
   try{
     const m = await (await fetch('/api/memory')).json();
-    $('c-db').innerHTML = `memory <b>${m.stats.flavor}${m.stats.native_vectors?' · vec':''}</b> · ${m.stats.events} ev`;
-    $('norms').innerHTML = m.norms.length ? m.norms.map(n =>
-      `<div class="norm"><div class="l">${esc(n.label)}</div>
-       <div class="r">${esc(n.home_location)}
-       <div class="n">${n.source} · ${n.n_episodes} ep · conf ${(+n.confidence).toFixed(2)}</div></div></div>`
-    ).join('') : '<div class="empty">nothing learned yet</div>';
-    // A belief is about NOW and can go stale; a norm outlives the object. The
-    // panels are separate because conflating them is the classic mistake — the
-    // bowl being on the stove says nothing about where bowls live.
-    $('beliefs').innerHTML = (m.beliefs || []).length ? m.beliefs.map(b =>
-      `<div class="norm"><div class="l">${esc(b.label)}${b.stale?' <span class="bad">?</span>':''}</div>
-       <div class="r">${esc(b.location)}
-       <div class="n">seen ${esc(String(b.last_seen||'').slice(11,19))} · conf ${(+b.confidence).toFixed(2)}</div></div></div>`
-    ).join('') : '<div class="empty">nothing observed yet</div>';
+    const s = m.stats;
+    $('c-db').innerHTML = `memory <b>pgvector</b> · ${s.indexed}/${s.clips} indexed`;
+    $('v-sub').textContent = `basis ${s.basis || '—'} · ${s.mean_steps} steps/span`;
+    $('relmo').innerHTML = (m.clips||[]).length ? m.clips.slice(0,8).map(c =>
+      `<div class="norm" data-clip="${esc(c.clip_id)}" style="cursor:pointer">
+        <div class="l">${esc(c.clip_id.slice(2,10))}</div>
+        <div class="r">${new Date(c.t0*1000).toLocaleTimeString()}
+        <div class="n">${c.seconds}s span</div></div></div>`
+    ).join('') : '<div class="empty">no video yet</div>';
+    document.querySelectorAll('#relmo .norm').forEach(el =>
+      el.onclick = () => play(el.dataset.clip));
   }catch(e){}
 }
 
@@ -596,29 +632,17 @@ async function send(){
   setTimeout(()=>{$('run').disabled=false;}, 700);
 }
 
-fetch('/api/prompts').then(r=>r.json()).then(p => {
-  $('quick').innerHTML = '<span>TRY</span>' + p.prompts.map(t =>
-    `<div class="pill">${esc(t)}</div>`).join('');
-  document.querySelectorAll('.pill').forEach(el => el.onclick = () => {
-    $('say').value = el.textContent; send();
-  });
-}).catch(()=>{});
-
-async function relmoPanel(){
-  try{
-    const d = await (await fetch('/api/videomem')).json();
-    $('v-sub').textContent = d.basis ? `RelMo · basis ${d.basis} · ${d.n} clips` : 'RelMo · idle';
-    $('relmo').innerHTML = d.hits && d.hits.length ? d.hits.map(h =>
-      `<div class="hit"><div class="t"><div class="cos">${(+h.score).toFixed(3)}</div>
-       <div class="txt">${esc(h.lang || h.recording_id)}</div></div>
-       <div class="bar"><i style="width:${Math.max(0,Math.min(100,h.score*100))}%"></i></div></div>`
-    ).join('') : '<div class="empty">' + (d.note || 'no episodes encoded') + '</div>';
-    $('c-relmo').innerHTML = `relmo <b>${d.ready?'ready':'off'}</b>${d.n?' · '+d.n:''}`;
-  }catch(e){}
-}
+/* Deliberately ambiguous. "Put the bowl away" is true of four behaviours, so
+   the words cannot pick one — the video has to. */
+const PROMPTS = ["put the bowl away", "open a drawer", "get the stove ready",
+                 "put the wine bottle away", "tidy up the bowl"];
+$('quick').innerHTML = '<span>TRY</span>' + PROMPTS.map(t =>
+  `<div class="pill">${esc(t)}</div>`).join('');
+document.querySelectorAll('.pill').forEach(el => el.onclick = () => {
+  $('say').value = el.textContent; send();
+});
 
 syncScene(); connect();
-refreshMemory(); relmoPanel();
+refreshMemory();
 setInterval(refreshMemory, 2500);
-setInterval(relmoPanel, 4000);
 </script>

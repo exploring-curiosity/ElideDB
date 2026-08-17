@@ -195,56 +195,74 @@ def create_app(live: Live, memory_getter) -> FastAPI:
         live.commands.put(dict(request=req, use_memory=bool(body.get("use_memory", True))))
         return dict(queued=True, request=req)
 
-    @app.post("/api/teach")
-    async def teach(body: dict):
-        """A human states where something belongs. Outranks anything learned."""
-        mem = memory_getter()
-        label, place = (body.get("label") or "").strip(), (body.get("location") or "").strip()
-        if not (label and place):
-            return JSONResponse(dict(error="label and location required"), status_code=400)
-        norm = mem.instruct_norm(label, place)
-        live.say("memory", f"told: {label} belongs in {place}")
-        return dict(norm=dict(norm) if norm else None)
-
-    # ---- what is in the memory --------------------------------------------
+    # ---- what is in the memory ---------------------------------------------
+    #
+    # There is no /api/teach and no /api/forget any more, and their absence is
+    # the design. Teaching a norm wrote a fact ("the bowl belongs in the
+    # cabinet") into a table, which the owner's ruling removes: the memory is
+    # video, and where the bowl belongs is derived at read time or not at all.
+    # Nothing here can be told anything.
 
     @app.get("/api/memory")
     def memory():
-        mem = memory_getter()
-        return dict(
-            stats=mem.stats(),
-            norms=[dict(r) for r in mem.norms()],
-            beliefs=[_jsonable(r) for r in mem.beliefs()],
-            events=[_jsonable(r) for r in mem.recent(24)],
-            decisions=[_jsonable(r) for r in mem.decision_log(12)],
-        )
+        """What the store holds. Note what a viewer CANNOT be shown: there is
+        no belief, no norm and no label, because no such column exists."""
+        store = memory_getter()
+        return dict(stats=store.stats(),
+                    clips=[_clip(c) for c in store.recent(24)])
+
+    @app.get("/api/clip")
+    def clip(clip_id: str = ""):
+        """The video itself. A memory you can watch is the point of a video
+        memory — a similarity score is a claim, the clip is the evidence."""
+        store = memory_getter()
+        row = store.db.query("SELECT path FROM clips WHERE clip_id = %s", (clip_id,))
+        if not row or not Path(row[0]["path"]).exists():
+            return JSONResponse(dict(error="no such clip"), status_code=404)
+        return FileResponse(row[0]["path"], media_type="video/mp4")
 
     @app.post("/api/recall")
     def recall(body: dict):
-        """Run a recall by hand — the search box over the robot's own past."""
-        mem = memory_getter()
-        q = (body.get("query") or "").strip()
-        t0 = time.perf_counter()
-        hits = mem.recall(q, k=int(body.get("k", 8)), floor=0.0)
-        ms = (time.perf_counter() - t0) * 1e3
-        return dict(query=q, latency_ms=round(ms, 2), hits=[
-            dict(id=h.id, text=h.text, score=round(h.score, 4),
-                 outcome=h.outcome, subject=h.subject, kind=h.kind) for h in hits])
+        """Retrieval by hand, with the two stages timed SEPARATELY.
 
-    @app.get("/api/similar")
-    def similar(recording_id: str = "", k: int = 5):
-        """RelMo: the same question asked of video instead of text."""
-        from ..memory.relmo import similar_recordings
+        The split is the architecture, so the UI reports it rather than a single
+        latency: stage 1 is the database's vector index computing RelMo's
+        prefilter over the whole store; stage 2 is RelMo's DTW over the traces
+        of the shortlist. One is a SQL query, the other is the part a pooled
+        vector cannot do.
+        """
+        store = memory_getter()
+        qid = (body.get("clip_id") or "").strip()
+        if not qid:
+            recent = store.recent(1)
+            if not recent:
+                return JSONResponse(dict(error="nothing in the store yet"),
+                                    status_code=404)
+            qid = recent[0].clip_id
+        vec = store.await_vector(qid, timeout=5.0)
+        if vec is None:
+            return JSONResponse(dict(error="that clip is not indexed yet"),
+                                status_code=409)
+        hits, timing = store.similar(vec, k=int(body.get("k", 8)), query_id=qid)
+        return dict(query=qid, **timing,
+                    hits=[_clip(c) for c in hits if c.clip_id != qid])
 
-        return dict(hits=similar_recordings(memory_getter().db, recording_id, k))
-
-    @app.post("/api/forget")
-    def forget():
-        memory_getter().wipe()
-        live.say("memory", "memory wiped — the robot has no history")
-        return dict(ok=True)
+    @app.get("/api/turns")
+    def turns(k: int = 20):
+        """The audit trail: what was heard, which clips were read, what was
+        commanded. Written after the fact; the recall path never reads it."""
+        store = memory_getter()
+        return dict(turns=[_jsonable(r) for r in store.db.query(
+            "SELECT * FROM turns WHERE kitchen_id = %s ORDER BY ts DESC LIMIT %s",
+            (store.kitchen, k))])
 
     return app
+
+
+def _clip(c) -> dict:
+    return dict(clip_id=c.clip_id, t0=c.t0, t1=c.t1,
+                score=round(float(c.score), 4), stage=getattr(c, "stage", ""),
+                seconds=round(c.t1 - c.t0, 1))
 
 
 def _jsonable(row: dict) -> dict:

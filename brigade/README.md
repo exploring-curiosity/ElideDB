@@ -1,177 +1,284 @@
 # Brigade
 
-**A kitchen robot whose memory is a database, and which cannot work without it.**
+**A kitchen robot whose memory is a video database, and which cannot act without it.**
 
 A person says *"put the bowl away."* In the kitchen the robot is standing in,
 that sentence has four physically legal answers — the bowl can go on the stove,
 on the plate, on top of the cabinet, or inside the top drawer. Nothing in the
 words picks one. Nothing in the scene picks one either.
 
-Only history picks one: **this household keeps bowls on top of the cabinet**,
-and the robot knows that because it did it three times and wrote each one down.
-
-That is the whole system. Memory is not a log the robot writes and never reads,
-and not a cache in front of something that would work anyway. It is the only
-thing standing between an underspecified sentence and an actuator, and you can
-switch it off and watch the robot fail.
+Only what the robot has **seen** picks one. And the only thing it has is video.
 
 ---
 
-## The claim, measured
+## The rule that shaped everything
 
-Same kitchen, same policy, same seeds, same goal predicate deciding what counts
-as done. The only variable is whether the sentence handed to the policy came out
-of the database or straight from the human.
+The memory stores video and nothing else. No belief, no norm, no label, no
+caption, no object name, no location, no outcome — and not the human's words
+either. `clips` has five columns of content: when it was, where the file is,
+RelMo's two vectors, and how many descriptor steps it holds. A column a person
+could read as a fact about the kitchen is a bug.
 
-```bash
-python -m brigade.act --wipe --seed     # THE SHIFT — 7 beats, both arms
+That is not asceticism. It is what makes the claim testable. A system that
+writes `bowl → cabinet` into a table and reads it back has demonstrated that a
+table works. A system with nowhere to write it has to derive it from pixels
+every time, and you can switch the pixels off and watch it stop.
+
+The reasoning layer on top is **not generative**. It emits K weights over frozen
+instruction prototypes, and the command it hands the policy is a tensor, not a
+sentence — so no vocabulary exists anywhere at serve time.
+
+---
+
+## The architecture
+
+```
+       cameras (always on, 10 fps)
+              │
+              ▼  a sliding 15 s span, cut every 5 s
+       ┌──────────────┐        RelMo = V-JEPA 2 + SigLIP 2
+       │   RelMo      │───────▶ trace  (48 steps × 1792)     → on disk
+       │   sidecar    │───────▶ pooled (512)  ─┐
+       └──────────────┘───────▶ spread (768)  ─┤
+                                               ▼
+                                    ┌────────────────────┐
+                                    │  Postgres/CRDB     │  HNSW on both vectors
+                                    │  clips             │
+                                    └────────────────────┘
+   human says one thing                        │
+              │                                │ STAGE 1  (SQL, vector index)
+              ▼                                ▼
+       ┌──────────────┐               top-M candidate spans
+       │  reasoning   │◀──────────────────────┘
+       │  head        │◀── STAGE 2  RelMo's DTW over the traces (exact)
+       └──────────────┘
+              │  K weights over frozen prototypes
+              ▼
+        π0.5  ← installed as the language prefix. No string is tokenized.
+              │
+              ▼
+       the kitchen keeps what changed
 ```
 
-**7/7 with memory. 1/7 without.**
-
-| # | the human says | needs from memory | ON | OFF |
-|---|---|---|---|---|
-| 1 | "put the bowl on the stove" | nothing — explicit | ok | **ok** |
-| 2 | "where is the bowl?" | the belief written in beat 1 | ok | fail |
-| 3 | "put it back" | a referent for "it" + the bowl's norm | ok | fail |
-| 4 | "where is the bowl?" | the belief, **changed** by beat 3 | ok | fail |
-| 5 | "and the bottle too" | the verb from beat 3 + the bottle's norm | ok | fail |
-| 6 | "now get the stove going" | a paraphrase with no shared words | ok | fail |
-| 7 | "feed the cat" | nothing — and it must say so | ok | fail |
-
-Beat 1 succeeding in both arms is the point of including it: a **complete**
-instruction does not need memory, and Brigade passes one to the policy
-untouched rather than pretending otherwise.
-
-Beats 2 and 4 are the same question with different correct answers — the bowl is
-on the stove, then on the cabinet — because the world moved and the robot
-noticed. Beat 3 contains **no noun at all**; "it" is filled in from the last
-episode and "back" from the norm, two reads composing into one instruction.
-
-See [`RESULTS.md`](RESULTS.md) for the full numbers, including the single-request
-A/B (6/6 vs 0/6) and the timings.
+**Retrieval is RelMo's own two-stage read path, with stage 1 moved into SQL.**
+The indexed vector is `concat(qf, qs)/√2` of RelMo's whitened pooled channels,
+which makes the database's cosine *exactly* RelMo's prefilter rather than an
+approximation of it — verified against RelMo's internal score to **2.3e-08**, by
+`selfcheck`, not by assertion. Stage 2 is RelMo's DTW over the full traces of
+the shortlist, which is the part a pooled vector cannot do. Putting the coarse
+stage in the database is the same reason CockroachDB ships a vector index at
+all.
 
 ---
 
-## What is underneath
+## What the video actually supports, measured
 
-| layer | what it is | why it is that |
+Nearest-neighbour behaviour match over the store's own spans: given one span,
+is the closest *other* span one of the same behaviour? 10 behaviours, chance
+0.100.
+
+The store indexes a **sliding** span, so consecutive rows share two thirds of
+their video. An unguarded 1-NN therefore mostly measures whether a clip can find
+itself shifted by five seconds — which is trivially true and tells you nothing.
+Both columns are printed everywhere in this repo, because the gap between them
+is large enough to have shipped a false claim:
+
+111 spans, 10 behaviours, chance 0.100:
+
+| reduction of RelMo's trace | 1-NN | **with overlap barred** |
 |---|---|---|
-| **execution** | π0.5 (3.6 B) via LeRobot on LIBERO | measured **98.0%** over 400 episodes on this machine, beating both published reproductions (LeRobot 97.5%, Physical Intelligence 96.85%). Failures in the demo are therefore attributable to the memory layer, not the hands. |
-| **episodic + procedural memory** | PostgreSQL 18 + pgvector 0.8.6, HNSW, `<=>` | the schema is written in CockroachDB dialect and translated for Postgres. Same tables, same queries, same operator — `BRIGADE_DSN` is the only thing that changes to move it. |
-| **spatial memory** | `object_beliefs`, written from what the robot sees after each episode | a *belief* is "the bowl is on the stove" and goes stale; a *norm* is "bowls live on the cabinet" and outlives the object. Conflating them is the classic mistake, so they are separate tables and separate panels. |
-| **video memory** | RelMo (V-JEPA 2 + SigLIP 2), 512-d, HNSW | answers "have I ever *seen* anything like this?", which text cannot. |
-| **view** | three.js over the simulator's own geometry | not a video stream — see below. |
+| pooled mean, basis refit on this kitchen | 1.000 | 0.324 |
+| pooled mean, no whitening | 0.946 | 0.649 |
+| **pooled mean, RoboCasa basis** — RelMo's stage 1 | 1.000 | **0.685** |
+| **full trace, RelMo's DTW** — stage 2 | 0.982 | **0.685** |
+| per-channel temporal spread, both channels | 0.991 | 0.739 |
+| **per-channel temporal spread, SigLIP 2 only** | 0.982 | **0.748** |
+| net direction (last − first) | 0.541 | 0.117 |
+| all six reductions concatenated | 0.703 | 0.225 |
 
-### The 3D view is the simulator, not a recording of it
+Four things worth taking from that table:
 
-The browser holds MuJoCo's own meshes and redraws them from `geom_xpos` and
-`geom_xmat` — the arrays `mj_step` writes and nothing else can. Consequences:
+**The mean says what the kitchen looks like; the spread says what moved.** All
+ten behaviours happen in one room in front of one fixed camera, so the mean is
+nearly the same for all of them. How much each feature varied over the span is
+not. Both are indexed — `embedding` and `motion` — and a query can be asked of
+either.
 
-* orbiting and zooming are free and never touch the robot;
-* what moves on screen moved in the physics, because those arrays have no other
-  author;
-* it costs **3.8 KB per frame** and **0.004 ms** to produce, with no OpenGL
-  context involved — which is what lets the web thread read it while the main
-  thread renders the policy's camera input, a hard requirement on macOS where a
-  GL context belongs to the thread that made it.
+**Fusion loses to selection.** Cosine over concatenated unit blocks is the mean
+of the per-block cosines, so five uninformative blocks drown one good one:
+0.748 alone, 0.225 with everything attached.
 
-The one-time geometry payload is ~16 MB of packed float32. Serialising the same
-meshes as JSON measured **134 MB**, which is why it is binary.
+**Direction is near chance here.** A 15 s span contains approach and retreat,
+and the net displacement of a descriptor across that is noise. It is left in the
+code, unused, because a measured null is worth more than silence.
 
-### RelMo's first stage runs *in the database*
+**Refitting the whitening basis on this kitchen LOSES, and that reverses an
+earlier reading of ours.** On a 59-span corpus of 5 s clips the refit looked
+like a clear win (0.300 → 0.400) and this repo said so. With the span length
+fixed and the overlap barred it is 0.685 borrowed against 0.324 refitted.
+Whitening removes the variance a corpus *shares* — right when the corpus is
+diverse, wrong when it is not, because 111 overlapping spans of one room share
+the very thing that separates the behaviours. A basis needs a corpus wider than
+the question asked of it. The store ships the RoboCasa basis; `fit` is still
+there, and now carries the measurement that says not to use it.
 
-RelMo ranks candidates with `0.5·(pf·qf + ps·qs)` over whitened pooled V-JEPA
-and SigLIP channels. Brigade stores `concat(qf, qs)/√2`, for which that quantity
-is exactly the inner product of two unit vectors. So the pgvector index is not
-an approximation of RelMo's retrieval — it **is** its first stage, executed by
-the database.
+---
 
-Checked rather than claimed:
+## Is the memory load-bearing? — the reasoning head
+
+The head maps a retrieved span plus the human's request onto weights over frozen
+instruction prototypes. To measure which input it is using, **three heads are
+trained from scratch on exactly the inputs each is allowed** — not one head with
+an input zeroed. Zeroing is a bad control: a head trained on both inputs still
+knows the label prior when you hand it a zero vector, and here that reads 0.536
+for "words alone" where a words-only *model* reads 0.545 on the subset that
+matters and much lower is possible.
+
+| trained on | held out | **ambiguous requests only** |
+|---|---|---|
+| clips + words | 1.000 | **1.000** |
+| words only | 0.710 | **0.545** |
+| clips only | 0.957 | **0.955** |
+| chance | 0.100 | 0.100 |
+
+Half the training requests are deliberately ambiguous — *"put the bowl away"* is
+true of four of the ten behaviours — so the words-only column is capped by the
+ambiguity no matter how good that model gets. **The video closes the gap
+completely, and the video alone gets 0.955 with nobody speaking at all.**
+
+Held-out spans are the last quarter of each behaviour's block, with a two-span
+guard band dropped in between. The guard is exactly the overlap depth
+(SPAN/HOP − 1), so no training span shares a single frame with a test span.
+
+---
+
+## The loop, end to end
+
+`bench/serve_demo.py` — one continuous kitchen, cameras streaming, four things
+said out loud:
 
 ```
-python brigade/sidecar/relmo_encode.py  <<< '{"cmd":"selfcheck"}'
-→ {"agrees": true, "max_abs_err": 2.3e-08, "dim": 512}
+heard: 'open a drawer'
+  memory returned 5 spans in 81.1 ms (stage 1 + DTW)
+  command: 'open the middle drawer of the cabinet'  (top 0.98, margin 0.96, 24.7 ms)
+  acted: goal satisfied (11s)
 ```
 
-RelMo runs as a subprocess because it needs `transformers==4.57` for
-`VJEPA2Model` while π0.5 is pinned to `4.53.2` plus openpi's SigLIP overlay.
-Both pins are real; one interpreter cannot hold both. The sidecar is that
-boundary.
+Retrieval 67–88 ms, reasoning 24 ms, and the command is a `(1, 200, 2048)` tensor
+— no string is ever tokenized.
+
+**With memory off there is no degraded command. There is no command:**
+
+```
+heard: 'put the bowl away'
+  memory OFF — no clips, so no command and nothing to execute
+```
+
+That is what "load-bearing" has to mean to be a claim rather than a boast. The
+head's only view of the kitchen is the retrieved spans; remove them and its input
+does not exist.
+
+**Same words, different history, different command.** Each request is asked
+twice against two halves of the robot's own recorded life — a `since`/`until`
+pushdown beside the vector scan, which is the other thing the owner's ruling
+allows a video memory to return: *"similar clips or its timestamps"*.
+
+| the human says | against earlier history | against later history | |
+|---|---|---|---|
+| "put the bowl away" | open the top drawer and put the bowl inside | put the bowl on top of the cabinet | **differs** |
+| "open a drawer" | open the top drawer and put the bowl inside | open the middle drawer of the cabinet | **differs** |
+| "get the stove ready" | turn on the stove | turn on the stove | same |
+| "put the wine bottle away" | put the wine bottle on top of the cabinet | put the wine bottle on top of the cabinet | same |
+
+Two of four flipped. Nothing differed but which seconds of video the memory was
+allowed to look at.
+
+---
+
+## What the database's stage buys
+
+Every indexed span used as a query; recall is agreement with the exact
+full DTW scan, so 1.000 would mean the elided bytes provably contained nothing
+the answer needed.
+
+| stage-1 shortlist | recall@5 | corpus elided | stage 1 | stage 2 |
+|---|---|---|---|---|
+| M = 8 | 0.650 | 92.8% | 1.50 ms | 13.5 ms |
+| M = 16 | 0.778 | 85.6% | 1.60 ms | 24.4 ms |
+| M = 32 | 0.836 | 71.2% | 1.75 ms | 46.2 ms |
+| M = 64 | 0.867 | 42.3% | 1.95 ms | 88.5 ms |
+| exact full scan | 1.000 | 0% | — | 156.1 ms |
+
+The point is not the speedup. It is that a prefilter which elides most of the
+corpus and *changes the answers* is a regression wearing a speedup's clothes —
+so fidelity is reported beside latency, in the same table, from the same run.
+
+---
+
+### Two defects that had to be fixed before any of this could be measured
+
+Both were structural, and both made the memory look like a representation
+problem when it was a plumbing problem.
+
+**A 5 s span is below RelMo's resolution.** The encoder tiles 4.0 s windows on a
+2.0 s hop, so a 5 s clip yields exactly ONE window — eight 0.25 s descriptor
+steps covering 2.0 s. Every "trace" was a single glance and the DTW stage had
+nothing to align. 15 s gives six windows and 48 steps.
+
+**Anything shorter than the window is silently not stored at all.** RelMo
+refuses a clip under 4.0 s, so an earlier 3 s segmentation wrote 75 rows and
+indexed **none** of them: present in the store, invisible to retrieval, and the
+totals looked fine.
 
 ---
 
 ## Running it
 
-Prerequisites: the LIBERO stack on Apple Silicon
-(see [`../docs/LIBERO_ON_APPLE_SILICON.md`](../docs/LIBERO_ON_APPLE_SILICON.md)),
-PostgreSQL 18 with pgvector, and `brew services start postgresql@18`.
-
 ```bash
-createdb -p 5433 brigade
-psql -p 5433 -d brigade -c 'CREATE EXTENSION IF NOT EXISTS vector'
-
-# give the robot a history by making it live one, then serve the dashboard
-python -m brigade.run --wipe --seed
-#   → http://127.0.0.1:8099
+brew services start postgresql@18          # pgvector needs pg@17 or pg@18
 ```
 
-Then type something underspecified into the dashboard and flip the **MEMORY**
-switch.
+```bash
+.venv-libero/bin/python bench/train_reasoner.py --collect --episodes 6
+```
 
-| flag | effect |
-|---|---|
-| `--seed` | run the history episodes before serving |
-| `--wipe` | forget everything first |
-| `--ab REQUEST --trials N` | the controlled memory-on/off measurement |
-| `--no-relmo` | skip video memory (saves an ~85 s startup) |
-| `--no-serve` | headless |
+```bash
+.venv-libero/bin/python brigade/bench/train_reasoner.py --train
+```
 
-`BRIGADE_DSN` points the whole system at a different database. Nothing above
-`memory/db.py` knows the difference.
+```bash
+myenv/bin/python brigade/bench/relmo_probe.py
+```
 
----
+```bash
+.venv-libero/bin/python brigade/bench/two_stage.py
+```
 
-## Things worth knowing that were found by measuring
+```bash
+.venv-libero/bin/python brigade/bench/serve_demo.py
+```
 
-Each of these was a wrong assumption that a measurement caught. They are in the
-code as comments where they bite.
+```bash
+.venv-libero/bin/python -m brigade.live      # then open http://localhost:8099
+```
 
-* **π0.5 does not generalise to `libero_90`.** On KITCHEN_SCENE4 it scores 5/5
-  on the two tasks that overlap its training set and **0/5** on three that do
-  not. The demo was designed around this rather than into it.
-* **LIBERO's success check is the scene's BDDL predicate, not the instruction.**
-  `is_success = self._env.check_success()`. An episode therefore has to name a
-  goal, or "it worked" means nothing — which is why a resolution carries one.
-* **Group 1 is the visual mesh in robosuite; group 0 is the collision hull.**
-  The opposite of the usual MuJoCo convention. Drawing group 0 renders a kitchen
-  of grey capsules.
-* **A norm is a frequency, not a most-recent write.** With one row per label,
-  three episodes of the bowl going on the cabinet followed by one on the plate
-  left the norm reading "plate, 1 episode". Evidence is now tallied per place
-  and the norm is the argmax.
-* **"put the bowl away" parses to the subject "bowl away", whose head noun is
-  *away*.** The norm lookup found nothing and a correct norm sat unused. The
-  request is now matched against the labels the robot has actually learned.
-* **Episode wall-clock tracks forward passes, not parameters.** π0.5 (3.6 B)
-  runs an episode in 12.5 s; SmolVLA (0.45 B) takes 50.1 s, because π0.5 chunks
-  ten actions per inference and that checkpoint infers every step.
+Two interpreters, on purpose: π0.5 pins `transformers==4.53.2` and RelMo needs
+4.57 for `VJEPA2Model`. Neither can move, so the sidecar is the boundary — the
+same one CLAUDE.md already draws for ML sidecars. The sidecar writes files; the
+core memory-maps them. No RPC framework, no server.
 
 ---
 
 ## Layout
 
-```
-brigade/
-  agent/resolver.py   the load-bearing module: request -> instruction, from memory
-  agent/pilot.py      one episode of real control on an instruction chosen at runtime
-  world/scene.py      MuJoCo model -> three.js payload; per-step transforms
-  memory/store.py     episodic / spatial / procedural / working / audit
-  memory/db.py        pool, retries, CockroachDB<->Postgres dialect
-  memory/relmo.py     video memory; RelMo stage 1 in the database
-  api/server.py       web thread reading a sim that owns the main thread
-  api/static/         the dashboard
-  run.py              all of it, one process
-sidecar/relmo_encode.py   RelMo in its own interpreter
-bench/                    the measurements
-```
+| path | what it is |
+|---|---|
+| `brigade/memory/schema_v2.sql` | the store. Read the comments for what is deliberately absent |
+| `brigade/memory/store.py` | sliding spans in, two-stage retrieval out |
+| `brigade/memory/traces.py` | how the head reads a trace, and the table above |
+| `sidecar/relmo_encode.py` | RelMo in its own interpreter: encode, fit, project, rank |
+| `brigade/agent/latent.py` | the reasoning layer — prototypes, head, latent prefix |
+| `brigade/agent/serve.py` | one human utterance, start to finish |
+| `brigade/live.py` | the same loop with the 3D dashboard attached |
+| `bench/` | every number in this file, reproducible |
+| `PROBLEM.md` | the spec, in the owner's words, including the prohibitions |

@@ -18,13 +18,17 @@ def main() -> int:
     import torch
     from transformers import AutoModel, AutoProcessor
 
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from train_reasoner import FAMILIES
+
     rows = json.load(open(os.path.join(TRAIN, "segments.json")))
     texts = sorted({r["instruction"] for r in rows})
-    # Paraphrases the demo will actually be asked, embedded now so the head can
-    # be evaluated on them without the tower being needed at train time.
-    texts += ["put the bowl away", "put the bottle away", "tidy up the bowl",
-              "make the stove ready", "put the cream cheese away",
-              "put it back", "and the bottle too", "now get the stove going"]
+    # The ambiguous phrasings the head is trained and judged on — each is true
+    # of several behaviours, which is what makes the clip ablation mean
+    # something. Plus a few the demo will actually be asked.
+    texts += list(FAMILIES)
+    texts += ["put it back", "and the bottle too", "now get the stove going",
+              "put the cream cheese away", "tidy the kitchen"]
     texts = sorted(set(texts))
 
     mid = "google/siglip2-base-patch16-224"

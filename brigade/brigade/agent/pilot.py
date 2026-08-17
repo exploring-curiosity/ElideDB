@@ -289,6 +289,30 @@ class Pilot:
         """
         return bool(self._libero().check_success())
 
+    def idle(self, seconds: float, on_frame=None, fps: float = 10.0) -> int:
+        """Let the cameras run with nobody driving the robot.
+
+        The memory records all the time, not only while a task executes — a
+        memory that only records during tasks cannot answer a question about
+        the time between them, and it makes the memory depend on the agent
+        correctly deciding when something interesting is beginning.
+
+        Physics is NOT stepped. Two reasons, and they point the same way. The
+        gym wrapper counts every step against the episode limit and autoresets
+        when it hits one, which would rewind the kitchen precisely when nothing
+        was happening. And stepping the raw MjSim without the controller running
+        drops the arm under gravity — the robot would visibly collapse whenever
+        it was idle. Between commands the kitchen is genuinely at rest (world
+        velocities are zeroed by `world_only`), so a re-render per tick is what
+        an idle camera actually sees.
+        """
+        n = int(seconds * fps)
+        for i in range(n):
+            self._sim().forward()
+            if on_frame is not None:
+                on_frame(self.memory_frame(), i)
+        return n
+
     def look(self) -> list:
         """What is where, right now. See world/observe.py."""
         from ..world.observe import observe

@@ -2486,3 +2486,23 @@ database + reasoning + action. All text derived at read time. Research in
 brigade/RESEARCH.md: MemER (2510.20328) validates the exact split (keyframe
 memory -> VLM reader -> pi0.5); readers must be gated, off-the-shelf failed
 (2/5 Qwen3-30B, SmolVLM2 constant). Gate ladder G1-G5 before building.
+
+2026-08-17 - Brigade store indexes a sliding 15s span, not a 5s tile
+RelMo tiles 4.0s encoder windows on a 2.0s hop, so a 5s clip yields ONE window
+(8 descriptor steps, 2.0s of descriptor) and the DTW stage has nothing to align.
+Chose SPAN_S=15 / HOP_S=5: 6 windows, 48 steps, and overlapping rows so an event
+is never cut in half by an arbitrary boundary.
+
+2026-08-17 - Brigade fits its OWN whitening basis instead of borrowing rcasa's
+Whitening removes the variance a corpus SHARES and RelMo fits it per store for
+that reason. One fixed camera in one kitchen shares far more than RoboCasa does.
+Measured on 30 labelled 5s segments, 1-NN behaviour match: raw 0.200, rcasa
+0.300, refit-here 0.400, chance 0.100. Basis id is a namespace; a refit
+re-projects every row or the id lies.
+
+2026-08-17 - The reasoning head is trained on AMBIGUOUS requests on purpose
+With one instruction per behaviour, request->behaviour is 1:1 and the head
+memorises it: the first head read full 1.000 / clip-ablated 0.875 and the clips
+were never used. "Put the bowl away" is true of four behaviours, so the words
+cannot decide and the video must. A benchmark whose inputs are individually
+sufficient cannot measure which one is used.

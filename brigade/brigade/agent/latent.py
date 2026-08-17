@@ -137,12 +137,38 @@ class Reasoner(nn.Module):
         super().__init__()
         self.bank, self.head = bank, head
 
+    @classmethod
+    def load(cls, path: str) -> "Reasoner":
+        """Rebuild from the training asset. The bank comes with it — see the
+        module note on what is and is not stored: prototypes are frozen model
+        weights, not a table the memory can be asked to read back."""
+        d = torch.load(path, map_location="cpu", weights_only=False)
+        bank = PrototypeBank(d["bank"])
+        head = InstructionHead(k=bank.k, clip_dim=int(d.get("clip_dim", 512)),
+                               req_dim=int(d.get("req_dim", 768)),
+                               use_request=bool(d.get("use_request", True)))
+        head.load_state_dict(d["head"])
+        head.eval()
+        r = cls(bank, head)
+        r.instructions = list(d.get("instructions", []))
+        r.goals = list(d.get("goals", []))
+        return r
+
     def command(self, clip_vecs: np.ndarray, req_vec: np.ndarray | None = None,
-                evidence: list | None = None, temperature: float = 1.0) -> Command | None:
+                evidence: list | None = None, temperature: float = 1.0,
+                match: np.ndarray | None = None) -> Command | None:
         """Retrieved clips -> a Command, or None when memory returned nothing.
 
         Returning None is the ablation working, not an error path: with no
         clips there is no command, so the robot has nothing to execute.
+
+        `match` is RelMo's stage-2 similarity for each clip. When it is given,
+        the clips vote in proportion to how well they actually matched instead
+        of uniformly. That is the difference between "these eight spans came
+        back" and "this one is a near-exact replay and the other seven are
+        loosely similar", and it is the only place the DTW stage reaches the
+        decision — retrieval would otherwise rank carefully and then have its
+        ranking thrown away one line later.
         """
         if clip_vecs is None or len(clip_vecs) == 0:
             return None
@@ -153,7 +179,14 @@ class Reasoner(nn.Module):
             r = torch.as_tensor(np.atleast_2d(req_vec), dtype=torch.float32, device=dev)
             r = r.expand(c.shape[0], -1)
         with torch.no_grad():
-            logits = self.head(c, r).mean(0) / max(temperature, 1e-6)
+            per_clip = self.head(c, r)
+            if match is not None and len(match) == per_clip.shape[0]:
+                m = torch.as_tensor(np.asarray(match, np.float32), device=dev)
+                m = torch.softmax(m / 0.1, dim=0).reshape(-1, 1)
+                logits = (per_clip * m).sum(0)
+            else:
+                logits = per_clip.mean(0)
+            logits = logits / max(temperature, 1e-6)
             w = torch.softmax(logits, dim=-1)
         wn = w.detach().cpu().numpy()
         order = np.argsort(-wn)

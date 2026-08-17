@@ -116,6 +116,57 @@ class RelMoSidecar:
             return None, r
         return np.asarray(r["vec"], dtype=np.float32), r
 
+    # ---- the store's own basis ---------------------------------------------
+
+    def fit(self, ids: list[str] | None = None) -> dict:
+        """Refit the whitening on this kitchen's own video. NOT the default.
+
+        RelMo fits per store because whitening removes the variance a corpus
+        SHARES, which is a property of the deployment. It still loses here, and
+        the reason is instructive: measured over 111 spans with overlapping
+        spans barred, RoboCasa's basis scores 0.685 on behaviour matching and a
+        basis fitted on this kitchen scores 0.324. 111 heavily overlapping spans
+        of one room share the very variance that separates the behaviours, so
+        fitting on them whitens the signal away. A basis needs a corpus wider
+        than the question asked of it.
+
+        An earlier measurement on 5 s clips said the opposite (0.300 -> 0.400).
+        It was scoring near-duplicate matching, and the sliding-span overlap was
+        not yet barred. Kept here so the reversal is on the record.
+        """
+        return self._rpc(dict(cmd="fit", ids=ids), timeout=300.0)
+
+    def reset_basis(self) -> dict:
+        """Return to the bootstrap (RoboCasa) basis — the measured default."""
+        return self._rpc(dict(cmd="fit", reset=True), timeout=300.0)
+
+    def project(self, ids: list[str]) -> dict[str, np.ndarray]:
+        """Re-project stored traces under the current basis.
+
+        A new basis is a new namespace, so every vector written under the old
+        one is stale the moment `fit` returns. Re-projecting reads the traces
+        already on disk — no video is decoded twice.
+        """
+        r = self._rpc(dict(cmd="project", ids=list(ids)), timeout=300.0)
+        return {k: np.asarray(v, dtype=np.float32)
+                for k, v in (r.get("vecs") or {}).items()}
+
+    def text(self, texts: list[str]) -> np.ndarray:
+        """Embed what the human said. Never stored, never indexed."""
+        r = self._rpc(dict(cmd="text", texts=list(texts)), timeout=180.0)
+        v = r.get("vecs")
+        return np.asarray(v, dtype=np.float32) if v else np.zeros((0, 768), np.float32)
+
+    # ---- stage 2 ------------------------------------------------------------
+
+    def rank(self, query_id: str, candidates: list[str], band: float = 0.25
+             ) -> tuple[dict[str, float], float]:
+        """DTW over the traces of the database's shortlist. -> (scores, ms)."""
+        r = self._rpc(dict(cmd="rank", query=query_id,
+                           candidates=list(candidates), band=band))
+        return {k: float(v) for k, v in (r.get("scores") or {}).items()}, \
+            float(r.get("ms", 0.0))
+
     def selfcheck(self) -> dict:
         return self._rpc(dict(cmd="selfcheck"))
 

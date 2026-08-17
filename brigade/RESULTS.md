@@ -1,16 +1,132 @@
 # Brigade — measured results
 
 Everything below came out of runs on this machine (Apple Silicon, macOS 15.5,
-PostgreSQL 18.6 + pgvector 0.8.6, π0.5 on MPS). Raw output is in
-`eval_logs/brigade_act.log`, `eval_logs/brigade_full.log` and the matching
-`.json` files.
+PostgreSQL 18.6 + pgvector 0.8.6, π0.5 on MPS).
+
+> **§1–§8 describe v1, whose memory was a fact store** — beliefs, norms, skill
+> stats, text-embedded events. The owner's ruling removed all of it: the memory
+> is RelMo, nothing else goes in, and the human's words are not stored either.
+> **§9 onward is v2**, the video-only system, and where the two disagree v2 wins.
+> The v1 sections are kept because several of their findings survive the rewrite
+> unchanged — the persistence cost (§0), the autoreset trap, the robot/world
+> state split — and because a result that was superseded is more useful on the
+> record than deleted.
+
+---
+
+## 9. v2 — the video-only memory
 
 Reproduce:
 
 ```bash
-python -m brigade.act --wipe --seed          # THE SHIFT, both arms
-python -m brigade.run --wipe --seed --ab "put the bowl away" --trials 3
+.venv-libero/bin/python brigade/bench/train_reasoner.py --collect --episodes 6
 ```
+
+```bash
+myenv/bin/python brigade/bench/relmo_probe.py
+```
+
+```bash
+.venv-libero/bin/python brigade/bench/two_stage.py
+```
+
+### 9.1 Two defects that looked like a representation problem
+
+The previous session ended with "RelMo's vectors do not separate these ten
+behaviours — a representation problem". They were both plumbing.
+
+**A 5 s span is below RelMo's resolution.** The encoder tiles 4.0 s windows on a
+2.0 s hop, so a 5 s clip yields exactly ONE window: eight 0.25 s descriptor steps
+covering 2.0 s. Every trace was a single glance, DTW had nothing to align, and
+the "512-d vector" was one window's pooled descriptor. 15 s gives 6 windows and
+48 steps.
+
+**The store shipped stage 1 and called it retrieval.** RelMo's read path
+(`vjstore.Store.query`) prefilters by pooled cosine and then ranks by DTW over
+the full traces. Brigade indexed the prefilter and stopped, which is an IVF
+coarse quantiser with no residual scan.
+
+A third, found while fixing them: RelMo prints to stdout on its first encode,
+which corrupted the sidecar's JSON line protocol. It cost exactly one clip per
+session — the first encode failed, every later one worked — and read as a flake
+rather than a protocol bug.
+
+### 9.2 The measurement discipline that changed every number
+
+The store indexes a sliding 15 s span on a 5 s hop, so consecutive rows share two
+thirds of their video. A plain nearest-neighbour score therefore mostly asks
+whether a clip can find *itself shifted by five seconds*. Barring every
+overlapping span from the candidate set is the difference between:
+
+| | naive 1-NN | overlap barred |
+|---|---|---|
+| pooled mean, kitchen basis | 1.000 | 0.324 |
+| pooled mean, RoboCasa basis | 1.000 | 0.685 |
+
+Both columns are printed in every bench in this repo. Without the guard, the
+kitchen-fitted basis reads 1.000 and looks like the obvious choice.
+
+### 9.3 Which reduction of the trace separates the behaviours
+
+111 spans, 10 behaviours, chance 0.100, overlap barred:
+
+| reduction | 1-NN | overlap barred |
+|---|---|---|
+| pooled mean, basis refit on this kitchen | 1.000 | 0.324 |
+| pooled mean, no whitening | 0.946 | 0.649 |
+| pooled mean, RoboCasa basis (RelMo stage 1) | 1.000 | 0.685 |
+| full trace, RelMo's DTW (stage 2) | 0.982 | 0.685 |
+| temporal spread, both channels | 0.991 | 0.739 |
+| **temporal spread, SigLIP 2 only** | 0.982 | **0.748** |
+| net direction (last − first) | 0.541 | 0.117 |
+| all six reductions concatenated | 0.703 | 0.225 |
+
+**Refitting the basis on this kitchen loses, reversing what a shorter corpus
+said.** On 59 spans of 5 s clips the refit read 0.300 → 0.400 and this repo
+recommended it. Whitening removes the variance a corpus *shares*; 111
+overlapping spans of one room share exactly what separates the behaviours, so
+fitting on them whitens the signal away. The store ships RoboCasa's basis.
+
+**The spread beats the mean and beats DTW.** The mean says what the kitchen looks
+like, which is the same for all ten behaviours. Added as a second indexed column,
+`motion`.
+
+**Fusing the reductions destroys the best one** (0.748 → 0.225): cosine over
+concatenated unit blocks is the mean of the per-block cosines.
+
+### 9.4 Is the memory load-bearing?
+
+Three heads trained from scratch on exactly the inputs each is allowed — not one
+head with an input zeroed, which leaks the label prior (that control read 0.536
+for "words alone"; a words-only model reads 0.545 where it matters).
+
+| trained on | held out | ambiguous requests only |
+|---|---|---|
+| clips + words | 1.000 | **1.000** |
+| words only | 0.710 | **0.545** |
+| clips only | 0.957 | **0.955** |
+| chance | 0.100 | 0.100 |
+
+Half the requests are deliberately ambiguous ("put the bowl away" is true of four
+behaviours), so the words-only row is capped by the ambiguity however good that
+model gets. Held-out spans are the last quarter of each behaviour's block with a
+two-span guard dropped between — exactly the overlap depth, so no training span
+shares a frame with a test span.
+
+### 9.5 What the database's stage buys
+
+Recall is agreement with the exact full DTW scan over 111 spans:
+
+| shortlist M | recall@5 | corpus elided | stage 1 | stage 2 |
+|---|---|---|---|---|
+| 8 | 0.650 | 92.8% | 1.50 ms | 13.5 ms |
+| 16 | 0.778 | 85.6% | 1.60 ms | 24.4 ms |
+| 32 | 0.836 | 71.2% | 1.75 ms | 46.2 ms |
+| 64 | 0.867 | 42.3% | 1.95 ms | 88.5 ms |
+| exact | 1.000 | 0% | — | 156.1 ms |
+
+The prefilter is RelMo's own, computed by the vector index rather than by numpy —
+`selfcheck` measures the two at **2.3e-08** max absolute difference.
 
 ---
 
