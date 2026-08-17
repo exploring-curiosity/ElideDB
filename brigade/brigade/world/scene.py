@@ -52,12 +52,42 @@ def _raw_data(sim):
 
 
 class SceneExporter:
-    """Turns one MuJoCo model into a static scene + a per-step transform feed."""
+    """Turns one MuJoCo model into a static scene + a per-step transform feed.
 
-    def __init__(self, sim):
-        self.m = _raw_model(sim)
-        self.d = _raw_data(sim)
+    Model and data are looked up through the sim on EVERY access, never cached.
+    robosuite rebuilds the simulation on reset — `env.reset()` can construct a
+    fresh MjSim, and with it fresh MjModel and MjData objects — so a reference
+    grabbed in `__init__` goes stale the first time an episode starts. It does
+    not raise: the old MjData is still a perfectly valid object frozen at the
+    moment it was orphaned, so `frame_bytes()` keeps returning well-formed
+    frames of a world that stopped existing.
+
+    That failure is invisible from every direction. The socket is up, frames
+    arrive at 14/s, the geometry is right, the numbers are plausible — and
+    nothing on screen ever moves. It was caught by comparing one geom's local
+    matrix across two frames and finding them byte-identical while the robot was
+    demonstrably mid-episode.
+    """
+
+    def __init__(self, sim_or_getter):
+        # A callable, because the sim OBJECT is replaced too, not just its data:
+        # robosuite's reset path is _destroy_sim -> _load_model -> _initialize_sim,
+        # which constructs a new MjSim. Holding the sim itself would go stale in
+        # exactly the same silent way as holding its MjData.
+        self._get = sim_or_getter if callable(sim_or_getter) else (lambda: sim_or_getter)
         self.geoms = self._visual_geoms()
+
+    @property
+    def sim(self):
+        return self._get()
+
+    @property
+    def m(self):
+        return _raw_model(self.sim)
+
+    @property
+    def d(self):
+        return _raw_data(self.sim)
 
     # ---- static ------------------------------------------------------------
 

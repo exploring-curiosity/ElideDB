@@ -353,6 +353,7 @@ async function loadScene(){
 }
 
 const M = new THREE.Matrix4();
+const stats = {frames:0, lastFrame:0, bytes:0};
 function applyFrame(buf){
   const f = new Float32Array(buf);
   const n = Math.min(nGeom, f.length/12|0);
@@ -363,9 +364,29 @@ function applyFrame(buf){
     M.set(f[r],f[r+1],f[r+2],f[o], f[r+3],f[r+4],f[r+5],f[o+1],
           f[r+6],f[r+7],f[r+8],f[o+2], 0,0,0,1);
     m.matrix.copy(M);
+    // REQUIRED. With matrixAutoUpdate = false, three.js recomputes matrixWorld
+    // only when this flag is set (or a parent forces it), so writing `matrix`
+    // alone moves nothing: updateMatrixWorld computes the world transform once,
+    // on the first render after the mesh is added, and then never again. The
+    // scene draws the first frame it receives and freezes there, which looks
+    // exactly like the websocket having died — every subsequent frame arrives,
+    // is decoded, is written to `matrix`, and is silently ignored.
+    m.matrixWorldNeedsUpdate = true;
   }
+  stats.frames++; stats.lastFrame = performance.now(); stats.bytes = buf.byteLength;
   if(needsFit){ needsFit = false; frameCamera(f, n); }
 }
+// A handle for checking the stream is live without guessing from the picture —
+// "the robot is not moving" has at least four causes (socket down, frames not
+// published, frames identical, matrices not applied) and they look the same on
+// screen. `probe(i)` returns a geom's position as the client currently holds
+// it, so two samples a second apart settle it.
+window.__brigade = {stats, get nGeom(){return nGeom;},
+  probe: i => {
+    const m = meshes[i]; if(!m) return null;
+    const e = m.matrix.elements;
+    return {name:(geomInfo[i] || {}).name, pos:[e[12], e[13], e[14]]};
+  }};
 
 /* Aim the camera at the work, not at the room. Fitting the whole scene would
    include the floor plane and the four walls, which are metres across, and the

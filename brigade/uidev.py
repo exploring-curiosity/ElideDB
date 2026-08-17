@@ -52,7 +52,9 @@ def main() -> int:
 
     env = OffScreenRenderEnv(bddl_file_name=bddl, camera_heights=128, camera_widths=128)
     env.reset()
-    ex = SceneExporter(env.env.sim)
+    # A getter: this loop calls env.reset() when an episode ends, and robosuite
+    # rebuilds the MjSim there — holding the object would freeze the view.
+    ex = SceneExporter(lambda: env.env.sim)
     LIVE.publish_scene(*ex.scene(task=task.language))
     LIVE.set_status("ui-dev", task.language, instruction=task.language,
                     request="(no policy loaded)", memory_used=True)

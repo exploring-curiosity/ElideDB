@@ -129,8 +129,9 @@ class Pilot:
             env_cfg=env_cfg, policy_cfg=self.policy.config)
 
         self.env.reset()
-        sim = self.env.envs[0]._env.env.sim
-        self.scene = SceneExporter(sim)
+        # A getter, not the sim: robosuite replaces the MjSim on reset, so
+        # anything holding the object streams a world that has stopped updating.
+        self.scene = SceneExporter(self._sim)
         header, blob = self.scene.scene(task=self.default_instruction)
         self._scene_header, self._scene_blob = header, blob
         log.info("scene %s/%s open: %d visual geoms, %.1f MB meshes",
@@ -146,11 +147,15 @@ class Pilot:
     def scene_payload(self) -> tuple[dict, bytes]:
         return self._scene_header, self._scene_blob
 
+    def _sim(self):
+        """The CURRENT MjSim. Always resolved fresh — see SceneExporter."""
+        return self.env.envs[0]._env.env.sim
+
     def look(self) -> list:
         """What is where, right now. See world/observe.py."""
         from ..world.observe import observe
 
-        return observe(self.env.envs[0]._env.env.sim) if self.env is not None else []
+        return observe(self._sim()) if self.env is not None else []
 
     def close(self) -> None:
         if self.env is not None:
