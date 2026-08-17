@@ -193,6 +193,36 @@ allows a video memory to return: *"similar clips or its timestamps"*.
 Two of four flipped. Nothing differed but which seconds of video the memory was
 allowed to look at.
 
+### What is not solved: an idle kitchen crowds out its own history
+
+The query is the robot's live view, and when a human speaks the robot is usually
+standing still. Over a long session the store fills with spans of a kitchen in
+which nothing is happening — 94 of 243 after twenty minutes at the dashboard —
+and since those are the closest match to *now*, they crowd the shortlist and the
+head ends up reading evidence that shows nothing. In the demo above the store is
+mostly task video and the retrieved spans are informative; at scale that stops
+being true, and the A/B restricts itself to the collection window rather than
+pretending otherwise.
+
+This is a retrieval-policy gap, not a representation one, and the fix is
+label-free and already latent in the data: a span's motion energy (the
+un-normalised spread the `motion` column normalises away) says whether anything
+happened in it, so "when did the kitchen last look like this **and something was
+going on**" is one more predicate beside the vector scan. Not built; measured
+enough to know it is the next thing.
+
+Two smaller defects the dashboard found, both fixed:
+
+**An unpaced render loop is not a camera.** `idle` drew frames as fast as the GPU
+allowed, so "10 fps" became 641 spans in ten idle minutes, the encoder fell ~60 s
+behind, and a live query timed out waiting for its own span to be indexed. Worse,
+every `t0` was a lie: the stamps claim video seconds and the video was running
+many times faster than the room. It is paced to the wall clock now.
+
+**A person does not queue behind the cameras.** The write path is asynchronous on
+purpose, and a queue has a tail. When a human speaks, the query *is* the span
+just cut, so it is encoded ahead of the queue.
+
 ---
 
 ## What the database's stage buys

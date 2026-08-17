@@ -307,10 +307,25 @@ class Pilot:
         an idle camera actually sees.
         """
         n = int(seconds * fps)
+        dt = 1.0 / fps
+        t = time.time()
         for i in range(n):
             self._sim().forward()
             if on_frame is not None:
                 on_frame(self.memory_frame(), i)
+            # PACED TO THE WALL CLOCK, which is not a nicety. A render loop with
+            # no pacing produces frames as fast as the GPU will draw them, so
+            # "10 fps of video" became hundreds of spans a minute: the store
+            # wrote 641 clips in ten idle minutes, the encoder fell ~60 s behind,
+            # and a live query timed out waiting for its own span to be indexed.
+            # It also made every t0/t1 a lie — the stamps claim video seconds and
+            # the video was running many times faster than the room.
+            t += dt
+            lag = t - time.time()
+            if lag > 0:
+                time.sleep(lag)
+            else:
+                t = time.time()          # fell behind; do not accumulate debt
         return n
 
     def look(self) -> list:

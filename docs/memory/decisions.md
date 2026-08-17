@@ -2506,3 +2506,22 @@ memorises it: the first head read full 1.000 / clip-ablated 0.875 and the clips
 were never used. "Put the bowl away" is true of four behaviours, so the words
 cannot decide and the video must. A benchmark whose inputs are individually
 sufficient cannot measure which one is used.
+
+2026-08-17 - The store indexes TWO views of every span, and neither is a caption
+`embedding` = RelMo's canonical pooled prefilter (the DB's cosine IS RelMo's
+stage 1, verified 2.3e-08). `motion` = per-channel temporal std of the SigLIP2
+channel, which measures 0.748 on behaviour matching against 0.649 for the mean
+and 0.685 for DTW. Retrieval at serve queries `embedding` because the question
+is "when did the kitchen last look like this"; the head reads the motion view
+because the question there is "what happened in that span".
+
+2026-08-17 - Ablate by TRAINING SEPARATE MODELS, never by zeroing an input
+A head trained on two inputs and then shown a zero vector still knows the label
+prior: that control read 0.536 for "words alone" where a words-only model reads
+0.545 and the truth is bounded by the ambiguity. Three heads, each trained from
+scratch on exactly the inputs it is allowed.
+
+2026-08-17 - Every nearest-neighbour number over sliding spans needs an overlap guard
+Consecutive rows share SPAN-HOP seconds of video, so an unguarded 1-NN asks
+whether a clip can find itself shifted by one hop. It read 1.000 where the honest
+number was 0.324, and it reversed the ranking of every arm tested.

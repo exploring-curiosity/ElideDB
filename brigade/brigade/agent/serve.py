@@ -177,7 +177,11 @@ class Kitchen:
         # STATE; the head then reads the motion of what came back.
         t0 = time.perf_counter()
         qid = self.store.flush()
-        qvec = self.store.await_vector(qid, view="embedding") if qid else None
+        # Indexed ahead of the queue: the person in the room does not wait
+        # behind the cameras. See VideoStore.index_now.
+        if qid:
+            self.store.index_now(qid)
+        qvec = self.store.await_vector(qid, view="embedding", timeout=20.0) if qid else None
         if qvec is None:
             t.note = ("no live view to search with — the camera has not filled "
                       "a span yet")

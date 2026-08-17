@@ -436,6 +436,39 @@ class VideoStore:
         return [Clip(r["clip_id"], r["path"], float(r["a"]), float(r["b"]))
                 for r in rows]
 
+    def index_now(self, clip_id: str) -> bool:
+        """Encode and index ONE clip ahead of the queue. -> did it land.
+
+        The write path is a queue on purpose, and a queue has a tail. When a
+        human speaks, the query IS the span just cut, and making it wait behind
+        whatever the cameras have been recording turns a 1 s encode into a
+        minute — measured, exactly that timed out a live query. The person in
+        the room jumps the queue; the cameras can wait.
+        """
+        if self.relmo is None or not self.relmo.ready:
+            return False
+        row = self.db.query("SELECT path FROM clips WHERE clip_id = %s", (clip_id,))
+        if not row:
+            return False
+        try:
+            vec, meta = self.relmo.encode(row[0]["path"], clip_id)
+        except Exception as exc:                                  # noqa: BLE001
+            log.warning("priority encode failed for %s: %s", clip_id, exc)
+            return False
+        if vec is None:
+            return False
+        from . import traces as TR
+
+        mot = TR.feature(clip_id, blocks=("std_sig",))
+        self.db.execute(
+            """UPDATE clips SET embedding = %s, basis_id = %s, trace_path = %s,
+                                steps = %s, motion = %s WHERE clip_id = %s""",
+            (self.db.vector_param(vec), self.relmo.basis, meta.get("trace"),
+             int(meta.get("steps") or 0),
+             self.db.vector_param(mot) if mot is not None else None, clip_id))
+        self.n_encoded += 1
+        return True
+
     def await_vector(self, clip_id: str, timeout: float = 60.0,
                      view: str = "motion") -> np.ndarray | None:
         """Block until this clip is findable. -> its vector, or None.
