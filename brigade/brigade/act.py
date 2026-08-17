@@ -67,13 +67,20 @@ BEATS = [
 ]
 
 
-def run_arm(bg: Brigade, use_memory: bool) -> list[dict]:
+def run_arm(bg: Brigade, use_memory: bool, start_world=None) -> list[dict]:
     tag = "MEMORY ON" if use_memory else "MEMORY OFF"
-    print(f"\n{'=' * 78}\nTHE SHIFT — {tag}\n{'=' * 78}", flush=True)
+    world = "one continuous kitchen" if bg.continuous else "reset between beats"
+    print(f"\n{'=' * 78}\nTHE SHIFT — {tag}   ({world})\n{'=' * 78}", flush=True)
 
-    # Both arms start from the same kitchen. Beat 1 is explicit and works either
-    # way; everything after it is where they diverge.
+    # Both arms start from the same kitchen — LITERALLY the same, in a
+    # persistent world. Without this the control arm runs second in a kitchen
+    # the treatment arm has already tidied, and inherits its goals pre-satisfied:
+    # measured, three memory-off beats "succeeded" in 1 second having done
+    # nothing. The treatment arm cannot be allowed to do the control's work.
     bg.enter(1)   # 'put the bowl on the stove'
+    if bg.continuous and start_world is not None:
+        bg.world_state = start_world
+        bg.pilot.restore(start_world)
 
     rows = []
     for beat, said, needs, kind in BEATS:
@@ -93,6 +100,12 @@ def run_arm(bg: Brigade, use_memory: bool) -> list[dict]:
                              place=ans.get("place"), actual=ans.get("actual_place")))
             continue
 
+        # The GOAL each beat is scored against is fixed by a memory-on
+        # resolution in BOTH arms — the experimental control, exactly as in
+        # ab(). Without it the memory-off arm never changes goal, so after its
+        # first beat every later one is trivially already-true and the
+        # comparison measures nothing.
+        control = bg.resolver.resolve(said, use_memory=True)
         res = bg.resolver.resolve(said, use_memory=use_memory)
         if kind == "abstain":
             # Scored the same way in both arms: declining is right, inventing an
@@ -109,14 +122,17 @@ def run_arm(bg: Brigade, use_memory: bool) -> list[dict]:
 
         if res.expanded and res.expanded != said:
             print(f'    rewritten: "{res.expanded}"   ({res.rewrite_note})')
-        out = bg.handle(said, use_memory=use_memory,
-                        goal=res.task_id if use_memory else None)
+        out = bg.handle(said, use_memory=use_memory, goal=control.task_id)
         instr = (out.get("resolution") or {}).get("instruction")
         secs = (out.get("episode") or {}).get("seconds", 0.0)
         print(f"    executes: {instr!r}")
-        print(f"    -> {'SUCCESS' if out['ok'] else 'failed'}  ({secs:.0f}s)")
+        verdict = ("ALREADY TRUE before it moved — not counted"
+                   if out.get("already") else
+                   ("SUCCESS" if out["ok"] else "failed"))
+        print(f"    -> {verdict}  ({secs:.0f}s)")
         rows.append(dict(beat=beat, said=said, kind=kind, memory=use_memory,
                          ok=bool(out["ok"]), answer=instr, seconds=secs,
+                         already=bool(out.get("already")),
                          abstained=bool(out.get("abstained"))))
 
     ok = sum(1 for r in rows if r["ok"])
@@ -132,8 +148,10 @@ def report(rows: list[dict]) -> None:
     print("-" * 78)
     for a in on:
         b = next((x for x in off if x["beat"] == a["beat"]), None)
+        mark = lambda r: ("—" if r and r.get("already") else
+                          ("ok" if r and r["ok"] else "fail"))
         print(f"{a['beat']:<3}{a['said'][:29]:<30}{a['kind']:<10}"
-              f"{'ok' if a['ok'] else 'fail':<9}{'ok' if (b and b['ok']) else 'fail'}")
+              f"{mark(a):<9}{mark(b)}")
     print("-" * 78)
     print(f"{'':<43}{sum(r['ok'] for r in on)}/{len(on):<7}"
           f"{sum(r['ok'] for r in off)}/{len(off)}")
@@ -145,13 +163,15 @@ def main() -> int:
     ap.add_argument("--seed", action="store_true", help="live a history first")
     ap.add_argument("--wipe", action="store_true")
     ap.add_argument("--no-relmo", action="store_true")
+    ap.add_argument("--episodic", action="store_true",
+                    help="reset the kitchen between beats (LIBERO's default)")
     ap.add_argument("--out", default="../eval_logs/brigade_act.json")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)-15s %(message)s",
                         datefmt="%H:%M:%S")
 
-    bg = Brigade()
+    bg = Brigade(continuous=not args.episodic)
     if args.wipe:
         bg.mem.setup()
         bg.mem.wipe()
@@ -165,10 +185,11 @@ def main() -> int:
     # The memory arm runs FIRST and the off arm second, because the off arm
     # writes nothing: running it first would leave the on arm with the same
     # empty memory and both would fail for the same reason.
+    start_world = bg.world_state if bg.continuous else None
     if args.arm in ("on", "both"):
-        rows += run_arm(bg, True)
+        rows += run_arm(bg, True, start_world)
     if args.arm in ("off", "both"):
-        rows += run_arm(bg, False)
+        rows += run_arm(bg, False, start_world)
     if args.arm == "both":
         report(rows)
 

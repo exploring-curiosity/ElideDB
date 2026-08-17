@@ -32,7 +32,7 @@ from typing import Callable
 import numpy as np
 import torch
 
-from ..world.scene import SceneExporter
+from ..world.scene import SceneExporter, _raw_model
 
 log = logging.getLogger("brigade.pilot")
 
@@ -52,6 +52,10 @@ class EpisodeResult:
     # because the vector env resets on the step after termination.
     final_obs: list = field(default_factory=list)
     start_obs: list = field(default_factory=list)
+    # True when the scene's goal already held before the robot moved.
+    already_satisfied: bool = False
+    # The world as the episode left it, for the next episode to continue from.
+    end_state: object = None
 
     def to_json(self) -> dict:
         return dict(instruction=self.instruction, success=self.success,
@@ -128,6 +132,10 @@ class Pilot:
         self._env_proc = make_env_pre_post_processors(
             env_cfg=env_cfg, policy_cfg=self.policy.config)
 
+        # The benchmark's own placements, kept pristine: carry() overwrites
+        # _init_states, and the canonical ROBOT pose has to come from somewhere.
+        self._benchmark_states = np.asarray(self.env.envs[0]._init_states).copy()
+
         self.env.reset()
         # A getter, not the sim: robosuite replaces the MjSim on reset, so
         # anything holding the object streams a world that has stopped updating.
@@ -151,6 +159,112 @@ class Pilot:
         """The CURRENT MjSim. Always resolved fresh — see SceneExporter."""
         return self.env.envs[0]._env.env.sim
 
+    def _libero(self):
+        """LIBERO's own env wrapper, which owns state save/restore."""
+        return self.env.envs[0]._env
+
+    # ---- world continuity ---------------------------------------------------
+
+    def save_state(self) -> np.ndarray:
+        """The whole MuJoCo state as one flat vector (qpos + qvel)."""
+        return np.asarray(self._libero().get_sim_state(), dtype=np.float64).copy()
+
+    # qpos / dof widths by mjtJoint: free, ball, slide, hinge.
+    _NQ = (7, 4, 1, 1)
+    _NV = (6, 3, 1, 1)
+    # robosuite's naming convention for the arm and its gripper, across robots.
+    _ROBOT_PREFIX = ("robot0_", "gripper0_")
+
+    def world_only(self, saved, base) -> np.ndarray:
+        """`base` with the WORLD's joints taken from `saved`. -> flat state.
+
+        Carrying the raw `get_sim_state()` carries the robot as well, because it
+        is the whole simulation: 7 arm joints and 2 gripper joints sit at the
+        front of qpos. Each episode then began with the arm wherever the last one
+        stopped — extended, or still gripping — and pi0.5 has only ever started
+        from the canonical home pose. Measured: with the full state carried,
+        every action beat of the demo failed at the step limit, including
+        pressing the stove button, which is otherwise trivial.
+
+        Splitting it is also just correct. A household robot returns to a
+        neutral pose between jobs; the kitchen is what keeps its state. So the
+        arm is reset and everything else persists — and "everything else" here
+        includes the three cabinet drawers and the stove knob, so a drawer left
+        open stays open and a lit stove stays lit.
+
+        World velocities are zeroed: between two commands the kitchen is at
+        rest, and restoring mid-tumble momentum would have objects drift during
+        the settling steps that follow every reset.
+        """
+        from mujoco import mj_id2name, mjtObj
+
+        m = _raw_model(self._sim())
+        saved = np.asarray(saved, dtype=np.float64)
+        out = np.asarray(base, dtype=np.float64).copy()
+        if saved.shape != out.shape:
+            raise ValueError(f"state width {saved.shape} != scene's {out.shape}")
+
+        nq = int(m.nq)
+        for j in range(int(m.njnt)):
+            name = mj_id2name(m, mjtObj.mjOBJ_JOINT, j) or ""
+            if name.startswith(self._ROBOT_PREFIX):
+                continue
+            t = int(m.jnt_type[j])
+            qa, na = int(m.jnt_qposadr[j]), self._NQ[t]
+            da, nd = int(m.jnt_dofadr[j]), self._NV[t]
+            out[1 + qa: 1 + qa + na] = saved[1 + qa: 1 + qa + na]
+            out[1 + nq + da: 1 + nq + da + nd] = 0.0
+        return out
+
+    def carry(self, state) -> None:
+        """Continue the NEXT episode from `state` instead of the benchmark's.
+
+        LIBERO episodes are independent by design: `reset()` restores one of the
+        benchmark's 50 stored initial placements, so anything the robot achieved
+        is undone before the next request. That makes a spatial memory
+        decorative — it can describe what happened, but nothing depends on the
+        description, because the world it describes has already been rewound.
+
+        This makes the kitchen persistent by giving LeRobot's reset path our own
+        state where it expects the benchmark's. Nothing is reimplemented: reset
+        still restores, still settles the scene with no-op actions, still
+        rebuilds observations. It just restores where the robot actually left
+        things.
+        """
+        if state is None:
+            return
+        sub = self.env.envs[0]
+        base = self._benchmark_states[0]
+        # Layout is derived from the model. All ten goal scenes carry the same
+        # objects so it matches, but a mismatch would silently scatter the
+        # kitchen rather than fail, so world_only() checks it.
+        sub._init_states = self.world_only(state, base).reshape(1, -1)
+        sub.init_state_id = 0
+
+    def restore(self, state) -> None:
+        """Put the live simulator INTO `state`, right now, without a reset.
+
+        Needed because the vector env autoresets after an episode: left alone,
+        the sim ends up holding whatever state was carried IN, so the 3D view
+        visibly snaps back to before the action and `look()` reports a world one
+        episode out of date. Restoring makes the live sim the present again,
+        which is what lets "where is the bowl?" be checked against the actual
+        kitchen rather than against a record kept on the side.
+        """
+        if state is None:
+            return
+        self._libero().set_init_state(
+            self.world_only(state, self._benchmark_states[0]))
+
+    def goal_satisfied(self) -> bool:
+        """Is the current scene's goal ALREADY true, before doing anything?
+
+        Only a meaningful question once the world persists, and then an
+        important one: a robot asked to put away something already put away
+        should say so, not mime the task and collect a free success.
+        """
+        return bool(self._libero().check_success())
+
     def look(self) -> list:
         """What is where, right now. See world/observe.py."""
         from ..world.observe import observe
@@ -169,7 +283,7 @@ class Pilot:
 
     def run(self, instruction: str, *, on_frame: Callable[[bytes, int], None] | None = None,
             max_steps: int | None = None, keep_frames: bool = True,
-            seed: int = 10000) -> EpisodeResult:
+            seed: int = 10000, from_state=None) -> EpisodeResult:
         """One episode, driven by `instruction`.
 
         `on_frame` receives the packed geom transforms every control step; that
@@ -188,7 +302,11 @@ class Pilot:
         env.envs[0].task_description = instruction
 
         self.policy.reset()
+        # Continue the persistent world rather than rewinding to the benchmark's
+        # stored placement. See carry().
+        self.carry(from_state)
         obs, _ = env.reset(seed=[seed])
+        already = self.goal_satisfied()
         # AFTER the reset: `before` captured by a caller would otherwise be the
         # previous episode's leftovers, since run() resets internally.
         start_obs = self.look()
@@ -208,6 +326,11 @@ class Pilot:
         # every belief written from it is wrong in the same silent way.
         prev_obs: list = []
         terminal_obs: list | None = None
+        # The world state to hand to the next episode. Captured on the same
+        # schedule as terminal_obs and for the same reason: one step later the
+        # vector env has already rewound the kitchen.
+        prev_state = None
+        terminal_state = None
 
         while not done.all() and step < limit:
             o = add_envs_task(env, preprocess_observation(obs))
@@ -228,10 +351,12 @@ class Pilot:
                     # The state entering this step, i.e. before the reset it may
                     # have just performed.
                     terminal_obs = prev_obs
+                    terminal_state = prev_state
             done = terminated | truncated | done
             step += 1
 
             prev_obs = self.look()
+            prev_state = self.save_state()
             if on_frame is not None:
                 on_frame(self.scene.frame_bytes(), step)
             if keep_frames and step % 2 == 0:
@@ -241,5 +366,6 @@ class Pilot:
             instruction=instruction, success=succeeded, steps=step,
             seconds=time.time() - t0, suite=self.suite, task_id=self.task_id,
             frames=frames, final_obs=terminal_obs if terminal_obs else prev_obs,
-            start_obs=start_obs,
+            start_obs=start_obs, already_satisfied=already,
+            end_state=terminal_state if terminal_state is not None else self.save_state(),
         )

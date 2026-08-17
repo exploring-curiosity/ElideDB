@@ -51,7 +51,8 @@
    "memory": true,
    "ok": true,
    "answer": "put the bowl on the stove",
-   "seconds": 6.24,
+   "seconds": 18.26,
+   "already": false,
    "abstained": false
   },
   {
@@ -69,9 +70,10 @@
    "said": "put it back",
    "kind": "do",
    "memory": true,
-   "ok": true,
+   "ok": false,
    "answer": "put the bowl on top of the cabinet",
-   "seconds": 6.23,
+   "seconds": 21.53,
+   "already": false,
    "abstained": false
   },
   {
@@ -80,18 +82,19 @@
    "kind": "ask",
    "memory": true,
    "ok": true,
-   "answer": "the bowl is on the wooden cabinet",
-   "place": "wooden cabinet",
-   "actual": "wooden cabinet"
+   "answer": "the bowl is on the flat stove",
+   "place": "flat stove",
+   "actual": "flat stove"
   },
   {
    "beat": "5",
    "said": "and the bottle too",
    "kind": "do",
    "memory": true,
-   "ok": true,
+   "ok": false,
    "answer": "put the wine bottle on the rack",
-   "seconds": 12.78,
+   "seconds": 21.98,
+   "already": false,
    "abstained": false
   },
   {
@@ -101,7 +104,8 @@
    "memory": true,
    "ok": true,
    "answer": "turn on the stove",
-   "seconds": 5.44,
+   "seconds": 6.12,
+   "already": false,
    "abstained": false
   },
   {
@@ -119,7 +123,8 @@
    "memory": false,
    "ok": true,
    "answer": "put the bowl on the stove",
-   "seconds": 6.25,
+   "seconds": 9.83,
+   "already": false,
    "abstained": false
   },
   {
@@ -139,7 +144,8 @@
    "memory": false,
    "ok": false,
    "answer": "put it back",
-   "seconds": 19.54,
+   "seconds": 22.72,
+   "already": false,
    "abstained": false
   },
   {
@@ -159,7 +165,8 @@
    "memory": false,
    "ok": false,
    "answer": "and the bottle too",
-   "seconds": 19.63,
+   "seconds": 23.78,
+   "already": false,
    "abstained": false
   },
   {
@@ -169,7 +176,8 @@
    "memory": false,
    "ok": false,
    "answer": "now get the stove going",
-   "seconds": 21.48,
+   "seconds": 23.92,
+   "already": false,
    "abstained": false
   },
   {
@@ -187,20 +195,20 @@
    "label": "bottle",
    "home_location": "rack",
    "confidence": 1.0,
-   "n_episodes": 3,
-   "n_total": 3,
+   "n_episodes": 2,
+   "n_total": 2,
    "source": "learned",
-   "updated_at": "2026-08-17 00:13:04.740295-04:00"
+   "updated_at": "2026-08-17 02:06:12.480254-04:00"
   },
   {
    "kitchen_id": "kitchen-1",
    "label": "bowl",
    "home_location": "cabinet",
-   "confidence": 0.6666666666666666,
-   "n_episodes": 4,
-   "n_total": 6,
+   "confidence": 0.6,
+   "n_episodes": 3,
+   "n_total": 5,
    "source": "learned",
-   "updated_at": "2026-08-17 00:12:50.655695-04:00"
+   "updated_at": "2026-08-17 02:06:55.238995-04:00"
   },
   {
    "kitchen_id": "kitchen-1",
@@ -210,7 +218,7 @@
    "n_episodes": 1,
    "n_total": 1,
    "source": "learned",
-   "updated_at": "2026-08-17 00:12:28.906708-04:00"
+   "updated_at": "2026-08-17 02:06:28.276446-04:00"
   }
  ],
  "beliefs": [
@@ -220,15 +228,15 @@
    "location": "wine rack",
    "confidence": 1.0,
    "stale": false,
-   "last_seen": "2026-08-17 00:13:04.728775-04:00"
+   "last_seen": "2026-08-17 02:07:41.530372-04:00"
   },
   {
    "instance_id": "akita_black_bowl_1",
    "label": "bowl",
-   "location": "wooden cabinet",
+   "location": "flat stove",
    "confidence": 1.0,
    "stale": false,
-   "last_seen": "2026-08-17 00:12:50.632000-04:00"
+   "last_seen": "2026-08-17 02:06:55.227555-04:00"
   },
   {
    "instance_id": "cream_cheese_1",
@@ -236,7 +244,7 @@
    "location": "akita black bowl",
    "confidence": 1.0,
    "stale": false,
-   "last_seen": "2026-08-17 00:12:28.895527-04:00"
+   "last_seen": "2026-08-17 02:06:28.264457-04:00"
   }
  ]
 }

@@ -14,22 +14,90 @@ python -m brigade.run --wipe --seed --ab "put the bowl away" --trials 3
 
 ---
 
-## 0. THE SHIFT — seven beats, each leaning on the one before
+## 0. One continuous kitchen, and what it costs
 
-**7/7 with memory, 1/7 without.** Each beat is a different kind of remembering,
-and they compound: beat 3 needs what beat 1 did, beat 4 needs what beat 3
-changed, beat 5 needs the verb from beat 3.
+LIBERO resets between episodes by design. That was a real hole in everything
+below: the robot's spatial memory described a world that had already been
+rewound — accurate about the past, useless about the present, and depended on by
+nothing. A belief nothing acts on is bookkeeping.
 
-| # | the human says | what memory has to supply | mem ON | mem OFF |
+The kitchen is now persistent. State is carried across every episode and across
+goal changes, which rebuild the whole environment:
+
+```
+python3 brigade/bench/continuity.py --repeat 2
+→ carried 7/7 transitions — the kitchen is persistent
+```
+
+Drawers and the stove knob carry too — they are ordinary joints in the same
+state vector — so a drawer left open stays open. And side effects persist: in
+one measured run the robot knocked the bowl off the cabinet while reaching for
+the bottle, and it stayed knocked off.
+
+### The price, measured
+
+| start state | policy success |
+|---|---|
+| the benchmark's own placements (how π0.5 is published) | **97–100%** |
+| carried over from the previous episode | **4/8** |
+| carried over *including the robot's own pose* | **0/4** |
+
+π0.5 is an episodic policy. A lived-in kitchen is out of its training
+distribution by construction, and it costs roughly half the success rate. That
+number is not hidden anywhere in this repo, because it is the honest answer to
+"why not just make it continuous".
+
+The third row is a bug worth keeping in mind: `get_sim_state()` is the *whole*
+simulation, so carrying it verbatim also carries the arm — each episode starting
+wherever the last one stopped, sometimes mid-reach or still gripping. Every
+action failed, including pressing the stove button. The fix is also the correct
+model of a household robot: **the arm returns to a neutral pose, the kitchen
+keeps its state.** Splitting them recovered 0/4 → 4/8.
+
+### Two integrity bugs that persistence introduced
+
+Both would have flattered the result, and both were caught by reading a
+suspicious timing rather than a suspicious total:
+
+* **Goals that already held counted as successes.** Three memory-off beats
+  "succeeded" in **1 second flat**, having inherited a kitchen the memory-on arm
+  had already tidied. An episode whose goal was true before the robot moved is
+  now reported separately and excluded from the tally.
+* **The control arm ran second, in the world the treatment arm had cleaned.**
+  Both arms now start from the same snapshot, and both are scored against the
+  same goal per beat — otherwise the memory-off arm never changes goal and every
+  beat after its first is trivially already-true.
+
+Persistence is a flag, not a commitment: `--episodic` restores LIBERO's default
+if you want the 98% policy and a narrower claim.
+
+---
+
+## 0b. THE SHIFT — seven beats, each leaning on the one before
+
+Each beat is a different kind of remembering, and they compound: beat 3 needs
+what beat 1 did, beat 4 needs what beat 3 changed, beat 5 needs the verb from
+beat 3.
+
+| # | the human says | what memory has to supply | continuous ON / OFF | episodic ON / OFF |
 |---|---|---|---|---|
-| 1 | "put the bowl on the stove" | nothing — explicit | ok | **ok** |
-| 2 | "where is the bowl?" | the belief written in beat 1 | ok | fail |
-| 3 | "put it back" | a referent for "it" + the bowl's norm | ok | fail |
-| 4 | "where is the bowl?" | the belief, now **changed** by beat 3 | ok | fail |
-| 5 | "and the bottle too" | the verb from beat 3 + the bottle's norm | ok | fail |
-| 6 | "now get the stove going" | a paraphrase with no shared words | ok | fail |
-| 7 | "feed the cat" | nothing — and it must say so | ok | fail |
-| | | | **7/7** | **1/7** |
+| 1 | "put the bowl on the stove" | nothing — explicit | ok / **ok** | ok / **ok** |
+| 2 | "where is the bowl?" | the belief written in beat 1 | ok / fail | ok / fail |
+| 3 | "put it back" | a referent for "it" + the bowl's norm | *fail* / fail | ok / fail |
+| 4 | "where is the bowl?" | the belief, revised by beat 3 | ok / fail | ok / fail |
+| 5 | "and the bottle too" | the verb from beat 3 + the bottle's norm | *fail* / fail | ok / fail |
+| 6 | "now get the stove going" | a paraphrase with no shared words | ok / fail | ok / fail |
+| 7 | "feed the cat" | nothing — and it must say so | ok / fail | ok / fail |
+| | | | **5/7 / 1/7** | **7/7 / 1/7** |
+
+The two italicised failures are **the policy, not the memory**. Memory resolved
+both correctly — `"put it back"` → `"put the bowl on top of the cabinet"`,
+`"and the bottle too"` → `"put the wine bottle on the rack"` — and π0.5 then ran
+to the step limit in a kitchen that no longer matched anything it was trained
+on. That is the same ~50% from the table above, showing up beat by beat.
+
+The gap between the arms is what the experiment is about, and it survives in
+both worlds: **5/7 vs 1/7** persistent, **7/7 vs 1/7** episodic.
 
 Beat 1 succeeding in both arms is the control, and it is the honest part of the
 table: a **complete** instruction does not need memory, and Brigade does not

@@ -68,17 +68,23 @@ SEED_HISTORY = [(4, 3), (9, 2), (7, 1), (6, 1), (8, 1)]
 class Brigade:
     """The agent: memory, policy and world, wired together."""
 
-    def __init__(self, live=LIVE, device: str = "mps"):
+    def __init__(self, live=LIVE, device: str = "mps", continuous: bool = True):
         self.live = live
+        # Persistence is a CHOICE with a measured price, not a free upgrade:
+        # pi0.5 is an episodic policy and a carried-over kitchen is out of its
+        # training distribution. See RESULTS.md for the two numbers.
+        self.continuous = continuous
         self.mem = Memory()
         self.resolver = Resolver(self.mem)
         self.pilot = Pilot(device=device)
         self.relmo = relmo_mod.RelMoSidecar()
         self.clips = os.path.join(CFG.artifacts, "clips")
-        # The harness's independent record of where episodes actually left
-        # things. Deliberately not read by the robot and not stored in the
-        # database — it is the answer key the robot's memory is marked against.
-        self.truth: dict[str, str] = {}
+        # ONE continuous kitchen. LIBERO resets between episodes by design, so
+        # without this the robot's spatial memory describes a world that has
+        # already been rewound — accurate about the past, useless about the
+        # present, and depended on by nothing. Carrying the state forward is
+        # what makes a belief worth holding.
+        self.world_state = None if continuous else False   # False = never carry
 
     # ---- boot ---------------------------------------------------------------
 
@@ -102,6 +108,10 @@ class Brigade:
         if (self.pilot.suite, self.pilot.task_id) == (SCENE_SUITE, task_id):
             return
         self.pilot.open_scene(SCENE_SUITE, task_id)
+        # A rebuilt env starts from the benchmark's placement, so the persistent
+        # kitchen is put back before anything looks at it.
+        if self.continuous:
+            self.pilot.restore(self.world_state)
         self.live.publish_scene(*self.pilot.scene_payload)
         self.live.publish_frame(self.pilot.scene.frame_bytes())
 
@@ -189,12 +199,33 @@ class Brigade:
                              memory_used=use_memory, instruction=instruction,
                              resolution=res.to_json())
 
-        ep = self.pilot.run(instruction, on_frame=lambda buf, step: self.live.publish_frame(buf))
+        ep = self.pilot.run(instruction,
+                            from_state=self.world_state if self.continuous else None,
+                            on_frame=lambda buf, step: self.live.publish_frame(buf))
+        # The world keeps what the episode did to it — including the mess. In one
+        # measured run the robot knocked the bowl off the cabinet while reaching
+        # for the bottle, and that stayed knocked off, which is the whole point.
+        if self.continuous:
+            self.world_state = ep.end_state
+            self.pilot.restore(self.world_state)
+            self.live.publish_frame(self.pilot.scene.frame_bytes())
         seen = self.observe_after(ep, use_memory)
 
+        if ep.already_satisfied:
+            # Only possible in a persistent world, and worth surfacing: the goal
+            # held before the robot moved, so the success is the world's, not
+            # the policy's, and counting it would inflate every number here.
+            self.live.say("memory", "already done before I started — "
+                                    "not counting that as work")
+        # A goal that already held before the robot moved is not an achievement.
+        # Counting it as one is how a persistent world quietly inflates every
+        # number: three memory-off beats "succeeded" in 1 second flat, having
+        # inherited a kitchen the memory-on arm had already tidied.
+        did_work = bool(ep.success and not ep.already_satisfied)
         self.live.say("ok" if ep.success else "fail",
                       f'{"succeeded" if ep.success else "failed"} in {ep.seconds:.0f}s '
-                      f'({ep.steps} steps)')
+                      f'({ep.steps} steps)'
+                      + ("  [goal already held at the start]" if ep.already_satisfied else ""))
         # The memory-off arm does not write to memory. Two reasons, and the
         # second one is a bug that would otherwise be invisible: an ablated run
         # has no memory to write to, so writing would not be ablated; and the
@@ -207,14 +238,16 @@ class Brigade:
                                            task_id, suite=SCENE_SUITE, goal_id=goal_id)
         self.mem.finish(task_id, ep.success, instruction)
         self.live.record(dict(request=request, memory=use_memory, instruction=instruction,
-                              success=ep.success, seconds=ep.seconds, abstained=False,
+                              success=did_work, seconds=ep.seconds, abstained=False,
+                              already=bool(ep.already_satisfied),
                               goal=self.goals().get(goal_id, "")))
 
         self.remember_video(ep, event_id, instruction)
         self.live.set_status("idle", "waiting for an instruction",
                              request=request, instruction=instruction,
                              memory_used=use_memory, resolution=res.to_json())
-        return dict(ok=ep.success, resolution=res.to_json(), episode=ep.to_json())
+        return dict(ok=did_work, already=bool(ep.already_satisfied),
+                    resolution=res.to_json(), episode=ep.to_json())
 
     # ---- spatial memory -----------------------------------------------------
 
@@ -236,10 +269,6 @@ class Brigade:
         from .world.observe import moved
 
         changed = moved(ep.start_obs, ep.final_obs)
-        # The answer key updates whether or not memory is on: what happened in
-        # the world does not depend on whether the robot wrote it down.
-        for o in changed:
-            self.truth[o.label] = o.place
         if not use_memory:
             return changed
         for o in changed:
@@ -253,18 +282,16 @@ class Brigade:
     def where_is(self, request: str, use_memory: bool = True) -> dict:
         """Answer a question about the world. No episode runs.
 
-        Scored against `self.truth`, which is the harness's own tally of where
-        each episode actually left things — NOT a second perception system and
-        NOT the robot's memory. It exists because the live simulator cannot be
-        the ground truth here: LIBERO episodes are independent, so the vector
-        env resets the kitchen between them and a look at the sim after beat 1
-        reports the bowl back on the table where it started. Asking "where is
-        the bowl" against that reset world marked a correct answer WRONG.
+        Scored against the LIVE kitchen, which is only a fair test because the
+        kitchen persists: the answer is checked against where the object
+        actually is right now, not against a record kept on the side. While
+        episodes still reset, this comparison was impossible — the sim after an
+        action showed the bowl back at its starting place, and a correct answer
+        was marked WRONG.
 
-        What is actually being tested is retention: the belief was written
+        What is tested is retention plus revision: the belief was written
         several episodes ago, has to survive them, and has to be *updated* by
-        the one that moved the object again. Beat 4 asking the same question as
-        beat 2 and needing a different answer is the whole point.
+        the one that moved the object again.
         """
         if not use_memory:
             ans = dict(answered=False, latency_ms=0.0, correct=False,
@@ -272,7 +299,12 @@ class Brigade:
         else:
             ans = self.resolver.answer_where(request)
             if ans.get("answered"):
-                actual = self.truth.get(ans["label"])
+                # Checked against the LIVE kitchen, which is meaningful only
+                # because the kitchen persists. While episodes reset, the sim
+                # after an action showed the bowl back where it started, so the
+                # only available answer key was a record kept on the side.
+                live = {o.label: o.place for o in self.pilot.look()}
+                actual = live.get(ans["label"])
                 ans["actual_place"] = actual
                 ans["correct"] = bool(actual and actual == ans["place"])
         self.live.say("memory" if ans.get("answered") else "fail", "Q: " + request)
@@ -357,6 +389,13 @@ def seed(bg: Brigade, repeats_scale: int = 1) -> None:
             eid = bg.resolver.learn(instruction, instruction, ep.success, ep.seconds,
                                     suite=SCENE_SUITE, goal_id=goal_id)
             bg.remember_video(ep, eid, instruction)
+            # Seeding is deliberately NOT continuous: it stands for the robot's
+            # past days, so each episode starts fresh and it genuinely performs
+            # the task three times. Carrying state here would make repeats
+            # trivially satisfied and no norm would ever be learned. The shift
+            # that follows continues from wherever seeding left the kitchen.
+            if bg.continuous:
+                bg.world_state = ep.end_state
             print(f"{'ok' if ep.success else 'FAILED'} in {ep.seconds:.0f}s"
                   + (f"  [saw {', '.join(f'{o.label}→{o.place}' for o in seen)}]" if seen else ""),
                   flush=True)
@@ -422,6 +461,8 @@ def main() -> int:
     ap.add_argument("--results", default="../eval_logs/brigade_results.json")
     ap.add_argument("--trials", type=int, default=3)
     ap.add_argument("--no-relmo", action="store_true")
+    ap.add_argument("--episodic", action="store_true",
+                    help="reset the kitchen between actions (LIBERO's default)")
     ap.add_argument("--no-serve", action="store_true")
     args = ap.parse_args()
 
@@ -429,7 +470,7 @@ def main() -> int:
                         datefmt="%H:%M:%S")
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-    bg = Brigade(device=args.device)
+    bg = Brigade(device=args.device, continuous=not args.episodic)
     try:
         if not DB.healthy():
             raise MemoryUnavailable(f"cannot reach {DB._safe_dsn()}")

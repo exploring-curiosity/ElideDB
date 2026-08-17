@@ -1,0 +1,168 @@
+{
+ "rows": [
+  {
+   "i": 1,
+   "goal": 4,
+   "instruction": "put the bowl on top of the cabinet",
+   "success": false,
+   "already": false,
+   "seconds": 19.7,
+   "before": {
+    "bowl": "table",
+    "cheese": "table",
+    "bottle": "akita black bowl",
+    "plate": "table"
+   },
+   "after": {
+    "bowl": "wine rack",
+    "cheese": "table",
+    "bottle": "akita black bowl",
+    "plate": "table"
+   }
+  },
+  {
+   "i": 2,
+   "goal": 9,
+   "instruction": "put the wine bottle on the rack",
+   "success": true,
+   "already": false,
+   "seconds": 9.4,
+   "before": {
+    "bowl": "wine rack",
+    "cheese": "table",
+    "bottle": "akita black bowl",
+    "plate": "table"
+   },
+   "after": {
+    "bowl": "wine rack",
+    "cheese": "table",
+    "bottle": "wine rack",
+    "plate": "table"
+   }
+  },
+  {
+   "i": 3,
+   "goal": 7,
+   "instruction": "turn on the stove",
+   "success": true,
+   "already": false,
+   "seconds": 5.5,
+   "before": {
+    "bowl": "wine rack",
+    "cheese": "table",
+    "bottle": "wine rack",
+    "plate": "table"
+   },
+   "after": {
+    "bowl": "wine rack",
+    "cheese": "table",
+    "bottle": "wine rack",
+    "plate": "table"
+   }
+  },
+  {
+   "i": 4,
+   "goal": 6,
+   "instruction": "put the cream cheese in the bowl",
+   "success": false,
+   "already": false,
+   "seconds": 19.7,
+   "before": {
+    "bowl": "wine rack",
+    "cheese": "table",
+    "bottle": "wine rack",
+    "plate": "table"
+   },
+   "after": {
+    "bowl": "wooden cabinet",
+    "cheese": "table",
+    "bottle": "wine rack",
+    "plate": "table"
+   }
+  },
+  {
+   "i": 5,
+   "goal": 4,
+   "instruction": "put the bowl on top of the cabinet",
+   "success": false,
+   "already": false,
+   "seconds": 19.6,
+   "before": {
+    "bowl": "wooden cabinet",
+    "cheese": "table",
+    "bottle": "wine rack",
+    "plate": "table"
+   },
+   "after": {
+    "bowl": "flat stove",
+    "cheese": "table",
+    "bottle": "wine rack",
+    "plate": "table"
+   }
+  },
+  {
+   "i": 6,
+   "goal": 9,
+   "instruction": "put the wine bottle on the rack",
+   "success": true,
+   "already": true,
+   "seconds": 0.9,
+   "before": {
+    "bowl": "flat stove",
+    "cheese": "table",
+    "bottle": "wine rack",
+    "plate": "table"
+   },
+   "after": {
+    "bowl": "flat stove",
+    "cheese": "table",
+    "bottle": "wine rack",
+    "plate": "table"
+   }
+  },
+  {
+   "i": 7,
+   "goal": 7,
+   "instruction": "turn on the stove",
+   "success": true,
+   "already": false,
+   "seconds": 4.3,
+   "before": {
+    "bowl": "flat stove",
+    "cheese": "table",
+    "bottle": "wine rack",
+    "plate": "table"
+   },
+   "after": {
+    "bowl": "flat stove",
+    "cheese": "table",
+    "bottle": "wine rack",
+    "plate": "table"
+   }
+  },
+  {
+   "i": 8,
+   "goal": 6,
+   "instruction": "put the cream cheese in the bowl",
+   "success": false,
+   "already": false,
+   "seconds": 19.8,
+   "before": {
+    "bowl": "flat stove",
+    "cheese": "table",
+    "bottle": "wine rack",
+    "plate": "table"
+   },
+   "after": {
+    "bowl": "flat stove",
+    "cheese": "wooden cabinet",
+    "bottle": "wine rack",
+    "plate": "table"
+   }
+  }
+ ],
+ "carried": 7,
+ "broke": 0,
+ "succeeded": 4,
+ "already": 1
+}
