@@ -1,0 +1,16 @@
+[
+ {
+  "watcher": "SmolVLM2-500M   (video, 0.5B)",
+  "correct": 1,
+  "n": 5,
+  "median_ms": 5285.581827163696,
+  "load_s": 4.43093204498291
+ },
+ {
+  "watcher": "Qwen3-VL-30B-A3B (general, 4bit)",
+  "correct": 2,
+  "n": 5,
+  "median_ms": 795.8519458770752,
+  "load_s": 4.439515113830566
+ }
+]
