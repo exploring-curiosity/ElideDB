@@ -1,0 +1,92 @@
+[
+ {
+  "clip": "../eval_logs/watcher_gate/g4_0.mp4",
+  "goal": 4,
+  "subject": "black bowl",
+  "instruction": "put the bowl on top of the cabinet",
+  "success": true,
+  "truth": "cabinet",
+  "ended": {
+   "bowl": "wooden cabinet",
+   "cheese": "table",
+   "bottle": "table",
+   "plate": "table"
+  },
+  "watched_uniform": "the top of the cabinet",
+  "correct_uniform": true,
+  "watched_end": "the top of the cabinet",
+  "correct_end": true
+ },
+ {
+  "clip": "../eval_logs/watcher_gate/g1_0.mp4",
+  "goal": 1,
+  "subject": "black bowl",
+  "instruction": "put the bowl on the stove",
+  "success": true,
+  "truth": "stove",
+  "ended": {
+   "bowl": "flat stove",
+   "cheese": "table",
+   "bottle": "table",
+   "plate": "table"
+  },
+  "watched_uniform": "the table",
+  "correct_uniform": false,
+  "watched_end": "the table",
+  "correct_end": false
+ },
+ {
+  "clip": "../eval_logs/watcher_gate/g8_0.mp4",
+  "goal": 8,
+  "subject": "black bowl",
+  "instruction": "put the bowl on the plate",
+  "success": true,
+  "truth": "plate",
+  "ended": {
+   "bowl": "plate",
+   "cheese": "table",
+   "bottle": "table",
+   "plate": "akita black bowl"
+  },
+  "watched_uniform": "the table",
+  "correct_uniform": false,
+  "watched_end": "the table",
+  "correct_end": false
+ },
+ {
+  "clip": "../eval_logs/watcher_gate/g9_0.mp4",
+  "goal": 9,
+  "subject": "wine bottle",
+  "instruction": "put the wine bottle on the rack",
+  "success": true,
+  "truth": "wine rack",
+  "ended": {
+   "bowl": "table",
+   "cheese": "table",
+   "bottle": "wine rack",
+   "plate": "table"
+  },
+  "watched_uniform": "the wine rack",
+  "correct_uniform": true,
+  "watched_end": "the wine rack",
+  "correct_end": true
+ },
+ {
+  "clip": "../eval_logs/watcher_gate/g6_0.mp4",
+  "goal": 6,
+  "subject": "cream cheese",
+  "instruction": "put the cream cheese in the bowl",
+  "success": true,
+  "truth": "bowl",
+  "ended": {
+   "bowl": "table",
+   "cheese": "akita black bowl",
+   "bottle": "akita black bowl",
+   "plate": "table"
+  },
+  "watched_uniform": "the plate",
+  "correct_uniform": false,
+  "watched_end": "the plate",
+  "correct_end": false
+ }
+]

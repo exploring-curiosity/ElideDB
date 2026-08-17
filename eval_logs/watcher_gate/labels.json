@@ -1,0 +1,86 @@
+[
+ {
+  "clip": "../eval_logs/watcher_gate/g4_0.mp4",
+  "goal": 4,
+  "subject": "black bowl",
+  "instruction": "put the bowl on top of the cabinet",
+  "success": true,
+  "truth": "cabinet",
+  "ended": {
+   "bowl": "wooden cabinet",
+   "cheese": "table",
+   "bottle": "table",
+   "plate": "table"
+  }
+ },
+ {
+  "clip": "../eval_logs/watcher_gate/g1_0.mp4",
+  "goal": 1,
+  "subject": "black bowl",
+  "instruction": "put the bowl on the stove",
+  "success": true,
+  "truth": "stove",
+  "ended": {
+   "bowl": "flat stove",
+   "cheese": "table",
+   "bottle": "table",
+   "plate": "table"
+  }
+ },
+ {
+  "clip": "../eval_logs/watcher_gate/g8_0.mp4",
+  "goal": 8,
+  "subject": "black bowl",
+  "instruction": "put the bowl on the plate",
+  "success": true,
+  "truth": "plate",
+  "ended": {
+   "bowl": "plate",
+   "cheese": "table",
+   "bottle": "table",
+   "plate": "akita black bowl"
+  }
+ },
+ {
+  "clip": "../eval_logs/watcher_gate/g9_0.mp4",
+  "goal": 9,
+  "subject": "wine bottle",
+  "instruction": "put the wine bottle on the rack",
+  "success": true,
+  "truth": "wine rack",
+  "ended": {
+   "bowl": "table",
+   "cheese": "table",
+   "bottle": "wine rack",
+   "plate": "table"
+  }
+ },
+ {
+  "clip": "../eval_logs/watcher_gate/g6_0.mp4",
+  "goal": 6,
+  "subject": "cream cheese",
+  "instruction": "put the cream cheese in the bowl",
+  "success": true,
+  "truth": "bowl",
+  "ended": {
+   "bowl": "table",
+   "cheese": "akita black bowl",
+   "bottle": "akita black bowl",
+   "plate": "table"
+  }
+ },
+ {
+  "clip": "../eval_logs/watcher_gate/g0_0.mp4",
+  "goal": 0,
+  "subject": "drawer",
+  "instruction": "open the middle drawer of the cabinet",
+  "success": false,
+  "truth": "open",
+  "ended": {
+   "bowl": "table",
+   "cheese": "table",
+   "bottle": "wine rack",
+   "plate": "table"
+  }
+ }
+]

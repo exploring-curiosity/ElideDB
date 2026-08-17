@@ -8,9 +8,9 @@ to — not a description of what got built.
 
 ## 1. The brief
 
-Build an entry for the **CockroachDB × AWS agentic memory hackathon** (~4000
-participants). It must be a **real-world use case**, and it has to be good
-enough to win, not merely to submit.
+Build an entry for the **CockroachDB × AWS agentic memory hackathon**. It must
+be a **real-world use case**, and it is not aiming at "good enough to win" —
+**it should be perfect**. Entrant count is irrelevant and is not a design input.
 
 Hackathon requirements are non-negotiable and must be **core, not bolted on**:
 
@@ -21,12 +21,9 @@ The starting point is the owner's existing work — **ElideDB / RelMo** — and
 **RelMo must be used and marketed as a product**. Both CockroachDB and RelMo are
 central. Neither is decoration.
 
-Caveat the owner gave about their own system, which constrains how much can be
-leaned on it:
-
-> "dont go anything from memory about the elide db its the most disgusting
-> broken system you built. works only barely, so dont overrely on that. it
-> simply doesnt work good."
+The owner's caveat about ElideDB — "it simply doesnt work good" — is **about
+TEXT QUERY specifically**, not about the system as a whole. Retrieval by example
+is not what is in doubt; asking it questions in words is.
 
 ## 2. Hard constraints
 
@@ -56,6 +53,33 @@ Broken out:
 
 A VLA is not mandatory ("VLA is not a must"), but if one is used the control
 must be genuine.
+
+### 3a. THE MEMORY IS RELMO. This is the part that was got wrong.
+
+> "**the memory is reIMO dont forget that. no other info goes in.**"
+>
+> "**no saving hard numbers/ state mem.** memory system returns similiar clips
+> or its timestamps. **Some reasoning layer or pi0 watches them and says where
+> the bowl is kept.**"
+>
+> "**reIMO is the most important part which you did not implement.**"
+
+The architecture this dictates, and it is not negotiable:
+
+| layer | what it does | what it must NOT do |
+|---|---|---|
+| **write** | every episode becomes a **clip**, encoded by RelMo | store locations, labels, norms, counts, text embeddings — anything derived |
+| **memory** | returns **similar clips, or their timestamps** | answer questions; hold facts |
+| **reasoning** | a watcher (VLM, or π0.5) **watches the returned clips** and says where the bowl is kept | be given the answer through a side channel |
+
+So "where is the bowl?" is **not a column read**. It is: retrieve clips →
+watch them → say what you saw. Every semantic fact is derived at read time from
+video. Nothing about the world is written down as a number.
+
+What was built instead, and is therefore wrong: `object_beliefs` rows holding
+label/location/xyz/confidence, a `norms` table holding label → home_location
+with episode counts, and an `events` table of MiniLM **text** embeddings. All
+three are saved state and derived facts. All three must go.
 
 ## 4. What is explicitly forbidden
 
@@ -90,6 +114,14 @@ and, on being shown a two-arm handover demo:
 So: an existing, released, tested control stack — not one written here — doing
 work that resembles real household tasks.
 
+## 5a. Order of work
+
+> "**first make it work locally. AWS cockroach comes next**"
+
+Local first, end to end, RelMo-centric. The hackathon's CockroachDB and AWS
+requirements are real and still have to be met — but they are the second step,
+not the thing to design around.
+
 ## 6. Requirements added during this build
 
 | ask | statement |
@@ -123,14 +155,26 @@ From the owner's own standards, in the order they were enforced:
 
 Stated plainly because the spec demands it.
 
-* **AWS is not yet used.** Requirement 1 of the hackathon brief is unmet — the
-  memory layer runs on local PostgreSQL 18 + pgvector, and the CockroachDB
-  dialect is written and translated but the cluster has not been created.
-  Both are account-creation steps, not engineering ones.
+* **THE MEMORY IS NOT YET RELMO.** The largest gap by far. What exists is a
+  structured-fact store — beliefs, norms and text embeddings — which §3a
+  forbids outright. RelMo is present but only as a side channel that answers
+  "which past episode looked like this", and nothing depends on it.
+* **The watcher is the ceiling, and it is low.** With memory storing only clips,
+  every answer comes from a model watching them. Measured blind on six recorded
+  episodes with known outcomes (`bench/watcher_gate.py`): Qwen3-VL-30B-A3B-4bit
+  reads the outcome correctly **2/5**, against ~1/6 by chance. It gets the
+  cabinet and the wine rack — large, distinctive placements — and misses the
+  stove, the plate and inside-the-bowl, which are all fine-grained placements on
+  a tabletop at 256×256. Frame sampling made no difference (uniform 2/5,
+  end-weighted 2/5), which points at clip resolution rather than the model.
+  Clips are currently recorded at the policy's own input resolution; they need
+  not be.
 * **Spatial perception is privileged.** Object positions are read from
   `mjData.xpos`, not from the cameras, so the robot sees through closed drawers.
-  The belief can be stale but never wrong, and nothing acts on it — it answers
-  questions only. Fixing this means occlusion-tested perception.
+  Under §3a this code should not exist at all.
+* **AWS and CockroachDB are not yet used.** Deferred deliberately per §5a. The
+  memory runs on local PostgreSQL 18 + pgvector; the CockroachDB dialect is
+  written and translated but no cluster exists.
 * **Persistence costs accuracy.** A continuous kitchen puts π0.5 out of its
   training distribution: 97–100% from benchmark placements, ~50% from carried
   ones. Measured, and it is a real trade rather than a bug.
