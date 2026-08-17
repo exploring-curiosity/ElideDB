@@ -334,27 +334,78 @@ function buildGeom(g, meshBufs){
   return m;
 }
 
-async function loadScene(){
-  const hdr = await (await fetch('/api/scene')).json();
-  if(!hdr.ready) return false;
-  const buf = await (await fetch('/api/scene.bin')).arrayBuffer();
+/* Single-flight, and one request.
 
-  const meshBufs = hdr.meshes.map(m => ({
-    v: new Float32Array(buf, m.verts,   m.nv*3),
-    n: m.normals != null ? new Float32Array(buf, m.normals, m.nv*3) : null,
-    f: new Uint32Array (buf, m.faces,   m.nf*3),
-  }));
+   Two bugs lived here, and together they produced a scene of objects stacked at
+   the world origin that never moved — the "broken load".
 
-  scene.remove(root); root = new THREE.Group(); scene.add(root);
-  meshes = hdr.geoms.map(g => { const m = buildGeom(g, meshBufs); if(m) root.add(m); return m; });
-  geomInfo = hdr.geoms;
-  nGeom = hdr.geoms.length; epoch = hdr.epoch; needsFit = true;
-  return true;
+   1. loadScene ran CONCURRENTLY. The module calls it once on startup and the
+      socket calls it again the moment it reports an epoch, so two runs raced.
+      Each does `root = new Group()` and then assigns `meshes`, and if those
+      land in opposite orders the scene contains one run's objects while
+      `meshes` points at the other's. applyFrame then faithfully updates
+      objects that are not in the scene, and the objects that ARE in it keep
+      their identity matrices — which puts every geom at (0,0,0).
+
+   2. Header and geometry were two fetches. A republish in the gap gives you
+      one epoch's byte offsets over another epoch's bytes.
+
+   A guard fixes the first; /api/scene.pack fixes the second. */
+let loading = null;
+function loadScene(){
+  if(loading) return loading;
+  loading = (async () => {
+    const res = await fetch('/api/scene.pack');
+    if(!res.ok) return false;                      // 503 while the sim boots
+    const buf = await res.arrayBuffer();
+    const hlen = new DataView(buf).getUint32(0, true);
+    const hdr = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hlen)));
+    const base = 4 + hlen;
+
+    const meshBufs = hdr.meshes.map(m => ({
+      v: new Float32Array(buf, base + m.verts,   m.nv*3),
+      n: m.normals != null ? new Float32Array(buf, base + m.normals, m.nv*3) : null,
+      f: new Uint32Array (buf, base + m.faces,   m.nf*3),
+    }));
+
+    const next = new THREE.Group();
+    const built = hdr.geoms.map(g => { const m = buildGeom(g, meshBufs); if(m) next.add(m); return m; });
+    // Swap only once everything is built, so a failure part way through leaves
+    // the previous scene standing rather than half of the new one.
+    scene.remove(root); root = next; scene.add(root);
+    meshes = built; geomInfo = hdr.geoms;
+    nGeom = hdr.geoms.length; epoch = hdr.epoch; needsFit = true;
+    return true;
+  })().finally(() => { loading = null; });
+  return loading;
+}
+
+/* Reconcile towards whatever epoch the server last announced.
+
+   The single-flight guard means a republish arriving DURING a load would
+   otherwise be dropped, leaving the client permanently one scene behind. So the
+   wanted epoch is remembered and checked again once the load settles, and a
+   503 (the sim has not finished booting) is retried rather than abandoned —
+   that retry is what stops the page sitting empty forever if it is opened
+   before the robot is up. */
+let wantEpoch = 0;
+async function syncScene(){
+  if(loading) await loading;
+  if(epoch >= wantEpoch && epoch >= 0) return;   // already current
+  const ok = await loadScene();
+  if(!ok){ setTimeout(syncScene, 700); return; } // 503: the sim is still booting
+  // Strictly `<`, never `!==`: epochs only ever increase, and a load that
+  // returns a NEWER scene than the one announced is fine. Comparing for
+  // inequality would spin forever whenever the server moved on mid-fetch.
+  if(epoch < wantEpoch) syncScene();
 }
 
 const M = new THREE.Matrix4();
-const stats = {frames:0, lastFrame:0, bytes:0};
+const stats = {frames:0, lastFrame:0, bytes:0, dropped:0};
 function applyFrame(buf){
+  // Frames for the NEW scene can arrive while the old one is still swapping.
+  // Applying them would write one scene's transforms onto another's meshes.
+  if(loading){ stats.dropped++; return; }
   const f = new Float32Array(buf);
   const n = Math.min(nGeom, f.length/12|0);
   for(let i=0;i<n;i++){
@@ -438,7 +489,7 @@ function connect(){
   ws.onmessage = ev => {
     if(typeof ev.data !== 'string'){ applyFrame(ev.data); return; }
     const m = JSON.parse(ev.data);
-    if(m.t === 'scene'){ if(m.epoch !== epoch) loadScene(); }
+    if(m.t === 'scene'){ wantEpoch = m.epoch; syncScene(); }
     else if(m.t === 'status') paint(m);
   };
   ws.onclose = () => setTimeout(connect, 900);
@@ -566,7 +617,7 @@ async function relmoPanel(){
   }catch(e){}
 }
 
-loadScene(); connect();
+syncScene(); connect();
 refreshMemory(); relmoPanel();
 setInterval(refreshMemory, 2500);
 setInterval(relmoPanel, 4000);

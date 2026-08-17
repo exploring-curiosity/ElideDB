@@ -126,6 +126,38 @@ def create_app(live: Live, memory_getter) -> FastAPI:
             blob = live.scene_blob
         return Response(blob, media_type="application/octet-stream")
 
+    @app.get("/api/scene.pack")
+    def scene_pack():
+        """Header and geometry in ONE response, under ONE lock.
+
+        Fetching /api/scene then /api/scene.bin is two requests with a gap in
+        the middle, and the scene can be republished in that gap — the client
+        then builds meshes using one epoch's byte offsets against another
+        epoch's bytes. Serving both together makes that impossible rather than
+        unlikely.
+
+            uint32 little-endian   length of the JSON header, INCLUDING padding
+            bytes                  the header, space-padded to a 4-byte boundary
+            bytes                  the geometry blob
+
+        The padding is not tidiness. The blob is read on the client as
+        Float32Array views at `4 + header_length + offset`, and a typed-array
+        view whose byte offset is not a multiple of its element size throws
+        `RangeError: start offset of Float32Array should be a multiple of 4`.
+        A JSON header is whatever length it happens to be, so three times in
+        four the whole scene fails to build. Trailing spaces are legal JSON
+        whitespace, so the header still parses as-is.
+        """
+        with live.lock:
+            if live.scene_header is None:
+                return Response(status_code=503)
+            head = _dumps(dict(ready=True, epoch=live.scene_epoch, **live.scene_header))
+            blob = live.scene_blob
+        hb = head.encode()
+        hb += b" " * (-len(hb) % 4)
+        return Response(len(hb).to_bytes(4, "little") + hb + blob,
+                        media_type="application/octet-stream")
+
     # ---- live feed ---------------------------------------------------------
 
     @app.websocket("/ws")
