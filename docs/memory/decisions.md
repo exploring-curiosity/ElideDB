@@ -2470,3 +2470,12 @@ episode, video confirms the drawer is physically opened by the policy. This is t
 bar the owner set: no scripted primitives anywhere in the control path.
 pi05_libero_finetuned (published 97.5%) is fully installed but blocked on the
 gated google/paligemma-3b-pt-224 tokenizer repo - a licence gate, not a bug.
+
+2026-08-16 - Measure before estimating throughput: chunking beats parameter count
+Predicted pi0.5 (3.6B) would be far slower than SmolVLA (0.45B) on MPS and
+planned the whole demo around SmolVLA. Wrong by 4x in the other direction:
+pi05 12.5 s/episode vs smolvla 50.1 s/episode, because pi05 chunks actions
+(n_action_steps=10, one forward per ten control steps) and the smolvla
+checkpoint infers every step. Episode wall-clock is set by NUMBER OF FORWARD
+PASSES, not parameters. Also required on Apple Silicon: compile_model=false,
+since torch.compile raises InductorError NoValidChoicesError on MPS.
