@@ -1,0 +1,75 @@
+{
+ "feed": 200,
+ "kinds": 8,
+ "cold_start": {
+  "on": {
+   "n": 200,
+   "escalated": 0.595,
+   "auto_n": 81,
+   "auto_acc": 0.9876543209876543
+  },
+  "off": {
+   "n": 200,
+   "escalated": 1.0,
+   "auto_n": 0,
+   "auto_acc": 0.0
+  },
+  "curve_on": [
+   1.0,
+   0.88,
+   0.67,
+   0.52,
+   0.27,
+   0.24
+  ],
+  "curve_off": [
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0
+  ]
+ },
+ "sweep": [
+  {
+   "consensus": 0.4,
+   "n": 200,
+   "escalated": 0.01,
+   "auto_n": 198,
+   "auto_acc": 0.12121212121212122
+  },
+  {
+   "consensus": 0.5,
+   "n": 200,
+   "escalated": 0.01,
+   "auto_n": 198,
+   "auto_acc": 0.12121212121212122
+  },
+  {
+   "consensus": 0.6,
+   "n": 200,
+   "escalated": 0.275,
+   "auto_n": 145,
+   "auto_acc": 0.5310344827586206
+  },
+  {
+   "consensus": 0.8,
+   "n": 200,
+   "escalated": 0.595,
+   "auto_n": 81,
+   "auto_acc": 0.9876543209876543
+  },
+  {
+   "consensus": 1.0,
+   "n": 200,
+   "escalated": 0.76,
+   "auto_n": 48,
+   "auto_acc": 1.0
+  }
+ ],
+ "cascade": {
+  "reopened": 12,
+  "direct": 11
+ }
+}

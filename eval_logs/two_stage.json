@@ -1,0 +1,72 @@
+{
+ "n": 111,
+ "k": 5,
+ "basis": "rcasa",
+ "exact_ms": 156.10691701294854,
+ "arms": {
+  "embedding/8": {
+   "view": "embedding",
+   "m": 8,
+   "recall": 0.6504504504504502,
+   "elided": 0.9279279279279279,
+   "stage1_ms": 1.5,
+   "stage2_ms": 13.5
+  },
+  "embedding/16": {
+   "view": "embedding",
+   "m": 16,
+   "recall": 0.7783783783783783,
+   "elided": 0.8558558558558559,
+   "stage1_ms": 1.6,
+   "stage2_ms": 24.4
+  },
+  "embedding/32": {
+   "view": "embedding",
+   "m": 32,
+   "recall": 0.836036036036036,
+   "elided": 0.7117117117117118,
+   "stage1_ms": 1.75,
+   "stage2_ms": 46.2
+  },
+  "embedding/64": {
+   "view": "embedding",
+   "m": 64,
+   "recall": 0.8666666666666667,
+   "elided": 0.42342342342342343,
+   "stage1_ms": 1.95,
+   "stage2_ms": 88.5
+  },
+  "motion/8": {
+   "view": "motion",
+   "m": 8,
+   "recall": 0.6144144144144144,
+   "elided": 0.9279279279279279,
+   "stage1_ms": 1.46,
+   "stage2_ms": 13.5
+  },
+  "motion/16": {
+   "view": "motion",
+   "m": 16,
+   "recall": 0.7711711711711711,
+   "elided": 0.8558558558558559,
+   "stage1_ms": 1.56,
+   "stage2_ms": 24.4
+  },
+  "motion/32": {
+   "view": "motion",
+   "m": 32,
+   "recall": 0.8036036036036035,
+   "elided": 0.7117117117117118,
+   "stage1_ms": 1.7,
+   "stage2_ms": 46.2
+  },
+  "motion/64": {
+   "view": "motion",
+   "m": 64,
+   "recall": 0.8216216216216217,
+   "elided": 0.42342342342342343,
+   "stage1_ms": 2.07,
+   "stage2_ms": 93.4
+  }
+ }
+}

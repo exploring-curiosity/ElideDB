@@ -2456,3 +2456,222 @@ that CONNECTS a vanish site to an appear site (colour+position+time
 jointly, a small matching problem) rather than any max-score pick;
 (c) then the v2 graded facts should finally describe the right
 entity, and the fusion probe is the gate again.
+
+## 2026-08-10 (session 4) — Site quality fixed; the ORACLE test says the
+## representation, not the selection, is the bound
+
+Everything the last entry named as "the precise open problem" was
+built and measured. Site extraction is now clean and the entity gate
+still passes (sim_probe: event recall 1.000, colour-correct 0.996,
+agent coverage 0.997):
+
+| write-path fix | why (each from a traced failure, not a guess) |
+|---|---|
+| chromatic-only change mask | shadows are same-chromaticity by construction; intensity-only sites were most of the excess |
+| morphological opening + core validity | penumbra edges BRIDGE separate regions into one giant component (174x112) whose core pre~post - it swallowed the real block sites |
+| per-site change time `tc` | one snapshot pair straddles several back-to-back events; interval attachment handed every window the whole bundle |
+| onset `ton`, membership = interval overlap | `tc` LAGS the physical change (the crossing completes only when the agent clears the spot), so point attachment mis-assigns an event's own site AND its neighbour's |
+| figure/ground direction `dirg` | the thing differs from its own surround ring, the ground matches it; a whole-recording background cannot answer this for a long-resting entity |
+| agent-body flags (position AND body palette) | 4 measured iterations: the agent is FRAGMENTARY (fg is diffed against a scene containing the parked body); either-end rules kill real sites the arm parks over; per-sample colour is contaminated by the carried entity; RGB-L1 confuses mid-grey with dark purple |
+| carried-entity demotion (L2) | a much-carried block's carry track EARNED the agent role, poisoned the body palette, and self-flagged its own vanish site. Separator: asymmetric co-movement (moves only while its carrier moves, born after changes began) |
+
+Read-path selection ladder, each rung measured on 476 probe events
+(binding = does the moment describe the event's true block):
+0.338 -> 0.405 (transient-occupancy cancellation + direction-consistent
+pairing) -> 0.468 (strongest-story selection + body penalty) -> 0.473
+(penalty 0.15 by A/B). NEGATIVE result recorded: agent presence as a
+SELECTION factor hurts (0.460 -> 0.447) - in dense windows the agent
+is near everything.
+
+### The ruler (1352 events, holdout = sim_eval_bal)
+
+| channel | 5cls AP | P@1 | y/p | 3cls y/p |
+|---|---|---|---|---|
+| struct alone | 0.314 | 0.366 | 0.455/0.303 | 0.647/0.431 |
+| struct [HOLD] | 0.282 | 0.368 | 0.404/0.269 | 0.553/0.368 |
+| delta+diffusion [HOLD] (incumbent) | **0.546** | 0.868 | **0.643/0.428** | 0.688/0.459 |
+| delta + 0.15/0.3/0.6 struct [HOLD] | 0.520/0.519/0.506 | | 0.624/0.626/0.614 | |
+
+Fusion is NEGATIVE again at every weight. So the ship-gate holds: the
+correspondence channel does NOT replace or join the read path.
+
+### The ORACLE-BOUND experiment (the decisive fork)
+
+Truth used EVAL-ONLY, for diagnosis, never in a scored path: restrict
+the ranking to events whose moment describes the RIGHT entity (and to
+the correctly-bound views), with a random same-size subset as control.
+
+| | 5cls AP | P@1 | y/p |
+|---|---|---|---|
+| as-shipped (all 1352) | 0.315 | 0.378 | 0.456/0.304 |
+| **ORACLE-BOUND (perfect entity)** | **0.366** | 0.423 | 0.511/0.341 |
+| control: random same-size subset | 0.316 | 0.372 | 0.454/0.303 |
+
+Binding rates: per-view 0.514, any-view 0.726, both-views 0.303.
+
+**The verdict.** Perfect entity selection is worth only +0.05 AP
+(0.315 -> 0.366; the control proves it is not a subset artifact), and
+0.366 remains far below the incumbent 0.546. Selection is therefore
+NOT the bound, and the deferred fingerprint work (DINOv3 at entity
+scale, cross-view agreement) would not have paid for itself - it
+would have bought at most that +0.05. **The bound is the moment
+REPRESENTATION.**
+
+And the reason is exactly what PROBLEM.md predicts. L5 currently
+emits 12 pooled scalars per moment and L7 compares them by cosine -
+that is an OVERLAP OF DESCRIPTIONS, the very thing the problem
+statement says cannot express "there exists a role-preserving
+correspondence." Two structural gaps follow directly:
+1. A moment carries ONE entity's summary; the primitives that need
+   separating (place vs stack, pick vs unstack) differ by a RELATION
+   TO ANOTHER ENTITY (arrived on open ground vs onto a specific
+   thing). `near_other` pools that into a scalar distance-to-anything.
+2. Under the piecewise scene, an entity that never moves has no site
+   and therefore does not exist in the representation at all - but
+   the block you stack ONTO is exactly such an entity. The reference
+   object of the distinguishing relation is invisible.
+
+NEXT (named by the measurement, not by preference): scene objects as
+first-class entities (spatial coincidence WITHIN a settled snapshot -
+the atomic signal the write path never used), then a real multi-entity
+moment graph, then L7 as an ASSIGNMENT search over entity sets scored
+on node facts + edge relations. Same gate: beat holdout 0.643/0.428.
+
+### The graph representation + the second oracle (same session, closing)
+
+Built native/graph.py exactly as PROBLEM.md specifies — multi-entity
+nodes, pairwise relation edges, scoring by best partial ASSIGNMENT —
+on top of a new L3 layer (ent.scene_objects: entities from spatial
+coincidence within a still, so a resting particular finally has a
+record). Object-layer gate, measured before trusting it:
+
+| object gate (sim_probe, truth EVAL-ONLY) | value |
+|---|---|
+| true entities present as distinct objects | 0.623 |
+| ... after colour-split (fixes stacked-pair merges) | merges 18 -> 6 |
+| CHROMATIC entities present (visibility-corrected) | 0.626 |
+| ACHROMATIC entities (same colour as the agent) | **0.000** |
+
+Ranking, all on the same protocol:
+
+| representation | 5cls AP | ORACLE-BOUND | control |
+|---|---|---|---|
+| moments v2 (8 facts) | 0.288 | — | — |
+| moments v3 pooled (12 facts) | 0.315 | 0.366 | 0.316 |
+| graph, snapshot configs | 0.320 | — | — |
+| graph, split objects | 0.315 | **0.320** | 0.318 |
+| graph, regular-cadence configs | 0.317 | — | — |
+| incumbent delta+diffusion | **0.546** | | |
+
+**The graph's oracle gain is ZERO** (0.320 vs control 0.318). Not a
+broken scorer: the similarity is well spread (mean 0.888, std 0.142,
+full 0–1 range), but same-primitive pairs score *slightly lower* than
+different-primitive pairs (separation −0.043). The channel carries no
+primitive signal in any of five representations.
+
+One real defect was found and fixed along the way: object
+configurations were read at QUIET snapshots, but a pick-carry-place
+sequence falls BETWEEN two quiet spans, so a before/after pair
+described several events at once (place came out vanish-dominant,
+kind −0.31, where an arriving thing must be +1). Local-contrast
+segmentation needs no background model, so it works on any frame —
+only the change-SITE machinery ever needed quiet. Configurations are
+now sampled on a regular cadence, which is also what "state series"
+should have meant. Verified per-object (red block present t[0..110],
+absent, present t[130..150] = a pick and a place). Ranking did not
+move (0.317), and the per-fact table says why:
+
+| prim | moved | kind | near_pre | near_post | drel | agent |
+|---|---|---|---|---|---|---|
+| pick | 0.99 | −0.31 | 0.57 | 0.73 | 0.33 | 0.66 |
+| place | 0.97 | −0.20 | 0.64 | 0.72 | 0.13 | 0.63 |
+| stack | 0.97 | −0.22 | 0.56 | 0.69 | 0.22 | 0.69 |
+| unstack | 0.97 | −0.10 | 0.59 | 0.72 | 0.25 | 0.70 |
+| push | 1.00 | −0.28 | 0.39 | 0.68 | 0.37 | 0.65 |
+
+between-prim gap 0.218 vs **within-prim std 0.403**: extraction noise
+is roughly twice the signal. Spurious appear/vanish nodes (segmentation
+flicker) plus 0.000 recall on agent-coloured entities mean the entity
+SET per moment is unreliable, and relational facts computed over an
+unreliable set are noise regardless of how they are compared.
+
+### Standing conclusion (state at session end)
+
+- The incumbent read path is UNCHANGED and unregressed: holdout AP
+  0.546, y/p 0.643/0.428 @1352 (0.713/0.475 @4902). Nothing shipped.
+- L1–L3 entity extraction is a genuine asset and stays: event recall
+  1.000, colour-correct 0.996, agent coverage 0.997.
+- L4–L7 (pooled OR graph) do not beat, and do not add to, the
+  incumbent on this ruler. Two independent oracle tests say better
+  SELECTION is not the remedy.
+- The precise remaining hypothesis, stated so it can be falsified:
+  the bound is PERCEPTION, not architecture — colour-contrast
+  segmentation cannot deliver a reliable entity set (flicker,
+  achromatic blindness). The test is to swap the front-end for a real
+  segmenter/tracker (SAM-class) and re-run this exact ladder. Note
+  this differs from the retired fingerprint plan: that was about
+  choosing better among candidates; this is about the candidate SET
+  existing at all.
+
+## 2026-08-10 — THE SYSTEM'S OWN NUMBER (new baseline; the proxy was
+## measuring an easier task)
+
+Owner directive: benchmark yield and precision as the system is,
+first. Built native/sysbench.py, which drives the SHIPPED read path
+(vwm_qbe.WMIndex.search: sliding-window scan over the whole store,
+kinematic-phase DTW fused 50/50, CSLS, diffusion rerank, greedy
+non-overlap collapse) and is handed a CLIP, not an event id.
+Leave-episode-out, position-verified (a returned window counts only
+if it overlaps a true same-primitive event at IoU >= 0.3), 150
+queries sampled from the natural corpus mix, truth EVAL-ONLY.
+
+### The number
+
+| prim | n | support | returned | yield | prec |
+|---|---|---|---|---|---|
+| pick | 62 | 595 | 864 | 0.500 | 0.343 |
+| push | 16 | 137 | 206 | 0.359 | 0.239 |
+| place | 21 | 232 | 347 | 0.337 | 0.225 |
+| stack | 37 | 273 | 407 | 0.278 | 0.186 |
+| unstack | 14 | 104 | 154 | 0.151 | 0.101 |
+| **ALL** | **150** | | | **0.375** | **0.254** |
+
+5.7 s per query, 230 episodes / 1352 true events in the store.
+
+### The reconciliation (why this is not 0.643)
+
+Same queries, same scorer, three protocols:
+
+| protocol | yield | prec |
+|---|---|---|
+| **the system as it runs** (window search) | **0.375** | **0.254** |
+| same scorer, ORACLE event spans (ranking only) | 0.498 | 0.332 |
+| standing proxy: oracle spans + full-matrix CSLS + diffusion | 0.643 | 0.428 |
+
+- **Localization costs 0.123 yield.** Every event-matrix number in
+  this project was handed the true spans for free.
+- **Full-matrix graph geometry is worth ~0.145 more yield**, and the
+  live path cannot fully apply it: diffusion at query time runs over
+  a DIFF_M=800 candidate subset, not the whole corpus graph.
+
+So 0.643/0.428 was never the product's number - it is the ceiling of
+an easier task. **The baseline for everything from here is
+0.375/0.254.**
+
+### Precision is currently not an independent measurement
+
+Every row satisfies prec = yield/1.5 to within rounding, because the
+search always returns the full k = ceil(1.5 x support). With no
+abstention, precision is an arithmetic shadow of yield. Any honest
+precision improvement must come from a confidence cut that returns
+FEWER than k when the evidence is thin.
+
+### What this reframes
+
+The correspondence work of this session was benched inside the PROXY
+protocol (struct AP 0.314 vs incumbent 0.546), so those comparisons
+remain internally valid - but the incumbent it was being measured
+against is itself an over-estimate of the shipped product. Two
+sources of headroom are now measured and are NOT architecture work:
+localization (0.123) and corpus-scale graph geometry at query time
+(0.145). Neither requires solving correspondence.

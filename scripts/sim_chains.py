@@ -59,6 +59,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import sim_arms                                                # noqa: E402
 from sim_stack import (Arm, PALETTE, RES, RFPS, SHAPES,        # noqa: E402
                        build_scene)
 
@@ -68,7 +69,6 @@ from sim_stack import (Arm, PALETTE, RES, RFPS, SHAPES,        # noqa: E402
 import os as _os                                           # noqa: E402
 ARM_NAME = _os.environ.get("SDX_ARM", "panda")
 if ARM_NAME != "panda":
-    import sim_arms                                        # noqa: E402
     import sim_stack as _ss                                # noqa: E402
     _ss.SCENE = sim_arms.scene_patch(ARM_NAME, _ss.SCENE)
     _ss.PANDA_DIR = sim_arms.MEN / sim_arms.ARMS[ARM_NAME]["dir"]
@@ -185,7 +185,10 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
     # the release drops the block mid-transit (measured: every xarm7
     # place/stack failed 'achieved a zone short' at 1.5x fixed budgets).
     cgain = getattr(arm, "carry_gain", None) or CARRY_GAIN
-    tscale = CARRY_GAIN / cgain
+    # time_scale: an arm commanded gently needs longer to cover the
+    # same distance. Without it a smooth arm times out mid-move and
+    # the fallback retry IS the fumble the smoothing removed.
+    tscale = (CARRY_GAIN / cgain) * getattr(arm, "time_scale", 1.0)
     ptol = getattr(arm, "place_tol", 1.0)
     mujoco.mj_forward(m, d)
     r = mujoco.Renderer(m, RES[0], RES[1])
@@ -232,7 +235,27 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
             if s % spf == 0:
                 frames()
 
+    # motion mode is PER-ARM: the panda's greedy controller was
+    # always its good one (0.72 rev/s, jerk 9.8, clean) and the
+    # multi-restart IK the spline path needs finds contorted 7-DoF
+    # branches for it (seen on film: arm draped across the table).
+    # vx300s and ur5e NEED splines (greedy thrashed at 4.75 rev/s /
+    # never worked). Per-arm tuning is allowed - this is the data
+    # generator, not ElideDB.
+    SPLINE = (_os.environ.get("SDX_MOTION", "spline") == "spline"
+              and ARM_NAME != "panda")
+
     def move_to(target, tol=0.012, timeout=2.5, gain=FREE_GAIN):
+        # spline mode: min-jerk joint trajectory through an IK
+        # waypoint - the transits are where all the measured jerk
+        # lived (greedy per-step IK against a clamp thrashed at
+        # 4.75 rev/s on the vx300s); the reference being smooth makes
+        # the motion smooth by construction. Contact-driven fine
+        # phases below keep their step_ik behaviour.
+        if SPLINE:
+            sim_arms.spline_to(m, d, arm, target, frames, spf,
+                               z_floor=Z_TOP + arm.tip_off + 0.14)
+            return
         n = int(timeout / dt)
         for s in range(n):
             e = arm.step_ik(np.asarray(target), gain=gain)
@@ -255,13 +278,36 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
         return max(tops + [Z_TOP])
 
     def grasp(i):
+        # attempts are RECORDED: a grasp that needs a re-approach is a
+        # visible fumble in the film even when the episode ends ok -
+        # cleanliness gating happens downstream on this count
         for attempt in range(3):
             arm.gripper(True)
             bp = d.xpos[bid[i]].copy()
             az = min(0.55, max(0.34, obs_top((i,)) + arm.tip_off + 0.02))
-            move_to([bp[0], bp[1], az], timeout=2.0)
+            move_to([bp[0], bp[1], az], timeout=2.0 * tscale)
             sim(0.12)              # kill the approach swing pre-descend
-            n = int(2.5 / dt)
+            if SPLINE:
+                # two-stage: CENTER precisely at hover height first,
+                # then a purely vertical descent. Descending with a
+                # 1-2cm lateral error plows the block with one pad
+                # (measured: 62mm shove on the 2f85, then a "miss")
+                bp = d.xpos[bid[i]]
+                sim_arms.spline_to(m, d, arm,
+                                   [bp[0], bp[1], az], frames, spf,
+                                   speed=0.3, min_s=0.4, settle=0.15,
+                                   _direct=True)
+                bp = d.xpos[bid[i]]
+                zt = bp[2] + arm.tip_off - meta[i]["half_h"] \
+                    * getattr(arm, "straddle", 0.4)
+                sim_arms.spline_to(m, d, arm,
+                                   [bp[0], bp[1], zt], frames, spf,
+                                   speed=0.35, min_s=0.6, settle=0.15,
+                                   _direct=True)
+                hp = d.xpos[arm.hand]
+                bp = d.xpos[bid[i]]
+                xy = float(np.hypot(hp[0] - bp[0], hp[1] - bp[1]))
+            n = 0 if SPLINE else int(2.5 * tscale / dt)
             for st in range(n):
                 bp = d.xpos[bid[i]]
                 zt = bp[2] + arm.tip_off - meta[i]["half_h"] * getattr(arm, "straddle", 0.4)
@@ -272,13 +318,27 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
                 # and inherited by every later placement (a 1cm-off
                 # grip toppled 40%% of stacks). With command-side IK
                 # integration the arm can hold 1-2mm, so gate tight.
-                z = max(hp[2] - 0.0035, zt) if xy < 0.008 else hp[2]
+                # gate scales with the ARM's tracking class, exactly
+                # as the release tolerances already do. Hardcoded 5/8mm
+                # encoded the Panda's 1-2mm servos: a gently-commanded
+                # arm (the fix for oscillation) can hold ~10mm and the
+                # descent gate never opened, so grasp() burned all 3
+                # attempts in free air - the fumble was the TOLERANCE,
+                # not the arm.
+                z = max(hp[2] - 0.0035, zt) \
+                    if xy < 0.008 * getattr(arm, "place_tol", 1.0) \
+                    else hp[2]
                 arm.step_ik(np.array([bp[0], bp[1], z]))
                 mujoco.mj_step(m, d)
                 if st % spf == 0:
                     frames()
-                if hp[2] <= zt + 0.003 and xy < 0.005:
+                pt = getattr(arm, "place_tol", 1.0)
+                if hp[2] <= zt + 0.003 * pt and xy < 0.005 * pt:
                     break
+            if _os.environ.get("SDX_DEBUG_GRASP"):
+                print(f"    descent end: xy={xy*1000:.1f}mm "
+                      f"dz={(hp[2]-zt)*1000:.1f}mm",
+                      flush=True)
             if hasattr(arm, "grip_ramp") and meta[i]["shape"] == "cylinder":
                 # RAMPED close for CYLINDERS only: small pads slamming shut EJECT a
                 # cylinder (measured on xarm7: spread shot past the
@@ -313,7 +373,9 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
             move_to([cur[0], cur[1], cur[2] + 0.14], timeout=1.6 * tscale,
                     gain=cgain)
             if float(d.xpos[bid[i]][2]) > z0 + 0.05:
+                grasp_log.append(attempt + 1)
                 return True
+        grasp_log.append(99)
         return False
 
     def lower_release(i, txy, slot_z, track=None):
@@ -480,7 +542,18 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
 
     def claim_holds(k, claim):
         kind, arg = claim
-        if kind in ("held", "free"):
+        if kind == "held":
+            # "held" is a PHYSICAL claim like every other: elevated
+            # off the table AND at the gripper. It used to return
+            # True unconditionally, so a block that slipped after the
+            # lift check still verified - the owner caught two such
+            # "successes" on film (picked, fell half way, still ok).
+            p = d.xpos[bid[k]]
+            hp = d.xpos[arm.hand]
+            return (float(p[2]) > Z_TOP + meta[k]["half_h"] + 0.03
+                    and float(np.linalg.norm(p - hp))
+                    < arm.tip_off + 0.08)
+        if kind == "free":
             return True
         sup = supporter_of(k)
         if kind == "on":
@@ -534,6 +607,7 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
 
     sim(0.3)
     events = []
+    grasp_log = []
     held = None
     # expected = live world-state claims (re-based on violation);
     # plan = the chain's INTENT, never re-based - the end-of-episode
@@ -678,6 +752,7 @@ def run_episode(ep_id, tname, spec, zone_bind, rng, out_dir, log):
         chain_st += 1
     end_ok = all(s["ok"] for s in end_state)
     rec_out = {"episode": ep_id, "template": tname,
+               "grasp_attempts": grasp_log,
                "blocks": meta, "events": events,
                "zone_bind": zone_bind, "cams": rec,
                "events_ok": sum(ok_flags), "events_total": len(events),

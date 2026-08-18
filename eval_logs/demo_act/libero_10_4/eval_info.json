@@ -1,0 +1,44 @@
+{
+  "per_task": [
+    {
+      "task_group": "libero_10",
+      "task_id": 4,
+      "metrics": {
+        "sum_rewards": [
+          1.0
+        ],
+        "max_rewards": [
+          1.0
+        ],
+        "successes": [
+          true
+        ],
+        "video_paths": [
+          "eval_logs/demo_act/libero_10_4/videos/libero_10_4/eval_episode_0.mp4"
+        ]
+      }
+    }
+  ],
+  "per_group": {
+    "libero_10": {
+      "avg_sum_reward": 1.0,
+      "avg_max_reward": 1.0,
+      "pc_success": 100.0,
+      "n_episodes": 1,
+      "video_paths": [
+        "eval_logs/demo_act/libero_10_4/videos/libero_10_4/eval_episode_0.mp4"
+      ]
+    }
+  },
+  "overall": {
+    "avg_sum_reward": 1.0,
+    "avg_max_reward": 1.0,
+    "pc_success": 100.0,
+    "n_episodes": 1,
+    "eval_s": 14.421519756317139,
+    "eval_ep_s": 14.421519756317139,
+    "video_paths": [
+      "eval_logs/demo_act/libero_10_4/videos/libero_10_4/eval_episode_0.mp4"
+    ]
+  }
+}

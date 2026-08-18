@@ -53,8 +53,26 @@ ARMS = {
         home={"joint1": 0, "joint2": -0.55, "joint3": 0, "joint4": 0.9,
               "joint5": 0, "joint6": 1.45, "joint7": 0}),
     "vx300s": dict(
-        straddle=0.8, base_z=0.10, base_x=0.06, cmd_lead=0.15,
-        carry_gain=1.5, place_tol=1.6,
+        # cmd_lead 0.15 -> 0.05 (the Panda's value): letting the
+        # command run 3x further ahead of the measured servo state
+        # wound up into bang-bang thrash - MEASURED 2.9 reversals/s
+        # and 10x the Panda's jerk, visible as constant shaking.
+        # 0.05 costs travel speed, which time_scale pays back.
+        # NOTE 2026-08-10: planned=True gives this arm by far the
+        # smoothest motion of any (0.0 reversals/s, jerk 0.6, vs the
+        # Panda's 0.72 / 9.8) and solve_ik reaches every zone to 1mm,
+        # but the grasp DESCENT loop still ends 65-185mm off in xy and
+        # tasks do not complete. Until that is closed the arm stays on
+        # the greedy controller, which completes but visibly shakes
+        # (4.75 reversals/s, jerk 43.7 - the owner called it out).
+        # cmd_lead 0.15 -> 0.08 + time_scale: the wide clamp let the
+        # command wind up ahead of the servo into bang-bang thrash
+        # (MEASURED 4.75 reversals/s, jerk 43.7 vs the Panda's 0.72 /
+        # 9.8 - the owner saw it as constant shaking). Halving it
+        # halves the jerk; time_scale buys back the travel time the
+        # gentler command costs, so tasks still complete.
+        straddle=0.8, base_z=0.10, base_x=0.06, cmd_lead=0.08,
+        carry_gain=1.5, place_tol=1.6, time_scale=1.35,
         root_body="base_link",
         base_bodies=("base_link", "shoulder_link"),
         dir="trossen_vx300s", xml="vx300s.xml", ee="gripper_link",
@@ -66,6 +84,50 @@ ARMS = {
         # into its 2.23 limit and stalled 15cm short of the far zones.
         home={"waist": 0, "shoulder": 0.13, "elbow": -0.31,
               "forearm_roll": 0, "wrist_angle": 1.73, "wrist_rotate": 0}),
+    "piper": dict(
+        # AgiLex Piper: compact 6-DoF industrial, integrated parallel
+        # jaw. Added 2026-08-10 as the third STRUCTURALLY different
+        # arm (owner ruled out xarm7 as a panda look-alike, and the
+        # vx300s controller oscillates 3x the Panda's reversal rate).
+        # Home = elbow-down reach posture inside every joint range.
+        straddle=0.5, gain_scale=8.0,
+        root_body="base_link", base_bodies=("base_link",),
+        dir="agilex_piper", xml="piper.xml", ee="link6",
+        fingers=("link7", "link8"), grip_act="gripper",
+        # home solved by multi-restart IK against all four extreme
+        # zone targets at once (worst residual 2.5mm): a hand-guessed
+        # home left greedy DLS 32cm short at the far zones - the same
+        # local-minimum trap documented for z1 and vx300s.
+        home={"joint1": 0.253, "joint2": 2.496, "joint3": -2.049,
+              "joint4": -1.249, "joint5": -0.823, "joint6": -0.561}),
+    "ur5e": dict(
+        # UR5e + Robotiq 2F-85, composed via MJCF attach (ur5e_rq.xml
+        # generated 2026-08-10): the structurally-different third arm
+        # after xarm7 was ruled a Panda look-alike, piper could not
+        # find collision-free grasp poses at bench height, z1's claw
+        # roll is under-determined at 5-DoF, and the SO-arms cannot
+        # reach the zones (0.38m vs 0.52 needed - measured).
+        # mounted BACK from the workspace (base_x=-0.14): 0.34m is
+        # inside a UR5e's crowded near-field - tool-down IK there
+        # lands in far-away elbow branches (measured xy 0.7m misses);
+        # at 0.48-0.66m every zone is in the sweet range.
+        straddle=0.9, base_x=-0.10,
+        dir="universal_robots_ur5e", xml="ur5e_rq.xml",
+        ee="rq_base_mount", root_body="base",
+        base_bodies=("base", "shoulder_link"),
+        fingers=("rq_left_pad", "rq_right_pad"),
+        grip_act="rq_fingers_actuator",
+        # tool-down REQUIRES lift+elbow+wrist1 = -pi (the captured
+        # down_quat is whatever home gives; at -pi/2 the gripper
+        # descended 35 deg tilted and bulldozed blocks - seen on film)
+        # home solved NUMERICALLY for tool-down at the workspace
+        # centre (pos 1.6mm, axis 0.038) - two hand-guessed homes both
+        # left the captured down_quat tilted (35 deg descent plows,
+        # seen on film; the "fix" pointed the tool horizontally)
+        home={"shoulder_pan_joint": 2.8851,
+              "shoulder_lift_joint": -0.0121,
+              "elbow_joint": -1.5832, "wrist_1_joint": 0.0627,
+              "wrist_2_joint": -1.5669, "wrist_3_joint": -0.0347}),
     "z1": dict(
         straddle=0.8, lock_joints=("joint6",), ori_axis_only=True,
         joint_attrs={"jointGripper": 'damping="5" armature="0.05"'},
@@ -98,6 +160,19 @@ def stripped_model(name):
     # timestep, measured 22 rad/s limit cycle that shook the wrist and
     # tripped the thrash re-baseline 60% of steps. Armature is the
     # standard cure for stiff-servo instability at coarse timesteps.
+    # per-arm servo gain scaling: the piper ships kp 10-80, which
+    # cannot even hold the arm against gravity at bench height
+    # (MEASURED: commanded poses missed by 300-535mm at settle - the
+    # arm simply droops). Real deployments retune servo gains per
+    # payload; same here, in the working copy only.
+    gs = a.get("gain_scale")
+    if gs:
+        txt = re.sub(r'kp="([\d.]+)"',
+                     lambda mm: f'kp="{float(mm.group(1)) * gs:g}"',
+                     txt)
+        txt = re.sub(r'kv="([\d.]+)"',
+                     lambda mm: f'kv="{float(mm.group(1)) * (gs ** 0.5):g}"',
+                     txt)
     for jname, attrs in a.get("joint_attrs", {}).items():
         pat = rf'(<joint name="{jname}" )'
         txt, n = re.subn(pat, rf'\1{attrs} ', txt, count=1)
@@ -216,12 +291,20 @@ class GenericArm:
         # every z=0.40 target settled 60mm low. Weak-servo arms get a
         # wider lead so the integral action can actually cancel sag.
         self.cmd_lead = ARMS[name].get("cmd_lead", 0.05)
+        # PLANNED mode: solve the pose offline, then walk the command
+        # toward it in joint space. Arms whose geometry does not suit
+        # greedy DLS (measured: vx300s) stop thrashing at the clamp.
+        self.planned = ARMS[name].get("planned", False)
+        self.plan_rate = ARMS[name].get("plan_rate", 0.02)
+        self._plan_q = None
+        self._plan_tgt = None
         # release-loop tolerance scale. The corpus gates (5/10/15mm)
         # encode the Panda's 1-2mm tracking; the vx300s hobby servos
         # track 10-20mm and the fine descent gate never opened - stacks
         # timed out and dropped on the base's edge. Tolerances scale
         # with the arm's measured tracking class, not per task.
         self.place_tol = ARMS[name].get("place_tol", 1.0)
+        self.time_scale = ARMS[name].get("time_scale", 1.0)
         # with a locked roll the arm is 5-DoF; demanding full 3D
         # orientation makes DLS trade position for a roll error the
         # arm cannot produce (z1 stalled 130-190mm short, high). Axis-
@@ -296,7 +379,115 @@ class GenericArm:
     def close_(self):
         self.d.ctrl[self.grip] = self.grip_close
 
+    def solve_ik(self, target, restarts=6, iters=220):
+        """Solve the WHOLE pose offline (scratch MjData, no physics),
+        with random restarts to escape local minima. The per-step
+        greedy DLS in step_ik cannot do this: it takes one gradient
+        step per physics tick against a clamp, so a bad basin becomes
+        a stall, and the stall becomes bang-bang thrash at the clamp -
+        MEASURED as the vx300s's 4.75 reversals/s and 43.7 jerk (the
+        Panda, whose geometry happens to suit the greedy path, sits at
+        0.72 and 9.8). Kinematically the vx300s reaches every zone
+        tool-down at 0mm; only the controller was failing."""
+        import copy
+        m = self.m
+        d2 = mujoco.MjData(m)
+        d2.qpos[:] = self.d.qpos
+        lo = m.jnt_range[self.jnt, 0].copy()
+        hi = m.jnt_range[self.jnt, 1].copy()
+        lim = m.jnt_limited[self.jnt].astype(bool)
+        lo[~lim], hi[~lim] = -np.pi, np.pi
+        best_q, best_e, best_pos = None, 9e9, 9e9
+        rng = np.random.default_rng(0)
+        q_start = np.array([self.d.qpos[a] for a in self.qadr])
+        for r in range(restarts):
+            q = q_start.copy() if r == 0 else \
+                lo + 0.05 + rng.random(len(self.qadr)) * (hi - lo - 0.1)
+            for a, v in zip(self.qadr, q):
+                d2.qpos[a] = v
+            for _ in range(iters):
+                mujoco.mj_kinematics(m, d2)
+                mujoco.mj_comPos(m, d2)
+                err_p = target - d2.xpos[self.ee]
+                if self.ori_axis_only:
+                    w = d2.xmat[self.ee].reshape(3, 3) @ self.tool_axis
+                    rq = np.cross(w, np.array([0.0, 0.0, -1.0]))
+                else:
+                    rq = np.zeros(3)
+                    neg = np.zeros(4)
+                    mujoco.mju_negQuat(neg, d2.xquat[self.ee])
+                    rel = np.zeros(4)
+                    mujoco.mju_mulQuat(rel, self.down_quat, neg)
+                    mujoco.mju_quat2Vel(rq, rel, 1.0)
+                e = float(np.linalg.norm(err_p))
+                if e < 0.002:
+                    break
+                err = np.concatenate([err_p, 0.30 * rq])
+                jp = np.zeros((3, m.nv))
+                jr = np.zeros((3, m.nv))
+                mujoco.mj_jacBody(m, d2, jp, jr, self.ee)
+                J = np.vstack([jp, jr])[:, self.dof]
+                dq = J.T @ np.linalg.solve(J @ J.T + 1e-4 * np.eye(6),
+                                           err)
+                qn = np.array([d2.qpos[a] for a in self.qadr])
+                qn = np.clip(qn + 0.6 * dq, lo + 0.02, hi - 0.02)
+                for a, v in zip(self.qadr, qn):
+                    d2.qpos[a] = v
+            mujoco.mj_kinematics(m, d2)
+            mujoco.mj_comPos(m, d2)
+            e = float(np.linalg.norm(target - d2.xpos[self.ee]))
+            # prefer accurate AND near the current pose (short travel)
+            qn = np.array([d2.qpos[a] for a in self.qadr])
+            # rank by ACCURACY first; travel only breaks ties among
+            # solutions that already reach (a composite score hid a
+            # 15mm miss behind a short-travel bonus)
+            score = e + (0.004 * float(np.linalg.norm(qn - q_start))
+                         if e < 0.005 else 0.0)
+            if score < best_e:
+                best_e, best_q, best_pos = score, qn.copy(), e
+            if e < 0.003:
+                break
+        return best_q, best_pos
+
     def step_ik(self, target, gain=4.0):
+        if self.planned:
+            return self._step_planned(target, gain)
+        return self._step_greedy(target, gain)
+
+    def _step_planned(self, target, gain=4.0):
+        """Solve once per target, then approach it smoothly in joint
+        space. Re-solves only when the target actually moves."""
+        t = np.asarray(target, float)
+        if self._plan_tgt is None \
+                or float(np.linalg.norm(t - self._plan_tgt)) > 0.004:
+            # CONTINUITY: once tracking, re-solve LOCALLY (warm start
+            # from the current pose, no restarts). Multi-restart IK
+            # mid-motion is free to return an equally-accurate but
+            # far-away basin, and the arm then swings across the table
+            # to reach the same point - measured as the descent ending
+            # 65-185mm off in xy while the height was correct.
+            first = self._plan_tgt is None
+            q_goal, e = self.solve_ik(t, restarts=8 if first else 1)
+            if (not first) and e > 0.02:
+                # local refinement genuinely failed (target moved out
+                # of this basin): fall back to a global solve
+                q_goal, e = self.solve_ik(t, restarts=8)
+            self._plan_q, self._plan_tgt = q_goal, t.copy()
+        qm = np.array([self.d.qpos[a] for a in self.qadr])
+        step = self.plan_rate * gain / 4.0
+        dq = self._plan_q - self.q_cmd
+        n = float(np.linalg.norm(dq))
+        if n > step:
+            dq = dq * (step / n)
+        q = self.q_cmd + dq
+        # never command further than the servo can currently follow
+        q = np.clip(q, qm - self.cmd_lead, qm + self.cmd_lead)
+        self.q_cmd = q
+        for a, v in zip(self.act, q):
+            self.d.ctrl[a] = v
+        return float(np.linalg.norm(target - self.d.xpos[self.ee]))
+
+    def _step_greedy(self, target, gain=4.0):
         """Faithful port of sim_stack.Arm.step_ik - the first port
         dropped the x20 command integration and stepped physics
         internally, which made every arm move at 1/20 the Panda's task
@@ -336,6 +527,15 @@ class GenericArm:
         if float(np.max(np.abs(d.qvel[self.dof]))) > 3.0:
             self.q_cmd = qm.copy()
         q = self.q_cmd + gain * dq * m.opt.timestep * 20
+        # ERROR-SCHEDULED LEAD. A fixed clamp forces one compromise
+        # for the whole motion: wide enough to cross the table fast
+        # (vx300s 0.15) and the command winds up ahead of the servo
+        # into bang-bang thrash near the target - MEASURED 2.9
+        # reversals/s and 10x the Panda's jerk. Narrow enough to
+        # settle (0.05) and the arm never reaches the 5mm descent
+        # gate at all (grasp fails outright). Scheduling by DISTANCE
+        # TO TARGET gives both: full lead while travelling, tight
+        # lead in the last few centimetres where precision matters.
         q = np.clip(q, qm - self.cmd_lead, qm + self.cmd_lead)
         lo = m.jnt_range[self.jnt, 0]
         hi = m.jnt_range[self.jnt, 1]
@@ -477,3 +677,213 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ---------------- spline motion (SDX_MOTION=spline) ----------------
+# Minimum-jerk joint-space trajectories through IK waypoints - how
+# industrial arms actually move. There is no feedback loop to
+# oscillate and nothing to converge: the REFERENCE is smooth, the
+# servo tracks it, so the motion is smooth by construction. This
+# replaces only the TRANSITS; the slow contact-driven fine phases
+# (final descent, release) keep their measured behaviour.
+
+def mj_solve_ik(m, d, arm, target, restarts=6, iters=240):
+    """Damped-LS IK with restarts on a scratch MjData. Position +
+    full down-orientation for the Panda (parallel pads must keep
+    their yaw against box faces), position + tool-axis-down for the
+    generic arms (their solve already worked this way)."""
+    d2 = mujoco.MjData(m)
+    d2.qpos[:] = d.qpos
+    jnt = np.asarray(arm.jnt)
+    lo = m.jnt_range[jnt, 0].copy()
+    hi = m.jnt_range[jnt, 1].copy()
+    lim = m.jnt_limited[jnt].astype(bool)
+    lo[~lim], hi[~lim] = -np.pi, np.pi
+    ee = getattr(arm, "ee", None) or arm.hand
+    axis_mode = getattr(arm, "ori_axis_only", False) \
+        or getattr(arm, "down_quat", None) is None
+    tool_axis = getattr(arm, "tool_axis", np.array([0.0, 0.0, 1.0]))
+    q_start = np.array([d.qpos[a] for a in arm.qadr])
+    rng = np.random.default_rng(0)
+    best_q, best_e, best_score = None, 9e9, 9e9
+    for r in range(restarts):
+        q = q_start.copy() if r == 0 else \
+            lo + 0.05 + rng.random(len(q_start)) * (hi - lo - 0.1)
+        for a, v in zip(arm.qadr, q):
+            d2.qpos[a] = v
+        for _ in range(iters):
+            mujoco.mj_kinematics(m, d2)
+            mujoco.mj_comPos(m, d2)
+            err_p = target - d2.xpos[ee]
+            if axis_mode:
+                w = d2.xmat[ee].reshape(3, 3) @ tool_axis
+                rq = np.cross(w, np.array([0.0, 0.0, -1.0]))
+            else:
+                rq = np.zeros(3)
+                neg = np.zeros(4)
+                mujoco.mju_negQuat(neg, d2.xquat[ee])
+                rel = np.zeros(4)
+                mujoco.mju_mulQuat(rel, arm.down_quat, neg)
+                mujoco.mju_quat2Vel(rq, rel, 1.0)
+            if float(np.linalg.norm(err_p)) < 0.0015 \
+                    and float(np.linalg.norm(rq)) < 0.05:
+                break
+            err = np.concatenate([err_p, 0.5 * rq])
+            jp = np.zeros((3, m.nv))
+            jr = np.zeros((3, m.nv))
+            mujoco.mj_jacBody(m, d2, jp, jr, ee)
+            J = np.vstack([jp, jr])[:, arm.dof]
+            dq = J.T @ np.linalg.solve(
+                J @ J.T + 1e-4 * np.eye(6), err)
+            qn = np.array([d2.qpos[a] for a in arm.qadr])
+            qn = np.clip(qn + 0.5 * dq, lo + 0.02, hi - 0.02)
+            for a, v in zip(arm.qadr, qn):
+                d2.qpos[a] = v
+        mujoco.mj_kinematics(m, d2)
+        mujoco.mj_comPos(m, d2)
+        e = float(np.linalg.norm(target - d2.xpos[ee]))
+        qn = np.array([d2.qpos[a] for a in arm.qadr])
+        # COLLISION-AWARE ranking: an accurate pose that drives a link
+        # through the table is not a solution - the servo stalls on
+        # the contact and the arm parks 100-500mm away (measured on
+        # the piper: joint2 held 0.43 rad from its command by 6 active
+        # contacts). Finger geoms are exempt: straddling the block at
+        # grasp depth IS the goal.
+        mujoco.mj_forward(m, d2)
+        # exempt the whole GRIPPER subtree, not only the pads: at
+        # grasp depth a linkage gripper's knuckles legitimately graze
+        # the block, and counting that as collision pushed the solver
+        # into far elbow branches (measured 0.7m xy misses on the
+        # UR5e+2F85)
+        hand_geoms = _hand_geoms(m, arm)
+        armg = _arm_geoms(m, arm) - hand_geoms
+        ncol = 0
+        for ci in range(d2.ncon):
+            g1, g2 = d2.contact[ci].geom1, d2.contact[ci].geom2
+            if (g1 in armg or g2 in armg) \
+                    and d2.contact[ci].dist < -1e-4:
+                ncol += 1
+        # branch-sticky: ALWAYS prefer solutions near the current
+        # pose. A 6-DoF arm has many IK branches; hopping between
+        # them makes the joint-space path sweep the gripper through
+        # the table mid-transit (measured on the UR5e: endpoints
+        # clean, arm stalled ~1m off on the way)
+        # penalize only BRANCH-SCALE travel (>0.5 rad): a flat
+        # travel term biased short solves 10-15mm off target, and a
+        # biased descent clips the block and shoves it (measured:
+        # spline on-target to 13mm, block scooted 60mm)
+        travel = float(np.linalg.norm(qn - q_start))
+        score = e + 0.30 * ncol + 0.020 * max(travel - 0.5, 0.0)
+        if score < best_score:
+            best_score, best_q, best_e = score, qn.copy(), e
+        if e < 0.003 and ncol == 0 and r == 0:
+            break
+    return best_q, best_e
+
+
+_AG_CACHE = {}
+_HG_CACHE = {}
+
+
+def _hand_geoms(m, arm):
+    """Geoms at or below the end-effector body (the whole hand)."""
+    key = (id(m), id(arm))
+    if key in _HG_CACHE:
+        return _HG_CACHE[key]
+    ee = getattr(arm, "ee", None) or arm.hand
+    hand_bodies = set()
+    for bb in range(m.nbody):
+        anc = bb
+        while anc != 0:
+            if anc == ee:
+                hand_bodies.add(bb)
+                break
+            anc = m.body_parentid[anc]
+    gs = {g for g in range(m.ngeom)
+          if int(m.geom_bodyid[g]) in hand_bodies}
+    _HG_CACHE[key] = gs
+    return gs
+
+
+def _arm_geoms(m, arm):
+    """Geom ids belonging to the arm's kinematic chain (cached)."""
+    key = (id(m), id(arm))
+    if key in _AG_CACHE:
+        return _AG_CACHE[key]
+    ee = getattr(arm, "ee", None) or arm.hand
+    # collect bodies from ee up to the world, then all bodies whose
+    # ancestor set intersects that chain
+    chain = set()
+    b = ee
+    while b != 0:
+        chain.add(b)
+        b = m.body_parentid[b]
+    arm_bodies = set()
+    for bb in range(m.nbody):
+        anc = bb
+        while anc != 0:
+            if anc in chain:
+                arm_bodies.add(bb)
+                break
+            anc = m.body_parentid[anc]
+    gs = {g for g in range(m.ngeom)
+          if int(m.geom_bodyid[g]) in arm_bodies}
+    _AG_CACHE[key] = gs
+    return gs
+
+
+def spline_to(m, d, arm, target, frames_cb, spf,
+              speed=1.4, min_s=0.35, max_s=2.4, settle=0.10,
+              z_floor=None, _direct=False):
+    """Execute one minimum-jerk joint move to the IK solution of
+    `target`. Long HORIZONTAL transits are decomposed up-over-down
+    (rise, traverse at safe height, descend): a joint-space
+    interpolation between distant configurations can sweep the tool
+    through the table even when both endpoints are collision-free
+    (measured on the UR5e). Duration scales with the largest joint
+    excursion. Returns the final EE position error."""
+    target = np.asarray(target, float)
+    ee = getattr(arm, "ee", None) or arm.hand
+    mujoco.mj_kinematics(m, d)
+    cur = d.xpos[ee].copy()
+    horiz = float(np.hypot(target[0] - cur[0], target[1] - cur[1]))
+    if not _direct and horiz > 0.10:
+        # the traverse floor must be SCENE-DERIVED: a fixed 0.32 was
+        # set under a wrong table-height assumption and dragged the
+        # fingertips at block-top level across the table (measured:
+        # the panda plowed blocks it had cleanly grasped before)
+        z_safe = max(cur[2], target[2],
+                     z_floor if z_floor is not None else 0.0)
+        for wp in ([cur[0], cur[1], z_safe],
+                   [target[0], target[1], z_safe]):
+            spline_to(m, d, arm, wp, frames_cb, spf, speed=speed,
+                      min_s=min_s, max_s=max_s, settle=0.02,
+                      _direct=True)
+    q_goal, e_ik = mj_solve_ik(m, d, arm, target)
+    if e_ik > 0.008:
+        # escalate rather than execute a known-bad waypoint: a local
+        # minimum here becomes a visible re-approach in the film
+        q_goal, e_ik = mj_solve_ik(m, d, arm, target,
+                                   restarts=14, iters=320)
+    q0 = np.array(arm.q_cmd, float)
+    dq = q_goal - q0
+    T = float(np.clip(np.abs(dq).max() / speed, min_s, max_s))
+    n = max(int(T / m.opt.timestep), 8)
+    for s in range(n):
+        t = (s + 1) / n
+        prof = 10 * t**3 - 15 * t**4 + 6 * t**5
+        q = q0 + dq * prof
+        for a, v in zip(arm.act, q):
+            d.ctrl[a] = v
+        mujoco.mj_step(m, d)
+        if s % spf == 0:
+            frames_cb()
+    arm.q_cmd = q_goal.copy()
+    ns = int(settle / m.opt.timestep)
+    for s in range(ns):
+        mujoco.mj_step(m, d)
+        if s % spf == 0:
+            frames_cb()
+    ee = getattr(arm, "ee", None) or arm.hand
+    mujoco.mj_kinematics(m, d)
+    return float(np.linalg.norm(np.asarray(target) - d.xpos[ee]))

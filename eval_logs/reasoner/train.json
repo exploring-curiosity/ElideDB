@@ -1,8 +1,24 @@
 {
- "n": 30,
+ "n_spans": 111,
+ "n_train": 183,
+ "n_test": 69,
  "k": 10,
- "full": 0.125,
- "clip_ablated": 0.0,
- "request_ablated": 0.125,
- "chance": 0.1
+ "feature": [
+  "std_sig"
+ ],
+ "chance": 0.1,
+ "arms": {
+  "clips + words": {
+   "held_out": 1.0,
+   "ambiguous": 1.0
+  },
+  "words only": {
+   "held_out": 0.7101449370384216,
+   "ambiguous": 0.5454545617103577
+  },
+  "clips only": {
+   "held_out": 0.95652174949646,
+   "ambiguous": 0.9545454382896423
+  }
+ }
 }

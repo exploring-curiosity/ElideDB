@@ -1,0 +1,75 @@
+{
+ "feed": 84,
+ "kinds": 6,
+ "cold_start": {
+  "on": {
+   "n": 84,
+   "escalated": 0.6904761904761905,
+   "auto_n": 26,
+   "auto_acc": 1.0
+  },
+  "off": {
+   "n": 84,
+   "escalated": 1.0,
+   "auto_n": 0,
+   "auto_acc": 0.0
+  },
+  "curve_on": [
+   1.0,
+   0.93,
+   0.79,
+   0.57,
+   0.43,
+   0.43
+  ],
+  "curve_off": [
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0
+  ]
+ },
+ "sweep": [
+  {
+   "consensus": 0.4,
+   "n": 84,
+   "escalated": 0.023809523809523808,
+   "auto_n": 82,
+   "auto_acc": 0.15853658536585366
+  },
+  {
+   "consensus": 0.5,
+   "n": 84,
+   "escalated": 0.023809523809523808,
+   "auto_n": 82,
+   "auto_acc": 0.15853658536585366
+  },
+  {
+   "consensus": 0.6,
+   "n": 84,
+   "escalated": 0.2619047619047619,
+   "auto_n": 62,
+   "auto_acc": 0.6290322580645161
+  },
+  {
+   "consensus": 0.8,
+   "n": 84,
+   "escalated": 0.6904761904761905,
+   "auto_n": 26,
+   "auto_acc": 1.0
+  },
+  {
+   "consensus": 1.0,
+   "n": 84,
+   "escalated": 0.8333333333333334,
+   "auto_n": 14,
+   "auto_acc": 1.0
+  }
+ ],
+ "cascade": {
+  "reopened": 9,
+  "direct": 8
+ }
+}

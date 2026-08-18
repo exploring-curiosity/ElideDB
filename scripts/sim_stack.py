@@ -58,6 +58,13 @@ SHAPES = ("box", "cylinder")
 SCENE = """
 <mujoco model="stack_scene">
   <include file="panda.xml"/>
+  <!-- elliptic cone + impratio 10: the Robotiq 2F-85 model REQUESTS
+       these for grip friction and the scene was silently overriding
+       them to defaults (attach warning) - measured: cylinders slipped
+       out of the closed gripper 6/8 (owner caught it on film).
+       These are better contact physics for every gripper, not a
+       Robotiq special case. -->
+  <option cone="elliptic" impratio="10"/>
   <statistic center="0.4 0 0.3" extent="1.1"/>
   <visual>
     <headlight diffuse="0.5 0.5 0.5" ambient="0.35 0.35 0.35"/>

@@ -1,0 +1,78 @@
+{
+ "kinds": [
+  "BreadSelection",
+  "HeatKebabSandwich",
+  "MakeIceLemonade",
+  "OpenDrawer",
+  "OpenMicrowave",
+  "OpenStandMixerHead",
+  "PackIdenticalLunches",
+  "PickPlaceCounterToSink",
+  "PickPlaceCounterToStove",
+  "PickPlaceDrawerToCounter",
+  "StoreLeftoversInBowl",
+  "WashFruitColander"
+ ],
+ "feed": 240,
+ "consensus": 0.6,
+ "on": {
+  "escalated": 0.55,
+  "curve": [
+   [
+    0,
+    0.95
+   ],
+   [
+    40,
+    0.85
+   ],
+   [
+    80,
+    0.575
+   ],
+   [
+    120,
+    0.35
+   ],
+   [
+    160,
+    0.35
+   ],
+   [
+    200,
+    0.225
+   ]
+  ],
+  "auto_accuracy": 1.0,
+  "auto_n": 108
+ },
+ "off": {
+  "escalated": 1.0,
+  "curve": [
+   [
+    0,
+    1.0
+   ],
+   [
+    40,
+    1.0
+   ],
+   [
+    80,
+    1.0
+   ],
+   [
+    120,
+    1.0
+   ],
+   [
+    160,
+    1.0
+   ],
+   [
+    200,
+    1.0
+   ]
+  ]
+ }
+}

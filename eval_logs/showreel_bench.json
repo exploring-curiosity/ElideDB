@@ -1,0 +1,836 @@
+{
+ "corpus": 3402,
+ "k": 8,
+ "text": [
+  {
+   "task": "ArrangeBreadBasket",
+   "phrase": "arrange bread basket",
+   "precision": 0.625,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "ArrangeTea",
+   "phrase": "arrange tea",
+   "precision": 0.0,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "BreadSelection",
+   "phrase": "bread selection",
+   "precision": 0.375,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "CategorizeCondiments",
+   "phrase": "categorize condiments",
+   "precision": 0.875,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "CloseBlenderLid",
+   "phrase": "close blender lid",
+   "precision": 0.5,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "CloseCabinet",
+   "phrase": "close cabinet",
+   "precision": 0.25,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "CloseDrawer",
+   "phrase": "close drawer",
+   "precision": 0.75,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "CloseFridge",
+   "phrase": "close fridge",
+   "precision": 0.875,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "CloseMicrowave",
+   "phrase": "close microwave",
+   "precision": 0.5,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "CloseToasterOvenDoor",
+   "phrase": "close toaster oven door",
+   "precision": 0.625,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "CoffeeSetupMug",
+   "phrase": "coffee setup mug",
+   "precision": 0.125,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "CuttingToolSelection",
+   "phrase": "cutting tool selection",
+   "precision": 0.125,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "DeliverStraw",
+   "phrase": "deliver straw",
+   "precision": 0.5,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "GarnishPancake",
+   "phrase": "garnish pancake",
+   "precision": 0.0,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "GatherTableware",
+   "phrase": "gather tableware",
+   "precision": 0.0,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "GetToastedBread",
+   "phrase": "get toasted bread",
+   "precision": 0.25,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "HeatKebabSandwich",
+   "phrase": "heat kebab sandwich",
+   "precision": 0.375,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "KettleBoiling",
+   "phrase": "kettle boiling",
+   "precision": 0.125,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "LoadDishwasher",
+   "phrase": "load dishwasher",
+   "precision": 0.0,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "MakeIceLemonade",
+   "phrase": "make ice lemonade",
+   "precision": 0.0,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "NavigateKitchen",
+   "phrase": "navigate kitchen",
+   "precision": 0.0,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "OpenCabinet",
+   "phrase": "open cabinet",
+   "precision": 0.0,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "OpenDrawer",
+   "phrase": "open drawer",
+   "precision": 0.0,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "OpenFridge",
+   "phrase": "open fridge",
+   "precision": 0.0,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "OpenMicrowave",
+   "phrase": "open microwave",
+   "precision": 0.0,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "OpenStandMixerHead",
+   "phrase": "open stand mixer head",
+   "precision": 1.0,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "PackIdenticalLunches",
+   "phrase": "pack identical lunches",
+   "precision": 0.0,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "PanTransfer",
+   "phrase": "pan transfer",
+   "precision": 0.0,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "PickPlaceCounterToCabinet",
+   "phrase": "pick place counter to cabinet",
+   "precision": 0.0,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "PickPlaceCounterToDrawer",
+   "phrase": "pick place counter to drawer",
+   "precision": 0.125,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "PickPlaceCounterToSink",
+   "phrase": "pick place counter to sink",
+   "precision": 0.125,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "PickPlaceCounterToStove",
+   "phrase": "pick place counter to stove",
+   "precision": 0.0,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "PickPlaceDrawerToCounter",
+   "phrase": "pick place drawer to counter",
+   "precision": 0.0,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "PickPlaceSinkToCounter",
+   "phrase": "pick place sink to counter",
+   "precision": 0.125,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "PickPlaceToasterToCounter",
+   "phrase": "pick place toaster to counter",
+   "precision": 0.125,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "PortionHotDogs",
+   "phrase": "portion hot dogs",
+   "precision": 0.875,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "PrepareCoffee",
+   "phrase": "prepare coffee",
+   "precision": 0.0,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "PreSoakPan",
+   "phrase": "pre soak pan",
+   "precision": 0.0,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "RecycleBottlesByType",
+   "phrase": "recycle bottles by type",
+   "precision": 0.5,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "RinseSinkBasin",
+   "phrase": "rinse sink basin",
+   "precision": 0.125,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "ScrubCuttingBoard",
+   "phrase": "scrub cutting board",
+   "precision": 0.75,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "SearingMeat",
+   "phrase": "searing meat",
+   "precision": 0.125,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "SeparateFreezerRack",
+   "phrase": "separate freezer rack",
+   "precision": 0.0,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "SetUpCuttingStation",
+   "phrase": "set up cutting station",
+   "precision": 0.0,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "SlideDishwasherRack",
+   "phrase": "slide dishwasher rack",
+   "precision": 1.0,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "StackBowlsCabinet",
+   "phrase": "stack bowls cabinet",
+   "precision": 0.0,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "SteamInMicrowave",
+   "phrase": "steam in microwave",
+   "precision": 0.0,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "StirVegetables",
+   "phrase": "stir vegetables",
+   "precision": 0.0,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "StoreLeftoversInBowl",
+   "phrase": "store leftovers in bowl",
+   "precision": 0.25,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "TurnOffStove",
+   "phrase": "turn off stove",
+   "precision": 0.75,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "TurnOnElectricKettle",
+   "phrase": "turn on electric kettle",
+   "precision": 1.0,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "TurnOnMicrowave",
+   "phrase": "turn on microwave",
+   "precision": 0.875,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "TurnOnSinkFaucet",
+   "phrase": "turn on sink faucet",
+   "precision": 0.0,
+   "chance": 0.026455026455026454
+  },
+  {
+   "task": "WaffleReheat",
+   "phrase": "waffle reheat",
+   "precision": 0.0,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "WashFruitColander",
+   "phrase": "wash fruit colander",
+   "precision": 0.75,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "WashLettuce",
+   "phrase": "wash lettuce",
+   "precision": 0.375,
+   "chance": 0.010582010582010581
+  },
+  {
+   "task": "WeighIngredients",
+   "phrase": "weigh ingredients",
+   "precision": 0.5,
+   "chance": 0.010582010582010581
+  }
+ ],
+ "clip": [
+  {
+   "task": "MakeIceLemonade",
+   "precision": 0.375,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 28.29,
+   "stage2_ms": 912.9,
+   "elided": 0.9859
+  },
+  {
+   "task": "NavigateKitchen",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 36.58,
+   "stage2_ms": 105.2,
+   "elided": 0.9859
+  },
+  {
+   "task": "PickPlaceCounterToStove",
+   "precision": 0.875,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 31.65,
+   "stage2_ms": 132.5,
+   "elided": 0.9859
+  },
+  {
+   "task": "CloseFridge",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 35.85,
+   "stage2_ms": 284.0,
+   "elided": 0.9859
+  },
+  {
+   "task": "NavigateKitchen",
+   "precision": 0.875,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 34.22,
+   "stage2_ms": 141.5,
+   "elided": 0.9859
+  },
+  {
+   "task": "ArrangeTea",
+   "precision": 1.0,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 32.99,
+   "stage2_ms": 804.6,
+   "elided": 0.9859
+  },
+  {
+   "task": "TurnOnMicrowave",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 34.52,
+   "stage2_ms": 78.1,
+   "elided": 0.9859
+  },
+  {
+   "task": "TurnOnMicrowave",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 36.09,
+   "stage2_ms": 76.0,
+   "elided": 0.9859
+  },
+  {
+   "task": "RinseSinkBasin",
+   "precision": 0.75,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 34.19,
+   "stage2_ms": 207.4,
+   "elided": 0.9859
+  },
+  {
+   "task": "TurnOnElectricKettle",
+   "precision": 0.75,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 31.62,
+   "stage2_ms": 49.5,
+   "elided": 0.9859
+  },
+  {
+   "task": "CloseDrawer",
+   "precision": 0.5,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 27.28,
+   "stage2_ms": 100.4,
+   "elided": 0.9859
+  },
+  {
+   "task": "NavigateKitchen",
+   "precision": 0.625,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 33.83,
+   "stage2_ms": 38.5,
+   "elided": 0.9859
+  },
+  {
+   "task": "GatherTableware",
+   "precision": 0.875,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 24.77,
+   "stage2_ms": 545.7,
+   "elided": 0.9859
+  },
+  {
+   "task": "TurnOnMicrowave",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 35.01,
+   "stage2_ms": 65.5,
+   "elided": 0.9859
+  },
+  {
+   "task": "OpenCabinet",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 32.31,
+   "stage2_ms": 348.4,
+   "elided": 0.9859
+  },
+  {
+   "task": "PickPlaceCounterToCabinet",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 35.09,
+   "stage2_ms": 143.1,
+   "elided": 0.9859
+  },
+  {
+   "task": "CloseMicrowave",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 33.54,
+   "stage2_ms": 146.0,
+   "elided": 0.9859
+  },
+  {
+   "task": "PrepareCoffee",
+   "precision": 0.75,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 36.03,
+   "stage2_ms": 388.4,
+   "elided": 0.9859
+  },
+  {
+   "task": "TurnOnSinkFaucet",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 32.19,
+   "stage2_ms": 82.4,
+   "elided": 0.9859
+  },
+  {
+   "task": "PackIdenticalLunches",
+   "precision": 1.0,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 30.6,
+   "stage2_ms": 906.5,
+   "elided": 0.9859
+  },
+  {
+   "task": "OpenMicrowave",
+   "precision": 0.75,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 36.1,
+   "stage2_ms": 217.6,
+   "elided": 0.9859
+  },
+  {
+   "task": "TurnOnSinkFaucet",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 36.22,
+   "stage2_ms": 177.8,
+   "elided": 0.9859
+  },
+  {
+   "task": "PickPlaceCounterToCabinet",
+   "precision": 0.75,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 36.31,
+   "stage2_ms": 190.3,
+   "elided": 0.9859
+  },
+  {
+   "task": "GatherTableware",
+   "precision": 1.0,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 36.68,
+   "stage2_ms": 787.2,
+   "elided": 0.9859
+  },
+  {
+   "task": "PickPlaceSinkToCounter",
+   "precision": 0.75,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 34.69,
+   "stage2_ms": 243.0,
+   "elided": 0.9859
+  },
+  {
+   "task": "TurnOffStove",
+   "precision": 0.625,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 34.37,
+   "stage2_ms": 69.0,
+   "elided": 0.9859
+  },
+  {
+   "task": "PrepareCoffee",
+   "precision": 1.0,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 32.55,
+   "stage2_ms": 306.7,
+   "elided": 0.9859
+  },
+  {
+   "task": "LoadDishwasher",
+   "precision": 1.0,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 33.34,
+   "stage2_ms": 418.5,
+   "elided": 0.9859
+  },
+  {
+   "task": "CloseCabinet",
+   "precision": 0.5,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 34.95,
+   "stage2_ms": 108.7,
+   "elided": 0.9859
+  },
+  {
+   "task": "CloseCabinet",
+   "precision": 0.375,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 33.63,
+   "stage2_ms": 316.6,
+   "elided": 0.9859
+  },
+  {
+   "task": "CuttingToolSelection",
+   "precision": 0.875,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 33.96,
+   "stage2_ms": 356.3,
+   "elided": 0.9859
+  },
+  {
+   "task": "GetToastedBread",
+   "precision": 1.0,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 34.01,
+   "stage2_ms": 908.3,
+   "elided": 0.9859
+  },
+  {
+   "task": "CloseDrawer",
+   "precision": 0.5,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 35.74,
+   "stage2_ms": 63.0,
+   "elided": 0.9859
+  },
+  {
+   "task": "RinseSinkBasin",
+   "precision": 0.75,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 34.39,
+   "stage2_ms": 461.0,
+   "elided": 0.9859
+  },
+  {
+   "task": "GetToastedBread",
+   "precision": 1.0,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 34.6,
+   "stage2_ms": 898.0,
+   "elided": 0.9859
+  },
+  {
+   "task": "TurnOnSinkFaucet",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 38.42,
+   "stage2_ms": 120.0,
+   "elided": 0.9859
+  },
+  {
+   "task": "SetUpCuttingStation",
+   "precision": 1.0,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 34.95,
+   "stage2_ms": 645.8,
+   "elided": 0.9859
+  },
+  {
+   "task": "PickPlaceDrawerToCounter",
+   "precision": 0.375,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 33.95,
+   "stage2_ms": 216.1,
+   "elided": 0.9859
+  },
+  {
+   "task": "OpenStandMixerHead",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 33.63,
+   "stage2_ms": 43.0,
+   "elided": 0.9859
+  },
+  {
+   "task": "PickPlaceCounterToDrawer",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 30.14,
+   "stage2_ms": 155.0,
+   "elided": 0.9859
+  },
+  {
+   "task": "PreSoakPan",
+   "precision": 1.0,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 33.46,
+   "stage2_ms": 896.8,
+   "elided": 0.9859
+  },
+  {
+   "task": "TurnOnSinkFaucet",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 35.29,
+   "stage2_ms": 71.2,
+   "elided": 0.9859
+  },
+  {
+   "task": "SeparateFreezerRack",
+   "precision": 1.0,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 35.42,
+   "stage2_ms": 894.9,
+   "elided": 0.9859
+  },
+  {
+   "task": "SlideDishwasherRack",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 33.32,
+   "stage2_ms": 67.5,
+   "elided": 0.9859
+  },
+  {
+   "task": "DeliverStraw",
+   "precision": 1.0,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 35.01,
+   "stage2_ms": 900.0,
+   "elided": 0.9859
+  },
+  {
+   "task": "KettleBoiling",
+   "precision": 0.625,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 32.37,
+   "stage2_ms": 399.5,
+   "elided": 0.9859
+  },
+  {
+   "task": "PickPlaceCounterToCabinet",
+   "precision": 0.875,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 35.06,
+   "stage2_ms": 220.6,
+   "elided": 0.9859
+  },
+  {
+   "task": "PickPlaceCounterToSink",
+   "precision": 0.875,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 33.08,
+   "stage2_ms": 82.4,
+   "elided": 0.9859
+  },
+  {
+   "task": "CloseToasterOvenDoor",
+   "precision": 0.75,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 35.04,
+   "stage2_ms": 53.0,
+   "elided": 0.9859
+  },
+  {
+   "task": "GarnishPancake",
+   "precision": 0.875,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 33.24,
+   "stage2_ms": 899.7,
+   "elided": 0.9859
+  },
+  {
+   "task": "TurnOnSinkFaucet",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 33.06,
+   "stage2_ms": 162.6,
+   "elided": 0.9859
+  },
+  {
+   "task": "PickPlaceDrawerToCounter",
+   "precision": 0.5,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 36.45,
+   "stage2_ms": 291.6,
+   "elided": 0.9859
+  },
+  {
+   "task": "SeparateFreezerRack",
+   "precision": 1.0,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 38.12,
+   "stage2_ms": 890.2,
+   "elided": 0.9859
+  },
+  {
+   "task": "CloseFridge",
+   "precision": 0.625,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 36.45,
+   "stage2_ms": 495.5,
+   "elided": 0.9859
+  },
+  {
+   "task": "StackBowlsCabinet",
+   "precision": 0.875,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 32.16,
+   "stage2_ms": 838.3,
+   "elided": 0.9859
+  },
+  {
+   "task": "PickPlaceCounterToDrawer",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 33.86,
+   "stage2_ms": 275.5,
+   "elided": 0.9859
+  },
+  {
+   "task": "TurnOnSinkFaucet",
+   "precision": 1.0,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 34.15,
+   "stage2_ms": 92.8,
+   "elided": 0.9859
+  },
+  {
+   "task": "PickPlaceSinkToCounter",
+   "precision": 0.5,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 33.73,
+   "stage2_ms": 219.7,
+   "elided": 0.9859
+  },
+  {
+   "task": "HeatKebabSandwich",
+   "precision": 1.0,
+   "chance": 0.010582010582010581,
+   "stage1_ms": 36.16,
+   "stage2_ms": 903.2,
+   "elided": 0.9859
+  },
+  {
+   "task": "PickPlaceCounterToCabinet",
+   "precision": 0.25,
+   "chance": 0.026455026455026454,
+   "stage1_ms": 31.88,
+   "stage2_ms": 236.7,
+   "elided": 0.9859
+  }
+ ],
+ "summary": {
+  "text_p": 0.2850877192982456,
+  "text_chance": 0.017543859649122816,
+  "clip_p": 0.8395833333333333,
+  "clip_chance": 0.020634920634920652
+ }
+}

@@ -1,0 +1,93 @@
+{
+ "n": 111,
+ "k": 10,
+ "chance": 0.1,
+ "arms": {
+  "mean, V-JEPA + SigLIP2": {
+   "blocks": [
+    "mean_fix",
+    "mean_sig"
+   ],
+   "naive": 0.9459459459459459,
+   "clean": 0.6486486486486487,
+   "separation": 0.05918525267382324
+  },
+  "std,  V-JEPA + SigLIP2": {
+   "blocks": [
+    "std_fix",
+    "std_sig"
+   ],
+   "naive": 0.990990990990991,
+   "clean": 0.7387387387387387,
+   "separation": 0.012010731418063747
+  },
+  "dir,  V-JEPA + SigLIP2": {
+   "blocks": [
+    "dir_fix",
+    "dir_sig"
+   ],
+   "naive": 0.5405405405405406,
+   "clean": 0.11711711711711711,
+   "separation": 0.00649329499721063
+  },
+  "std,  V-JEPA only": {
+   "blocks": [
+    "std_fix"
+   ],
+   "naive": 0.963963963963964,
+   "clean": 0.6126126126126126,
+   "separation": 0.0043164209720496505
+  },
+  "std,  SigLIP2 only": {
+   "blocks": [
+    "std_sig"
+   ],
+   "naive": 0.9819819819819819,
+   "clean": 0.7477477477477478,
+   "separation": 0.019705041864077733
+  },
+  "mean, SigLIP2 only": {
+   "blocks": [
+    "mean_sig"
+   ],
+   "naive": 0.990990990990991,
+   "clean": 0.7387387387387387,
+   "separation": 0.01444035162598778
+  },
+  "mean + std": {
+   "blocks": [
+    "mean_fix",
+    "std_fix",
+    "mean_sig",
+    "std_sig"
+   ],
+   "naive": 0.9819819819819819,
+   "clean": 0.6936936936936937,
+   "separation": 0.03559799204594383
+  },
+  "std + dir": {
+   "blocks": [
+    "std_fix",
+    "dir_fix",
+    "std_sig",
+    "dir_sig"
+   ],
+   "naive": 0.5675675675675675,
+   "clean": 0.13513513513513514,
+   "separation": 0.009252013207637133
+  },
+  "all six blocks": {
+   "blocks": [
+    "mean_fix",
+    "std_fix",
+    "dir_fix",
+    "mean_sig",
+    "std_sig",
+    "dir_sig"
+   ],
+   "naive": 0.7027027027027027,
+   "clean": 0.22522522522522523,
+   "separation": 0.02589642636303291
+  }
+ }
+}

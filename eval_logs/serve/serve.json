@@ -1,0 +1,624 @@
+{
+ "script": [
+  {
+   "heard": "put the bowl away",
+   "clips": [
+    "c-974c75f0d3b2",
+    "c-c8cea799a995",
+    "c-212e1bfb639c",
+    "c-6b80a36da8ae",
+    "c-d412cdacaebb"
+   ],
+   "scores": [
+    1.0,
+    0.386,
+    0.3232,
+    0.2773,
+    0.2561
+   ],
+   "stage": [
+    "dtw",
+    "dtw",
+    "dtw",
+    "dtw",
+    "dtw"
+   ],
+   "weights": [
+    0.0,
+    0.0,
+    0.0005,
+    0.1754,
+    0.824,
+    0.0,
+    0.0,
+    0.0,
+    0.0001,
+    0.0
+   ],
+   "margin": 0.6486,
+   "chose": "put the bowl on top of the cabinet",
+   "acted": true,
+   "succeeded": false,
+   "retrieval_ms": 76.24,
+   "reason_ms": 1955.51,
+   "act_s": 27.2,
+   "note": ""
+  },
+  {
+   "heard": "open a drawer",
+   "clips": [
+    "c-732ca0103029",
+    "c-76169c4575c0",
+    "c-d3e91dedc776",
+    "c-b95482434883",
+    "c-df48779df7eb"
+   ],
+   "scores": [
+    0.6656,
+    0.3135,
+    0.2911,
+    0.2852,
+    0.2834
+   ],
+   "stage": [
+    "dtw",
+    "dtw",
+    "dtw",
+    "dtw",
+    "dtw"
+   ],
+   "weights": [
+    0.9789,
+    0.0,
+    0.0003,
+    0.0208,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "margin": 0.9582,
+   "chose": "open the middle drawer of the cabinet",
+   "acted": true,
+   "succeeded": true,
+   "retrieval_ms": 81.12,
+   "reason_ms": 24.65,
+   "act_s": 10.5,
+   "note": ""
+  },
+  {
+   "heard": "get the stove ready",
+   "clips": [
+    "c-989716bbaa68",
+    "c-f3c68f35eb95",
+    "c-732ca0103029",
+    "c-21dacaf95141",
+    "c-fcb9720264b7"
+   ],
+   "scores": [
+    0.8509,
+    0.4283,
+    0.3682,
+    0.3377,
+    0.3223
+   ],
+   "stage": [
+    "dtw",
+    "dtw",
+    "dtw",
+    "dtw",
+    "dtw"
+   ],
+   "weights": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.8286,
+    0.0,
+    0.1712,
+    0.0001,
+    0.0001
+   ],
+   "margin": 0.6574,
+   "chose": "push the plate to the front of the stove",
+   "acted": true,
+   "succeeded": true,
+   "retrieval_ms": 88.37,
+   "reason_ms": 24.03,
+   "act_s": 25.0,
+   "note": ""
+  },
+  {
+   "heard": "put the wine bottle away",
+   "clips": [
+    "c-7c528ae3ea25",
+    "c-f3c68f35eb95",
+    "c-989716bbaa68",
+    "c-732ca0103029",
+    "c-fb3e4056541e"
+   ],
+   "scores": [
+    0.4765,
+    0.4345,
+    0.3751,
+    0.3705,
+    0.3526
+   ],
+   "stage": [
+    "dtw",
+    "dtw",
+    "dtw",
+    "dtw",
+    "dtw"
+   ],
+   "weights": [
+    0.0,
+    0.0,
+    0.0235,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.9765
+   ],
+   "margin": 0.953,
+   "chose": "put the wine bottle on the rack",
+   "acted": true,
+   "succeeded": false,
+   "retrieval_ms": 69.59,
+   "reason_ms": 24.58,
+   "act_s": 27.1,
+   "note": ""
+  }
+ ],
+ "memory_off": [
+  {
+   "heard": "put the bowl away",
+   "clips": [],
+   "scores": [],
+   "stage": [],
+   "weights": null,
+   "margin": 0.0,
+   "chose": "",
+   "acted": false,
+   "succeeded": null,
+   "retrieval_ms": 0.0,
+   "reason_ms": 0.0,
+   "act_s": 0.0,
+   "note": "memory OFF \u2014 no clips, so no command and nothing to execute"
+  },
+  {
+   "heard": "open a drawer",
+   "clips": [],
+   "scores": [],
+   "stage": [],
+   "weights": null,
+   "margin": 0.0,
+   "chose": "",
+   "acted": false,
+   "succeeded": null,
+   "retrieval_ms": 0.0,
+   "reason_ms": 0.0,
+   "act_s": 0.0,
+   "note": "memory OFF \u2014 no clips, so no command and nothing to execute"
+  },
+  {
+   "heard": "get the stove ready",
+   "clips": [],
+   "scores": [],
+   "stage": [],
+   "weights": null,
+   "margin": 0.0,
+   "chose": "",
+   "acted": false,
+   "succeeded": null,
+   "retrieval_ms": 0.0,
+   "reason_ms": 0.0,
+   "act_s": 0.0,
+   "note": "memory OFF \u2014 no clips, so no command and nothing to execute"
+  },
+  {
+   "heard": "put the wine bottle away",
+   "clips": [],
+   "scores": [],
+   "stage": [],
+   "weights": null,
+   "margin": 0.0,
+   "chose": "",
+   "acted": false,
+   "succeeded": null,
+   "retrieval_ms": 0.0,
+   "reason_ms": 0.0,
+   "act_s": 0.0,
+   "note": "memory OFF \u2014 no clips, so no command and nothing to execute"
+  }
+ ],
+ "ab": [
+  {
+   "heard": "put the bowl away",
+   "earlier": {
+    "heard": "put the bowl away",
+    "clips": [
+     "c-c8cea799a995",
+     "c-212e1bfb639c",
+     "c-76169c4575c0",
+     "c-d3e91dedc776",
+     "c-6b80a36da8ae",
+     "c-7cd070a9721f"
+    ],
+    "scores": [
+     0.2991,
+     0.2989,
+     0.2769,
+     0.2731,
+     0.2648,
+     0.2526
+    ],
+    "stage": [
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw"
+    ],
+    "weights": [
+     0.0,
+     0.0,
+     0.0,
+     0.9788,
+     0.0212,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "margin": 0.9576,
+    "chose": "open the top drawer and put the bowl inside",
+    "acted": false,
+    "succeeded": null,
+    "retrieval_ms": 81.32,
+    "reason_ms": 25.03,
+    "act_s": 0.0,
+    "note": "decided but not executed"
+   },
+   "later": {
+    "heard": "put the bowl away",
+    "clips": [
+     "c-d2ddb6945470",
+     "c-b87b6d982b3e",
+     "c-f3c68f35eb95",
+     "c-732ca0103029",
+     "c-83e8678118a5"
+    ],
+    "scores": [
+     1.0,
+     0.6873,
+     0.4227,
+     0.3883,
+     0.357
+    ],
+    "stage": [
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw"
+    ],
+    "weights": [
+     0.0,
+     0.0,
+     0.0002,
+     0.2797,
+     0.7199,
+     0.0,
+     0.0,
+     0.0,
+     0.0002,
+     0.0
+    ],
+    "margin": 0.4402,
+    "chose": "put the bowl on top of the cabinet",
+    "acted": false,
+    "succeeded": null,
+    "retrieval_ms": 84.0,
+    "reason_ms": 23.53,
+    "act_s": 0.0,
+    "note": "decided but not executed"
+   },
+   "differs": true
+  },
+  {
+   "heard": "open a drawer",
+   "earlier": {
+    "heard": "open a drawer",
+    "clips": [
+     "c-c8cea799a995",
+     "c-212e1bfb639c",
+     "c-76169c4575c0",
+     "c-d3e91dedc776",
+     "c-6b80a36da8ae",
+     "c-7cd070a9721f"
+    ],
+    "scores": [
+     0.2991,
+     0.2989,
+     0.2769,
+     0.2731,
+     0.2648,
+     0.2526
+    ],
+    "stage": [
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw"
+    ],
+    "weights": [
+     0.0216,
+     0.0,
+     0.0,
+     0.9784,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "margin": 0.9569,
+    "chose": "open the top drawer and put the bowl inside",
+    "acted": false,
+    "succeeded": null,
+    "retrieval_ms": 79.53,
+    "reason_ms": 24.84,
+    "act_s": 0.0,
+    "note": "decided but not executed"
+   },
+   "later": {
+    "heard": "open a drawer",
+    "clips": [
+     "c-d2ddb6945470",
+     "c-0d7904ae9a27",
+     "c-9118f5a0edb7",
+     "c-b87b6d982b3e",
+     "c-f3c68f35eb95"
+    ],
+    "scores": [
+     1.0,
+     1.0,
+     1.0,
+     0.6873,
+     0.4227
+    ],
+    "stage": [
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw"
+    ],
+    "weights": [
+     0.5602,
+     0.0,
+     0.0004,
+     0.4394,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "margin": 0.1208,
+    "chose": "open the middle drawer of the cabinet",
+    "acted": false,
+    "succeeded": null,
+    "retrieval_ms": 79.48,
+    "reason_ms": 23.79,
+    "act_s": 0.0,
+    "note": "decided but not executed"
+   },
+   "differs": true
+  },
+  {
+   "heard": "get the stove ready",
+   "earlier": {
+    "heard": "get the stove ready",
+    "clips": [
+     "c-c8cea799a995",
+     "c-212e1bfb639c",
+     "c-76169c4575c0",
+     "c-d3e91dedc776",
+     "c-6b80a36da8ae",
+     "c-7cd070a9721f"
+    ],
+    "scores": [
+     0.2991,
+     0.2989,
+     0.2769,
+     0.2731,
+     0.2648,
+     0.2526
+    ],
+    "stage": [
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw"
+    ],
+    "weights": [
+     0.0019,
+     0.0002,
+     0.0009,
+     0.0,
+     0.0,
+     0.0382,
+     0.0,
+     0.9581,
+     0.0006,
+     0.0
+    ],
+    "margin": 0.9199,
+    "chose": "turn on the stove",
+    "acted": false,
+    "succeeded": null,
+    "retrieval_ms": 73.29,
+    "reason_ms": 24.4,
+    "act_s": 0.0,
+    "note": "decided but not executed"
+   },
+   "later": {
+    "heard": "get the stove ready",
+    "clips": [
+     "c-0d7904ae9a27",
+     "c-9118f5a0edb7",
+     "c-d2ddb6945470",
+     "c-9f586871869f",
+     "c-f4290391d8e7"
+    ],
+    "scores": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "stage": [
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw"
+    ],
+    "weights": [
+     0.0004,
+     0.0,
+     0.0006,
+     0.0,
+     0.0,
+     0.0362,
+     0.0,
+     0.9626,
+     0.0001,
+     0.0
+    ],
+    "margin": 0.9263,
+    "chose": "turn on the stove",
+    "acted": false,
+    "succeeded": null,
+    "retrieval_ms": 80.04,
+    "reason_ms": 23.49,
+    "act_s": 0.0,
+    "note": "decided but not executed"
+   },
+   "differs": false
+  },
+  {
+   "heard": "put the wine bottle away",
+   "earlier": {
+    "heard": "put the wine bottle away",
+    "clips": [
+     "c-c8cea799a995",
+     "c-212e1bfb639c",
+     "c-76169c4575c0",
+     "c-d3e91dedc776",
+     "c-6b80a36da8ae",
+     "c-7cd070a9721f"
+    ],
+    "scores": [
+     0.2991,
+     0.2989,
+     0.2769,
+     0.2731,
+     0.2648,
+     0.2526
+    ],
+    "stage": [
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw"
+    ],
+    "weights": [
+     0.0001,
+     0.0,
+     0.9997,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0002
+    ],
+    "margin": 0.9995,
+    "chose": "put the wine bottle on top of the cabinet",
+    "acted": false,
+    "succeeded": null,
+    "retrieval_ms": 67.48,
+    "reason_ms": 25.2,
+    "act_s": 0.0,
+    "note": "decided but not executed"
+   },
+   "later": {
+    "heard": "put the wine bottle away",
+    "clips": [
+     "c-9118f5a0edb7",
+     "c-59545b26a41f",
+     "c-9f586871869f",
+     "c-f4290391d8e7",
+     "c-0d7904ae9a27"
+    ],
+    "scores": [
+     1.0,
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "stage": [
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw",
+     "dtw"
+    ],
+    "weights": [
+     0.0,
+     0.0,
+     0.9661,
+     0.0,
+     0.0,
+     0.0,
+     0.0,
+     0.0001,
+     0.0,
+     0.0338
+    ],
+    "margin": 0.9324,
+    "chose": "put the wine bottle on top of the cabinet",
+    "acted": false,
+    "succeeded": null,
+    "retrieval_ms": 75.4,
+    "reason_ms": 23.48,
+    "act_s": 0.0,
+    "note": "decided but not executed"
+   },
+   "differs": false
+  }
+ ]
+}
