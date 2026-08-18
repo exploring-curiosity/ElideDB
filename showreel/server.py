@@ -291,6 +291,98 @@ def actions(run: str = "", k: int = 40):
     return dict(actions=rows)
 
 
+# ------------------------------------------------------- the agent, live
+# These drive the /agent page. Each one is a thin wrapper over agent.py so the
+# page and the benchmark exercise exactly the same code — a demo that runs a
+# different path from the thing being measured is a demo of nothing.
+
+@app.get("/agent", response_class=HTMLResponse)
+def agent_page():
+    return FileResponse(ROOT / "agent.html")
+
+
+@app.post("/api/agent/reset")
+def agent_reset(body: dict):
+    import agent as A, db as D, random
+
+    D.apply_schema()
+    A.reset()
+    # FEWER KINDS, MORE OF EACH. Consensus can only form once several episodes of
+    # the same kind are in memory: 10 kinds x 12 episodes leaves ~1 per kind by
+    # the time the agent has seen 12, and it escalates everything for the whole
+    # run. 6 x 22 is the same queue length with enough density to turn the corner
+    # on screen. It is a property of the demo feed, not of the agent.
+    kinds = int(body.get("kinds", 6))
+    per = int(body.get("per", 22))
+    rows = D.q("SELECT DISTINCT task FROM moments WHERE task IS NOT NULL ORDER BY task")
+    pick = random.Random(int(body.get("seed", 0))).sample([r["task"] for r in rows], kinds)
+    feed = []
+    for t in pick:
+        feed += D.q("SELECT rec_id, task FROM moments WHERE task=%s ORDER BY rec_id LIMIT %s",
+                    (t, per))
+    random.Random(0).shuffle(feed)
+    A.enqueue([f["rec_id"] for f in feed])
+    app.state.truth = {f["rec_id"]: f["task"] for f in feed}
+    app.state.history = []
+    return dict(queued=len(feed), kinds=pick, stats=A.stats())
+
+
+@app.post("/api/agent/step")
+def agent_step(body: dict):
+    """One episode: claim, retrieve, act, store. Returns everything it saw."""
+    import agent as A, db as D
+
+    truth = getattr(app.state, "truth", {})
+    store = bool(body.get("store", True))
+    item = A.claim("ui")
+    if item is None:
+        return dict(done=True, stats=A.stats())
+    want = truth.get(item["rec_id"])
+    if store:
+        r = A.handle(item, answer=lambda rid: truth.get(rid, "unknown"),
+                     consensus=float(body.get("consensus", A.CONSENSUS)))
+    else:
+        d = A.decide(item["rec_id"], consensus=float(body.get("consensus", A.CONSENSUS)))
+        D.q("UPDATE inbox SET state='escalated' WHERE item_id=%s", (item["item_id"],))
+        r = dict(d, escalated=not d["confident"], filing_id=None,
+                 disposition=d["disposition"])
+    hist = getattr(app.state, "history", [])
+    hist.append(bool(r["escalated"]))
+    app.state.history = hist
+    return dict(done=False, rec_id=item["rec_id"], truth=want,
+                escalated=bool(r["escalated"]), disposition=r.get("disposition"),
+                consensus=r.get("consensus"), filing_id=r.get("filing_id"),
+                correct=(not r["escalated"]) and r.get("disposition") == want,
+                precedents=[dict(id=x["rec_id"], filing_id=x["filing_id"],
+                                 disposition=x["disposition"],
+                                 score=round(float(x["score"]), 3))
+                            for x in (r.get("precedents") or [])],
+                history=hist, stats=A.stats())
+
+
+@app.get("/api/agent/filings")
+def agent_filings(k: int = 24):
+    import db as D
+
+    return dict(filings=D.q("""
+        SELECT f.filing_id, f.rec_id, f.disposition, f.source, f.consensus,
+               f.superseded,
+               (SELECT count(*) FROM filing_precedents p
+                 WHERE p.precedent_id = f.filing_id) AS cited_by
+          FROM filings f WHERE f.fleet=%s
+         ORDER BY cited_by DESC, f.decided_at DESC LIMIT %s""",
+        (os.environ.get("PRECEDENT_FLEET", "fleet-a"), k)))
+
+
+@app.post("/api/agent/overturn")
+def agent_overturn(body: dict):
+    """A reviewer changes their mind. Watch the graph move."""
+    import agent as A
+
+    return A.cascade(body["filing_id"], body.get("disposition", "MISFILED"),
+                     by_whom="reviewer", note="overturned from the console")
+
+
 @app.get("/api/pair")
 def pair(a: str = "", b: str = ""):
     """Cosine between two sentences in the text tower. The one-line explanation

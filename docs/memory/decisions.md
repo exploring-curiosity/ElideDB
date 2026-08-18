@@ -2539,3 +2539,16 @@ appearance 0.786 / motion 0.391 on RoboCasa (57 tasks, different rooms).
 appearance 0.649 / motion 0.748 on LIBERO (10 behaviours, one kitchen). Match on
 appearance when the corpus varies in SCENE, on motion when it varies only in
 ACTION. Both indexed; `view` selects per query.
+
+2026-08-17 - CockroachDB port proven locally, not promised
+Ran a real CRDB v26.2.5 single node, migrated all 3402 embeddings, and ran the
+full agent pipeline on it: cold start, consensus sweep, and cascade all
+identical to Postgres. Two real differences found by running it (not reading):
+CREATE VECTOR INDEX rejects IF NOT EXISTS on CRDB, and transaction sizes want
+smaller insert batches. db.py isolates both plus the 40001 retry loop.
+
+2026-08-17 - Free-tier path confirmed viable
+CockroachDB Basic: $15/mo credit = 50M RUs + 10 GiB, scales to zero. Our memory
+is ~27 MB. AWS changed free tier on 2025-07-15: new accounts get $200 credits,
+not 12-month allowances; Lambda/DynamoDB/SNS always free; S3 5 GiB always free.
+Video is 1.34 GB so S3 free tier fits. Avoid NAT gateway (~$33/mo) and EC2.

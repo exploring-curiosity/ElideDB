@@ -122,11 +122,31 @@ def apply_schema() -> dict:
 
 
 def vector_index(table: str, column: str) -> str:
-    """The one statement that genuinely differs between the two engines."""
+    """The one statement that genuinely differs between the two engines.
+
+    CockroachDB does NOT accept IF NOT EXISTS on CREATE VECTOR INDEX — it is a
+    syntax error at the ON, not a no-op — so the name is explicit and callers
+    swallow the already-exists error. pgvector wants an access method and an
+    operator class; CockroachDB infers both. Found by running it against a real
+    node rather than by reading about it.
+    """
     if engine() == "cockroach":
-        return f"CREATE VECTOR INDEX IF NOT EXISTS ON {table} ({column})"
+        return f"CREATE VECTOR INDEX {table}_{column}_vec ON {table} ({column})"
     return (f"CREATE INDEX IF NOT EXISTS {table}_{column}_hnsw ON {table} "
             f"USING hnsw ({column} vector_cosine_ops)")
+
+
+def ensure_vector_index(table: str, column: str) -> bool:
+    """Idempotent across both engines. -> True if it exists now."""
+    try:
+        q(vector_index(table, column))
+        return True
+    except psycopg2.Error as exc:
+        # 42P07 duplicate_object / duplicate relation: already there, fine.
+        if getattr(exc, "pgcode", "") in ("42P07", "42710"):
+            return True
+        print(f"  vector index {table}.{column}: {exc}")
+        return False
 
 
 def vec(a) -> str:
