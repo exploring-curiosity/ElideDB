@@ -2579,3 +2579,20 @@ all tracked files and git history).
 706 ms laptop -> us-east-2 cluster, almost entirely network; 1.18 s/episode for
 the agent loop. In-region Lambda makes it a local hop. This is the argument for
 deploying the worker to us-east-2 rather than tuning the database.
+
+2026-08-18 - Corpus to S3, memory to CockroachDB, app holds neither
+Chose an s3:// key in the video column plus a presigned redirect over proxying
+video through the app: 1.25 GB should not cross a 2 vCPU host that never looks
+at it. Traces are cached locally because the ranker needs the array; a query
+touches 48 of 3,556 so a cold instance pulls tens of MB, not 1.1 GB.
+
+2026-08-18 - Lambda in us-east-2, bucket in us-east-1
+The worker makes only DB round trips, so it goes to the cluster's region and
+deploy.sh parses that region out of the DSN. The corpus goes near viewers.
+
+2026-08-18 - One interpreter in the container, two on the laptop
+The split is a LIBERO transformers pin, absent in the container. The ranker's
+transitive imports are ten RelMo modules, all numpy, taken from sys.modules.
+
+2026-08-18 - EventBridge rule created DISABLED
+A schedule is a standing commitment against a live cluster. Enable is one line.
