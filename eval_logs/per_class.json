@@ -1,0 +1,287 @@
+[
+ {
+  "task": "NavigateKitchen",
+  "clip": 1.0,
+  "text": 0.0
+ },
+ {
+  "task": "PackIdenticalLunches",
+  "clip": 1.0,
+  "text": 0.0
+ },
+ {
+  "task": "ArrangeTea",
+  "clip": 0.9583333333333334,
+  "text": 0.0
+ },
+ {
+  "task": "SeparateFreezerRack",
+  "clip": 0.9583333333333334,
+  "text": 0.0
+ },
+ {
+  "task": "SetUpCuttingStation",
+  "clip": 0.9583333333333334,
+  "text": 0.0
+ },
+ {
+  "task": "GarnishPancake",
+  "clip": 0.9166666666666666,
+  "text": 0.0
+ },
+ {
+  "task": "GetToastedBread",
+  "clip": 1.0,
+  "text": 0.125
+ },
+ {
+  "task": "OpenMicrowave",
+  "clip": 0.875,
+  "text": 0.0
+ },
+ {
+  "task": "GatherTableware",
+  "clip": 0.8333333333333334,
+  "text": 0.0
+ },
+ {
+  "task": "OpenFridge",
+  "clip": 0.8333333333333334,
+  "text": 0.0
+ },
+ {
+  "task": "PreSoakPan",
+  "clip": 0.8333333333333334,
+  "text": 0.0
+ },
+ {
+  "task": "SearingMeat",
+  "clip": 0.9583333333333334,
+  "text": 0.125
+ },
+ {
+  "task": "PickPlaceCounterToSink",
+  "clip": 0.9166666666666666,
+  "text": 0.125
+ },
+ {
+  "task": "PrepareCoffee",
+  "clip": 0.7916666666666666,
+  "text": 0.0
+ },
+ {
+  "task": "LoadDishwasher",
+  "clip": 0.875,
+  "text": 0.125
+ },
+ {
+  "task": "MakeIceLemonade",
+  "clip": 0.875,
+  "text": 0.125
+ },
+ {
+  "task": "PickPlaceCounterToCabinet",
+  "clip": 0.75,
+  "text": 0.0
+ },
+ {
+  "task": "StoreLeftoversInBowl",
+  "clip": 1.0,
+  "text": 0.25
+ },
+ {
+  "task": "PickPlaceCounterToDrawer",
+  "clip": 0.7083333333333334,
+  "text": 0.0
+ },
+ {
+  "task": "RinseSinkBasin",
+  "clip": 0.8333333333333334,
+  "text": 0.125
+ },
+ {
+  "task": "OpenCabinet",
+  "clip": 0.6666666666666666,
+  "text": 0.0
+ },
+ {
+  "task": "PickPlaceToasterToCounter",
+  "clip": 0.7916666666666666,
+  "text": 0.125
+ },
+ {
+  "task": "WaffleReheat",
+  "clip": 0.7916666666666666,
+  "text": 0.125
+ },
+ {
+  "task": "CloseMicrowave",
+  "clip": 1.0,
+  "text": 0.375
+ },
+ {
+  "task": "TurnOnSinkFaucet",
+  "clip": 0.875,
+  "text": 0.25
+ },
+ {
+  "task": "HeatKebabSandwich",
+  "clip": 0.9583333333333334,
+  "text": 0.375
+ },
+ {
+  "task": "PanTransfer",
+  "clip": 0.5833333333333334,
+  "text": 0.0
+ },
+ {
+  "task": "PickPlaceCounterToStove",
+  "clip": 0.5833333333333334,
+  "text": 0.0
+ },
+ {
+  "task": "PickPlaceDrawerToCounter",
+  "clip": 0.5833333333333334,
+  "text": 0.0
+ },
+ {
+  "task": "PickPlaceSinkToCounter",
+  "clip": 0.7083333333333334,
+  "text": 0.125
+ },
+ {
+  "task": "StackBowlsCabinet",
+  "clip": 0.7083333333333334,
+  "text": 0.125
+ },
+ {
+  "task": "SteamInMicrowave",
+  "clip": 0.5833333333333334,
+  "text": 0.0
+ },
+ {
+  "task": "CloseCabinet",
+  "clip": 0.6666666666666666,
+  "text": 0.125
+ },
+ {
+  "task": "OpenDrawer",
+  "clip": 0.5416666666666666,
+  "text": 0.0
+ },
+ {
+  "task": "StirVegetables",
+  "clip": 0.5416666666666666,
+  "text": 0.0
+ },
+ {
+  "task": "RecycleBottlesByType",
+  "clip": 1.0,
+  "text": 0.5
+ },
+ {
+  "task": "ArrangeBreadBasket",
+  "clip": 0.9166666666666666,
+  "text": 0.625
+ },
+ {
+  "task": "BreadSelection",
+  "clip": 0.6666666666666666,
+  "text": 0.375
+ },
+ {
+  "task": "TurnOffStove",
+  "clip": 0.9166666666666666,
+  "text": 0.625
+ },
+ {
+  "task": "WeighIngredients",
+  "clip": 0.6666666666666666,
+  "text": 0.375
+ },
+ {
+  "task": "KettleBoiling",
+  "clip": 0.375,
+  "text": 0.125
+ },
+ {
+  "task": "CloseToasterOvenDoor",
+  "clip": 0.8333333333333334,
+  "text": 0.625
+ },
+ {
+  "task": "DeliverStraw",
+  "clip": 0.7083333333333334,
+  "text": 0.5
+ },
+ {
+  "task": "CuttingToolSelection",
+  "clip": 0.2916666666666667,
+  "text": 0.125
+ },
+ {
+  "task": "CloseBlenderLid",
+  "clip": 0.8333333333333334,
+  "text": 0.75
+ },
+ {
+  "task": "TurnOnMicrowave",
+  "clip": 0.9166666666666666,
+  "text": 0.875
+ },
+ {
+  "task": "CoffeeSetupMug",
+  "clip": 0.875,
+  "text": 0.875
+ },
+ {
+  "task": "PortionHotDogs",
+  "clip": 0.8333333333333334,
+  "text": 0.875
+ },
+ {
+  "task": "ScrubCuttingBoard",
+  "clip": 0.7083333333333334,
+  "text": 0.75
+ },
+ {
+  "task": "SlideDishwasherRack",
+  "clip": 0.875,
+  "text": 1.0
+ },
+ {
+  "task": "WashFruitColander",
+  "clip": 0.5833333333333334,
+  "text": 0.75
+ },
+ {
+  "task": "CloseFridge",
+  "clip": 0.6666666666666666,
+  "text": 0.875
+ },
+ {
+  "task": "TurnOnElectricKettle",
+  "clip": 0.75,
+  "text": 1.0
+ },
+ {
+  "task": "WashLettuce",
+  "clip": 0.5,
+  "text": 0.75
+ },
+ {
+  "task": "CloseDrawer",
+  "clip": 0.5833333333333334,
+  "text": 0.875
+ },
+ {
+  "task": "CategorizeCondiments",
+  "clip": 0.5416666666666666,
+  "text": 0.875
+ },
+ {
+  "task": "OpenStandMixerHead",
+  "clip": 0.625,
+  "text": 1.0
+ }
+]

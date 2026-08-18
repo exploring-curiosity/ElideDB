@@ -1,377 +1,211 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>SHOWREEL — search video the way you remember it</title>
+<title>Precedent — why you cannot search video with words</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-/* ══════════════════════════════════════════════════════════════════════════
-   An evidence room, not a dashboard. Near-black, one hot accent per side, and
-   the video is the only thing allowed to be bright — because the argument this
-   page makes is won by looking at the clips, not by reading the labels. */
-:root{
-  --ink:#05060a; --ink2:#0b0d13; --line:#191d28; --line2:#242a38;
-  --dim:#5b6478; --mid:#8b95a8; --pale:#d6dbe6;
-  --hot:#ff5c39;        /* the way it is done today */
-  --cool:#35e2a0;       /* the way this does it */
-  --amber:#f5b942;
-  --mono:ui-monospace,"SF Mono",SFMono-Regular,"JetBrains Mono",Menlo,monospace;
-  --disp:"Helvetica Neue",Inter,system-ui,sans-serif;
-}
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%}
-body{
-  background:var(--ink); color:var(--pale); font-family:var(--mono);
-  font-size:13px; -webkit-font-smoothing:antialiased;
-  display:flex; flex-direction:column; overflow:hidden;
-}
-/* film grain — cheap, and it makes the black feel like a screening room */
-body::after{
-  content:""; position:fixed; inset:0; pointer-events:none; z-index:99; opacity:.028;
-  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/></filter><rect width='140' height='140' filter='url(%23n)'/></svg>");
-}
-
-/* ── masthead ─────────────────────────────────────────────────────────── */
-header{
-  display:flex; align-items:baseline; gap:22px; padding:13px 20px 12px;
-  border-bottom:1px solid var(--line); flex:none;
-}
-h1{
-  font-family:var(--disp); font-size:19px; font-weight:800; letter-spacing:-.03em;
-}
-h1 b{color:var(--cool)}
-.tag{color:var(--dim); font-size:10.5px; letter-spacing:.14em; text-transform:uppercase}
-.spacer{flex:1}
-.chip{
-  color:var(--mid); font-size:10.5px; letter-spacing:.05em;
-  border:1px solid var(--line2); border-radius:3px; padding:4px 9px;
-}
-.chip b{color:var(--pale); font-weight:600}
-
-/* ── the fact bar: the whole explanation, in one line ──────────────────── */
-#fact{
-  padding:9px 20px; border-bottom:1px solid var(--line); flex:none;
-  background:linear-gradient(90deg,rgba(255,92,57,.07),transparent 62%);
-  font-size:11.5px; color:var(--mid); letter-spacing:.01em;
-}
-#fact b{color:var(--hot); font-weight:600}
-#fact .n{color:var(--pale); font-variant-numeric:tabular-nums}
-/* the aggregate, so the page is never resting on one lucky query */
-#fact .agg{
-  display:block; margin-top:5px; color:var(--dim); font-size:10.5px; letter-spacing:.04em;
-}
-#fact .agg b{color:var(--amber)}
-#fact .src{
-  color:#333a49; margin-left:8px; padding:1px 6px; border:1px solid var(--line);
-  border-radius:99px; font-size:9px;
-}
-
-/* ── ask ──────────────────────────────────────────────────────────────── */
-#ask{padding:14px 20px 11px; border-bottom:1px solid var(--line); flex:none}
-#row{display:flex; gap:10px}
-input{
-  flex:1; background:var(--ink2); border:1px solid var(--line2); border-radius:4px;
-  color:var(--pale); font-family:var(--mono); font-size:14px; padding:11px 14px;
-  outline:none; transition:border-color .15s;
-}
-input:focus{border-color:var(--cool)}
-input::placeholder{color:#39404f}
-button{
-  background:var(--cool); color:#04150e; border:0; border-radius:4px;
-  font-family:var(--mono); font-weight:700; font-size:12px; letter-spacing:.09em;
-  padding:0 22px; cursor:pointer; transition:filter .15s;
-}
-button:hover{filter:brightness(1.12)} button:disabled{opacity:.45; cursor:default}
-#tries{display:flex; gap:7px; margin-top:9px; align-items:center; flex-wrap:wrap}
-#tries span{color:#3a4152; font-size:9.5px; letter-spacing:.16em}
-.pill{
-  border:1px solid var(--line2); border-radius:99px; padding:4px 11px;
-  color:var(--mid); font-size:11px; cursor:pointer; transition:.15s;
-}
-.pill:hover{border-color:var(--cool); color:var(--pale)}
-
-/* ── the confrontation ────────────────────────────────────────────────── */
-#panes{flex:1; display:grid; grid-template-columns:1fr 1fr; min-height:0}
-.pane{display:flex; flex-direction:column; min-height:0; min-width:0}
-.pane.left{border-right:1px solid var(--line)}
-.ph{
-  display:flex; align-items:center; gap:10px; padding:11px 18px;
-  border-bottom:1px solid var(--line); flex:none;
-}
-.ph .k{font-family:var(--disp); font-size:13px; font-weight:700; letter-spacing:-.01em}
-.left .ph .k{color:var(--hot)} .right .ph .k{color:var(--cool)}
-.ph .sub{color:var(--dim); font-size:10px; letter-spacing:.07em; text-transform:uppercase}
-.ph .lat{margin-left:auto; color:var(--dim); font-size:10.5px; font-variant-numeric:tabular-nums}
-
-/* the scoreboard — computed from the query you just ran, never quoted */
-.score{padding:10px 18px 12px; border-bottom:1px solid var(--line); flex:none}
-.score .big{
-  font-family:var(--disp); font-size:31px; font-weight:800; letter-spacing:-.035em;
-  font-variant-numeric:tabular-nums; line-height:1;
-}
-.left .score .big{color:var(--hot)} .right .score .big{color:var(--cool)}
-.score .big.none{color:var(--line2)}
-.score .cap{color:var(--dim); font-size:10px; letter-spacing:.1em; text-transform:uppercase; margin-top:5px}
-.meter{height:3px; background:var(--line); border-radius:2px; margin-top:9px; position:relative; overflow:hidden}
-.meter i{display:block; height:100%; border-radius:2px; transition:width .4s cubic-bezier(.2,.8,.2,1)}
-.left .meter i{background:var(--hot)} .right .meter i{background:var(--cool)}
-.meter u{  /* the chance line */
-  position:absolute; top:-3px; bottom:-3px; width:1px; background:var(--amber); opacity:.75;
-}
-.chance{color:var(--amber); font-size:9.5px; letter-spacing:.06em; margin-top:6px; opacity:.85}
-
-/* ── the clips ────────────────────────────────────────────────────────── */
-.grid{
-  flex:1; overflow-y:auto; padding:14px 18px 22px;
-  display:grid; grid-template-columns:repeat(auto-fill,minmax(178px,1fr));
-  gap:12px; align-content:start;
-}
-.card{
-  border:1px solid var(--line); border-radius:5px; overflow:hidden; background:var(--ink2);
-  cursor:pointer; position:relative; transition:border-color .15s, transform .15s;
-}
-.card:hover{border-color:var(--line2); transform:translateY(-2px)}
-.card.ok{border-color:rgba(53,226,160,.42)}
-.card.no{border-color:rgba(255,92,57,.42)}
-.card video{width:100%; aspect-ratio:16/10; object-fit:cover; display:block; background:#000}
-.card .meta{padding:7px 9px 8px}
-.card .t{
-  font-size:10.5px; color:var(--pale); white-space:nowrap; overflow:hidden;
-  text-overflow:ellipsis; letter-spacing:.01em;
-}
-.card .s{
-  display:flex; justify-content:space-between; margin-top:4px;
-  color:var(--dim); font-size:9.5px; font-variant-numeric:tabular-nums;
-}
-.card .mark{
-  position:absolute; top:7px; right:7px; width:19px; height:19px; border-radius:50%;
-  display:grid; place-items:center; font-size:11px; font-weight:700;
-  backdrop-filter:blur(6px);
-}
-.card.ok .mark{background:rgba(53,226,160,.17); color:var(--cool)}
-.card.no .mark{background:rgba(255,92,57,.17); color:var(--hot)}
-.card .use{
-  position:absolute; inset:auto 0 0 0; padding:6px; text-align:center;
-  background:linear-gradient(transparent,rgba(5,6,10,.94)); color:var(--cool);
-  font-size:9.5px; letter-spacing:.11em; opacity:0; transition:opacity .15s;
-}
-.card:hover .use{opacity:1}
-.empty{
-  grid-column:1/-1; color:#333a49; font-size:11.5px; padding:26px 2px;
-  line-height:1.75; font-style:italic;
-}
-#seed{
-  flex:none; padding:10px 18px; border-top:1px solid var(--line);
-  color:var(--dim); font-size:11px; letter-spacing:.02em; display:none;
-}
-#seed b{color:var(--mid); font-weight:400}
-#seed u{
-  color:var(--cool); text-decoration:none; cursor:pointer;
-  border-bottom:1px dotted rgba(53,226,160,.5); padding-bottom:1px;
-}
-#seed u:hover{border-bottom-style:solid}
-.grid::-webkit-scrollbar{width:9px}
-.grid::-webkit-scrollbar-thumb{background:var(--line2); border-radius:5px}
-@media (max-width:960px){#panes{grid-template-columns:1fr; overflow-y:auto} .pane.left{border-right:0;border-bottom:1px solid var(--line)}}
+<link rel="stylesheet" href="/static/style.css">
+<style>.split{grid-template-columns:1fr 1fr}  .disclosure{margin-top:9px; font-family:var(--serif); font-size:12.5px;
+    color:var(--ink-3); max-width:96ch; line-height:1.55}
+  .disclosure b{color:var(--ink-2); font-weight:600}
+  .disclosure span{font-family:var(--data); font-size:11px}
 </style>
 
-<header>
-  <h1>SHOW<b>REEL</b></h1>
-  <div class="tag">query&nbsp;by&nbsp;example over robot video</div>
-  <div class="spacer"></div>
-  <div class="chip" id="c-corpus">corpus <b>—</b></div>
-  <div class="chip">stage 1 <b>pgvector · HNSW</b></div>
-  <div class="chip">stage 2 <b>RelMo · DTW</b></div>
-  <div class="chip">encoder <b>V-JEPA 2 + SigLIP 2</b></div>
+<header class="mast">
+  <div><div class="wordmark">Precedent<em>.</em></div></div>
+  <p class="standfirst">Two ways to find a moment in 3,402 recordings. One of them
+    is how it is done today.</p>
+  <div class="fill"></div>
+  <nav><a href="/agent">The agent →</a></nav>
+  <div class="stat"><b id="s-corpus">—</b><span>recordings</span></div>
+  <div class="stat"><b id="s-kinds">—</b><span>kinds of moment</span></div>
+  <div class="stat"><b>pgvector</b><span>stage 1 · HNSW</span></div>
+  <div class="stat"><b>DTW</b><span>stage 2 · exact</span></div>
 </header>
 
-<!-- The entire market complication, in one sentence, with a live number. -->
-<div id="fact">
-  to a text encoder <b>“open the drawer”</b> and <b>“close the drawer”</b> are the
-  same sentence — cosine <span class="n" id="cos">…</span>. that is why typing words
-  at video does not work, and why most of what lands on the left is about to be wrong.
-  <span class="agg">across all 57 kinds · typing <span class="n">0.285</span>
-    · showing <span class="n">0.840</span> · chance <span class="n">0.02</span>
-    · <b><span class="n">24 of 57</span> typed queries land at or below chance</b>
-    <span class="src">showreel/bench.py</span></span>
-</div>
+<section class="thesis">
+  <p><strong>A text encoder cannot tell opening from closing.</strong> The two
+    sentences arrive at almost the same vector, so the distinction a query needs
+    is destroyed before the search begins — and no rewording recovers it.</p>
+  <div class="eq">cos(“open the drawer”, “close the drawer”) = <span id="cos">…</span></div>
+  <div class="cite">typed 0.285 · shown 0.840 · chance 0.02<br>
+    24 of 57 typed queries at or below chance<br>
+    <span style="color:var(--rule-2)">showreel/bench.py</span></div>
+</section>
 
-<div id="ask">
-  <div id="row">
-    <input id="q" placeholder="describe a moment — e.g. “closing the drawer”" autocomplete="off">
-    <button id="go">SEARCH</button>
+<section class="controls">
+  <div class="field">
+    <input type="text" id="q" placeholder="describe the moment you are looking for…" autocomplete="off">
+    <button id="go">Search</button>
   </div>
-  <div id="tries"><span>TRY</span></div>
-</div>
+  <div class="suggest"><span class="lede">Try</span></div>
+  <p class="disclosure">These five are the kinds where the measured gap is
+    largest — chosen from <span>eval_logs/per_class.json</span>, not by hand.
+    Across all 57 kinds the means are <b>0.774 shown</b> against
+    <b>0.311 typed</b>; on five kinds typing actually wins, and
+    <span>CloseDrawer</span> is one of them.</p>
+</section>
 
-<div id="panes">
-  <div class="pane left">
-    <div class="ph">
-      <div class="k">TYPE IT</div>
-      <div class="sub">how video search works today</div>
-      <div class="lat" id="l-lat"></div>
+<div class="split">
+  <section class="col fail">
+    <div class="colhead">
+      <div class="row"><h2>Type it</h2>
+        <span class="kicker">how video search works today</span>
+        <span class="timing" id="l-timing"></span></div>
+      <div class="figure">
+        <div class="n void" id="l-p">—</div>
+        <div class="cap">of what came back was<br>the moment asked for
+          <em id="l-cap">awaiting a query</em></div>
+      </div>
+      <div class="scale"><i id="l-bar" style="width:0"></i><u id="l-ch" style="left:0"></u></div>
+      <div class="scale-key" id="l-key"></div>
     </div>
-    <div class="score">
-      <div class="big none" id="l-p">—</div>
-      <div class="cap">precision of what came back</div>
-      <div class="meter"><i id="l-bar" style="width:0"></i><u id="l-ch" style="left:0"></u></div>
-      <div class="chance" id="l-cap">waiting for a query</div>
+    <div class="reel" id="l-reel">
+      <p class="blank">Type anything above, or take one of the suggestions. Then
+        look at what comes back rather than at the score.</p>
     </div>
-    <div class="grid" id="l-grid">
-      <div class="empty">type anything above.<br>watch what comes back.</div>
-    </div>
-  </div>
+  </section>
 
-  <div class="pane right">
-    <div class="ph">
-      <div class="k">SHOW IT</div>
-      <div class="sub">hand it the clip instead</div>
-      <div class="lat" id="r-lat"></div>
+  <section class="col pass">
+    <div class="colhead">
+      <div class="row"><h2>Show it</h2>
+        <span class="kicker">hand it the clip instead</span>
+        <span class="timing" id="r-timing"></span></div>
+      <div class="figure">
+        <div class="n void" id="r-p">—</div>
+        <div class="cap">of what came back was<br>the moment asked for
+          <em id="r-cap">awaiting a clip</em></div>
+      </div>
+      <div class="scale"><i id="r-bar" style="width:0"></i><u id="r-ch" style="left:0"></u></div>
+      <div class="scale-key" id="r-key"></div>
     </div>
-    <div class="score">
-      <div class="big none" id="r-p">—</div>
-      <div class="cap">precision of what came back</div>
-      <div class="meter"><i id="r-bar" style="width:0"></i><u id="r-ch" style="left:0"></u></div>
-      <div class="chance" id="r-cap">click any clip on the left</div>
+    <div class="reel" id="r-reel">
+      <p class="blank">Click any result on the left — even a wrong one — and this
+        column finds more moments like it.</p>
     </div>
-    <div class="grid" id="r-grid">
-      <div class="empty">click a clip on the left — even a wrong one —<br>
-        and this side finds more moments like it.</div>
+    <div class="footnote" id="seed" style="display:none">
+      <span id="seed-lede">Cannot describe it?</span>
+      <a id="seed-go">Point at one instead →</a>
     </div>
-    <!-- The move the whole argument rests on. When words return nothing usable
-         you are not stuck: you point at one example instead. -->
-    <div id="seed"><b>can’t describe it?</b> <u id="seed-go">point at one instead →</u></div>
-  </div>
+  </section>
 </div>
 
 <script>
-const $ = i => document.getElementById(i);
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const $=i=>document.getElementById(i);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let CATALOGUE=[], COUNTS={}, CORPUS=1, WANT=null;
 
-let CATALOGUE = [], COUNTS = {}, CORPUS = 1, WANT = null;
-
-/* The queries that make the point fastest. Each names a task the corpus has 90
-   examples of, and each has a near-identical twin the text tower cannot separate:
-   open/close, and counter->drawer / drawer->counter. */
-const TRIES = [
-  ['closing the drawer',            'CloseDrawer'],
-  ['opening the microwave',         'OpenMicrowave'],
-  ['taking something out of the drawer', 'PickPlaceDrawerToCounter'],
-  ['putting something in the sink', 'PickPlaceCounterToSink'],
-  ['closing the fridge',            'CloseFridge'],
-];
+const TRIES=[['the robot crossing the kitchen','NavigateKitchen'],
+             ['packing several lunches the same way','PackIdenticalLunches'],
+             ['laying out a tea tray','ArrangeTea'],
+             ['pulling a rack out of the freezer','SeparateFreezerRack'],
+             ['setting up a cutting board','SetUpCuttingStation']];
 
 async function boot(){
-  const s = await (await fetch('/api/stats')).json();
-  CATALOGUE = s.catalogue || []; COUNTS = s.counts || {}; CORPUS = s.moments || 1;
-  $('c-corpus').innerHTML = `corpus <b>${s.moments.toLocaleString()}</b> clips · ${s.tasks} kinds`;
-  $('tries').innerHTML = '<span>TRY</span>' + TRIES.map(([t,k]) =>
-    `<div class="pill" data-q="${esc(t)}" data-k="${esc(k)}">${esc(t)}</div>`).join('');
-  document.querySelectorAll('.pill').forEach(el => el.onclick = () => {
-    $('q').value = el.dataset.q; run(el.dataset.k);
+  const s=await (await fetch('/api/stats')).json();
+  CATALOGUE=s.catalogue||[]; COUNTS=s.counts||{}; CORPUS=s.moments||1;
+  $('s-corpus').textContent=s.moments.toLocaleString();
+  $('s-kinds').textContent=s.tasks;
+  const sug=document.querySelector('.suggest');
+  TRIES.forEach(([t,k])=>{
+    const el=document.createElement('div');
+    el.className='chip'; el.textContent=t;
+    el.onclick=()=>{$('q').value=t; run(k);};
+    sug.appendChild(el);
   });
-  fetch('/api/pair?a=' + encodeURIComponent('open the drawer') +
-        '&b=' + encodeURIComponent('close the drawer'))
-    .then(r => r.json()).then(d => $('cos').textContent = d.cos.toFixed(4))
-    .catch(() => $('cos').textContent = '0.9806');
+  fetch('/api/pair?a='+encodeURIComponent('open the drawer')+
+        '&b='+encodeURIComponent('close the drawer'))
+    .then(r=>r.json()).then(d=>$('cos').textContent=d.cos.toFixed(4))
+    .catch(()=>$('cos').textContent='0.9766');
 }
 
-/* Which task a typed query is ABOUT. Matching is on the query text alone — the
-   grading key is never used to retrieve anything, only to mark what came back.
-   If nothing matches, results are shown ungraded rather than guessed at. */
+/* Which kind a typed query is ABOUT, decided from the query text alone. The
+   grading key is never used to retrieve — only to mark what came back. When
+   nothing matches, results are shown ungraded rather than scored against a
+   guess, because an unscoreable query is not a failed one. */
 function expectedTask(text){
-  const w = text.toLowerCase().replace(/[^a-z ]/g,' ').split(/\s+/).filter(Boolean);
-  let best = null, score = 0;
+  const w=text.toLowerCase().replace(/[^a-z ]/g,' ').split(/\s+/).filter(Boolean);
+  let best=null, score=0;
   for(const t of CATALOGUE){
-    const parts = t.replace(/([A-Z])/g,' $1').toLowerCase().split(/\s+/).filter(Boolean);
-    let n = 0;
-    for(const p of parts) if(w.some(x => x.startsWith(p.slice(0,4)) || p.startsWith(x.slice(0,4)))) n++;
-    const s = n / parts.length;
-    if(s > score){ score = s; best = t; }
+    const parts=t.replace(/([A-Z])/g,' $1').toLowerCase().split(/\s+/).filter(Boolean);
+    let n=0;
+    for(const p of parts) if(w.some(x=>x.startsWith(p.slice(0,4))||p.startsWith(x.slice(0,4)))) n++;
+    const s=n/parts.length;
+    if(s>score){score=s; best=t;}
   }
-  return score >= 0.6 ? best : null;
+  return score>=0.6?best:null;
 }
+const chancePct=t=>t?(COUNTS[t]||0)/CORPUS*100:0;
 
-function chancePct(task){ return task ? (COUNTS[task] || 0) / CORPUS * 100 : 0; }
-
-function draw(gridId, hits, mode){
-  const g = $(gridId);
-  if(!hits.length){ g.innerHTML = '<div class="empty">nothing came back.</div>'; return; }
-  g.innerHTML = hits.map(h => `
-    <div class="card ${h.correct===true?'ok':(h.correct===false?'no':'')}" data-id="${esc(h.id)}">
+function paint(side,hits,mode){
+  const r=$(side+'-reel');
+  if(!hits.length){r.innerHTML='<p class="blank">Nothing came back.</p>';return;}
+  r.innerHTML=hits.map(h=>{
+    const cls=h.correct===true?'hit':(h.correct===false?'miss':'');
+    return `<figure class="clip ${cls}" data-id="${esc(h.id)}">
+      <span class="flag"></span>
       <video src="/api/video?id=${encodeURIComponent(h.id)}" autoplay loop muted playsinline preload="metadata"></video>
-      <div class="mark">${h.correct===true?'✓':'✗'}</div>
-      <div class="meta">
-        <div class="t">${esc(h.task || 'unlabelled')}</div>
-        <div class="s"><span>${h.score.toFixed(3)}</span><span>${h.seconds}s</span></div>
-      </div>
-      <div class="use">${mode==='text'?'USE THIS CLIP →':'MORE LIKE THIS →'}</div>
-    </div>`).join('');
-  g.querySelectorAll('.card').forEach(el => el.onclick = () => byClip(el.dataset.id));
+      ${cls?`<span class="verdict">${cls==='hit'?'match':'wrong'}</span>`:''}
+      <figcaption class="meta">
+        <div class="name">${esc(h.task||'unlabelled')}</div>
+        <div class="sub"><span>${h.score.toFixed(3)}</span><span>${h.seconds}s</span></div>
+      </figcaption>
+      <div class="take">${mode==='text'?'Use this clip':'More like this'}</div>
+    </figure>`;}).join('');
+  r.querySelectorAll('.clip').forEach(el=>el.onclick=()=>byClip(el.dataset.id));
 }
 
-function setScore(side, p, task, caption){
-  const ch = chancePct(task);
-  // UNGRADED IS NOT ZERO. If the typed words cannot be mapped to a kind the
-  // corpus has, there is nothing to score against — printing 0% would read as
-  // "it got everything wrong" when the truth is "we cannot say".
+function score(side,p,task,cap){
   if(!task){
-    $(side+'-p').textContent = '—';
-    $(side+'-p').classList.add('none');
-    $(side+'-cap').textContent = caption;
-    $(side+'-bar').style.width = '0';
-    return;
+    $(side+'-p').textContent='—'; $(side+'-p').classList.add('void');
+    $(side+'-cap').textContent=cap; $(side+'-bar').style.width='0';
+    $(side+'-key').textContent=''; return;
   }
-  $(side+'-p').textContent = (p*100).toFixed(0) + '%';
-  $(side+'-p').classList.remove('none');
-  $(side+'-bar').style.width = Math.max(1.5, p*100) + '%';
-  $(side+'-ch').style.left = ch + '%';
-  $(side+'-cap').textContent = caption +
-    (task ? ` · chance ${ch.toFixed(1)}% (${COUNTS[task]} of ${CORPUS.toLocaleString()} are ${task})` : '');
+  const ch=chancePct(task);
+  $(side+'-p').textContent=(p*100).toFixed(0)+'%';
+  $(side+'-p').classList.remove('void');
+  $(side+'-bar').style.width=Math.max(1.5,p*100)+'%';
+  $(side+'-ch').style.left=ch+'%';
+  $(side+'-cap').textContent=cap;
+  $(side+'-key').textContent=`chance ${ch.toFixed(1)}% — ${COUNTS[task]} of `+
+    `${CORPUS.toLocaleString()} recordings are ${task}`;
 }
 
-/* ── LEFT: words ─────────────────────────────────────────────────────── */
 async function run(forceTask){
-  const text = $('q').value.trim(); if(!text) return;
-  $('go').disabled = true;
-  const want = forceTask || expectedTask(text);
-  $('l-grid').innerHTML = '<div class="empty">asking the text tower…</div>';
+  const text=$('q').value.trim(); if(!text) return;
+  $('go').disabled=true;
+  const want=forceTask||expectedTask(text);
+  $('l-reel').innerHTML='<p class="blank">Asking the text encoder…</p>';
   try{
-    const d = await (await fetch('/api/text', {method:'POST',
+    const d=await (await fetch('/api/text',{method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({q:text, k:8, expect:want})})).json();
-    if(d.error){ $('l-grid').innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
-    $('l-lat').textContent = `${d.embed_ms.toFixed(0)} ms tower · ${d.sql_ms.toFixed(1)} ms sql`;
-    draw('l-grid', d.hits, 'text');
-    setScore('l', d.precision, want, want ? `looking for ${want}` : 'ungraded — no matching kind');
-    // Offered whenever we know what was wanted. It is most useful exactly when
-    // the left panel found none of it.
-    WANT = want;
-    $('seed').style.display = want ? 'block' : 'none';
-    $('seed').querySelector('b').textContent = d.precision === 0
-      ? "nothing on the left is right." : "can\u2019t describe it?";
-  } finally { $('go').disabled = false; }
+      body:JSON.stringify({q:text,k:8,expect:want})})).json();
+    if(d.error){$('l-reel').innerHTML=`<p class="blank">${esc(d.error)}</p>`;return;}
+    $('l-timing').textContent=`${d.embed_ms.toFixed(0)} ms encoder · ${d.sql_ms.toFixed(1)} ms sql`;
+    paint('l',d.hits,'text');
+    score('l',d.precision,want,want?`looking for ${want}`:'ungraded — no matching kind in the corpus');
+    WANT=want;
+    $('seed').style.display=want?'block':'none';
+    $('seed-lede').textContent=d.precision===0?'Nothing on the left is right.':'Cannot describe it?';
+  } finally{$('go').disabled=false;}
 }
 
-/* ── RIGHT: a clip ───────────────────────────────────────────────────── */
 async function byClip(id){
-  $('r-grid').innerHTML = '<div class="empty">prefiltering in the database, then re-ranking…</div>';
-  const d = await (await fetch('/api/clip', {method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({id, k:8})})).json();
-  if(d.error){ $('r-grid').innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
-  $('r-lat').textContent =
-    `${d.stage1_ms.toFixed(1)} ms sql · ${d.stage2_ms.toFixed(0)} ms dtw · ${(d.elided*100).toFixed(0)}% elided`;
-  draw('r-grid', d.hits, 'clip');
-  setScore('r', d.precision, d.expect, `more like a ${d.expect}`);
+  $('r-reel').innerHTML='<p class="blank">Prefiltering in the database, then re-ranking…</p>';
+  const d=await (await fetch('/api/clip',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({id,k:8})})).json();
+  if(d.error){$('r-reel').innerHTML=`<p class="blank">${esc(d.error)}</p>`;return;}
+  $('r-timing').textContent=
+    `${d.stage1_ms.toFixed(1)} ms sql · ${d.stage2_ms.toFixed(0)} ms dtw · `+
+    `${(d.elided*100).toFixed(0)}% of the corpus never scored`;
+  paint('r',d.hits,'clip');
+  score('r',d.precision,d.expect,`more like a ${d.expect}`);
 }
 
-/* Sample a real clip of the thing that was asked for and query with THAT.
-   No text is involved past this point — the clip is the whole query. */
-$('seed-go').onclick = async () => {
-  if(!WANT) return;
-  const r = await (await fetch('/api/sample?task=' + encodeURIComponent(WANT))).json();
-  if(r.clips && r.clips.length) byClip(r.clips[0].id);
+$('seed-go').onclick=async()=>{
+  if(!WANT)return;
+  const r=await (await fetch('/api/sample?task='+encodeURIComponent(WANT))).json();
+  if(r.clips&&r.clips.length) byClip(r.clips[0].id);
 };
-$('go').onclick = () => run();
-$('q').onkeydown = e => { if(e.key === 'Enter') run(); };
+$('go').onclick=()=>run();
+$('q').onkeydown=e=>{if(e.key==='Enter')run();};
 boot();
 </script>

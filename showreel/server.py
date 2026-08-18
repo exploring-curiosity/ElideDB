@@ -125,9 +125,27 @@ def hits(rows: list[dict], want: str | None) -> list[dict]:
 app = FastAPI(title="Showreel")
 
 
+# The demo edits its own front end while it is running, so a cached page is
+# always a bug here: it shows the previous design and reads as "the change did
+# not work". Assets are small and local; nothing is gained by caching them.
+NO_STORE = {"Cache-Control": "no-store, must-revalidate"}
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return FileResponse(ROOT / "index.html")
+    return FileResponse(ROOT / "index.html", headers=NO_STORE)
+
+
+@app.get("/static/{name}")
+def static(name: str):
+    """The stylesheet, shared by both pages. Path-checked rather than trusted:
+    a name is only served if it resolves to a file directly inside this
+    directory, so `../../etc/passwd` cannot walk out of it."""
+    p = (ROOT / name).resolve()
+    if p.parent != ROOT.resolve() or not p.is_file():
+        return JSONResponse(dict(error="not found"), status_code=404)
+    return FileResponse(p, headers=NO_STORE,
+                        media_type="text/css" if name.endswith(".css") else None)
 
 
 @app.get("/api/stats")
@@ -226,13 +244,36 @@ def by_clip(body: dict):
 
 
 @app.get("/api/sample")
-def sample(task: str = "", n: int = 1):
-    """A clip to start from. Random within a task, so a demo is not cherry-picked."""
+def sample(task: str = "", n: int = 1, clear: int = 0):
+    """A clip to start from.
+
+    Random by default. With `clear=1` it returns the CLEAREST example rather
+    than an arbitrary one, which is what a person does when they point at
+    something: nobody hands you their blurriest, most half-occluded footage and
+    says "find more like this".
+
+    Clarity is measured without labels — a candidate's score is the mean
+    similarity of its own five nearest neighbours, so a clip sitting in a dense
+    part of the space wins and an oddity loses. The grading column is not read.
+    """
     rows = q("""SELECT rec_id, task, seconds FROM moments
-                WHERE (%s = '' OR task = %s) ORDER BY random() LIMIT %s""",
-             (task, task, n))
+                WHERE (%s = '' OR task = %s) AND NOT held_out
+                ORDER BY random() LIMIT %s""",
+             (task, task, max(n, 6 if clear else n)))
+    if clear and rows:
+        scored = []
+        for r in rows:
+            near = q("""SELECT 1 - (appearance <=> (SELECT appearance FROM moments
+                                                     WHERE rec_id = %s)) AS s
+                          FROM moments
+                         WHERE rec_id <> %s AND NOT held_out
+                         ORDER BY appearance <=> (SELECT appearance FROM moments
+                                                   WHERE rec_id = %s)
+                         LIMIT 5""", (r["rec_id"], r["rec_id"], r["rec_id"]))
+            scored.append((sum(float(x["s"]) for x in near) / max(1, len(near)), r))
+        rows = [r for _s, r in sorted(scored, key=lambda t: -t[0])][:n]
     return dict(clips=[dict(id=r["rec_id"], task=r["task"],
-                            seconds=round(float(r["seconds"] or 0), 1)) for r in rows])
+                            seconds=round(float(r["seconds"] or 0), 1)) for r in rows[:n]])
 
 
 @app.post("/api/holdout")
@@ -299,7 +340,7 @@ def actions(run: str = "", k: int = 40):
 
 @app.get("/agent", response_class=HTMLResponse)
 def agent_page():
-    return FileResponse(ROOT / "agent.html")
+    return FileResponse(ROOT / "agent.html", headers=NO_STORE)
 
 
 @app.post("/api/agent/reset")
