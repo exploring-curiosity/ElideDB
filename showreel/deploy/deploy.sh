@@ -2,13 +2,15 @@
 # One-command deploy of the agent to AWS, using only always-free services.
 #
 #   export PRECEDENT_DSN='postgresql://...cockroachlabs.cloud:26257/defaultdb?sslmode=verify-full'
-#   export BUCKET=precedent-clips-yourname
 #   ./showreel/deploy/deploy.sh
 #
 # What it creates:
-#   S3 bucket          the clips and the static console          (5 GiB free)
 #   Lambda function    the agent worker, scheduled               (1M req free)
 #   EventBridge rule   fires the worker every 5 minutes          (free)
+#
+# The bucket is not created here. setup_bucket.sh owns it, because the corpus and
+# the worker have nothing to do with each other: this function never opens a
+# clip. It claims an episode, reads its neighbours' filings, decides, and writes.
 #
 # What it deliberately does NOT create: EC2, NAT gateways, API Gateway, RDS.
 # Those are what turn a $0 architecture into a metered one, and on an account
@@ -16,33 +18,20 @@
 set -euo pipefail
 
 : "${PRECEDENT_DSN:?set PRECEDENT_DSN to the CockroachDB connection string}"
-: "${BUCKET:?set BUCKET to a globally-unique S3 bucket name}"
-REGION="${AWS_REGION:-us-east-2}"          # same region as the CRDB cluster
+# The worker goes where its memory is, which is NOT where the bucket is. Every
+# invocation is a handful of round trips to CockroachDB and zero bytes of S3, so
+# it belongs in the cluster's region; the corpus belongs near whoever is watching
+# the video. Read the region out of the DSN rather than trusting a default.
+REGION="${LAMBDA_REGION:-$(printf '%s' "$PRECEDENT_DSN" | sed -n 's/.*\.aws-\([a-z0-9-]*\)\.cockroachlabs\.cloud.*/\1/p')}"
+REGION="${REGION:-us-east-2}"
 FN="${FN:-precedent-agent}"
 ROLE_NAME="${ROLE_NAME:-precedent-lambda-role}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BUILD="$(mktemp -d)"
 
-echo "==> region $REGION, bucket $BUCKET, function $FN"
+echo "==> lambda in $REGION (beside the cluster), function $FN"
 
-# ---- 1. the bucket -------------------------------------------------------
-if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
-  aws s3api create-bucket --bucket "$BUCKET" --region "$REGION" \
-      --create-bucket-configuration LocationConstraint="$REGION" >/dev/null
-  echo "    created s3://$BUCKET"
-fi
-# Block public access. Clips are served with presigned URLs, never by making the
-# bucket world-readable: a public bucket is the single most common way a demo
-# leaks data it did not mean to.
-aws s3api put-public-access-block --bucket "$BUCKET" \
-    --public-access-block-configuration \
-    "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
-aws s3api put-bucket-encryption --bucket "$BUCKET" \
-    --server-side-encryption-configuration \
-    '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-echo "    public access blocked, SSE-S3 on"
-
-# ---- 2. the role ---------------------------------------------------------
+# ---- 1. the role ---------------------------------------------------------
 if ! aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
   aws iam create-role --role-name "$ROLE_NAME" --assume-role-policy-document '{
     "Version":"2012-10-17","Statement":[{"Effect":"Allow",
@@ -54,7 +43,7 @@ if ! aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
 fi
 ROLE_ARN="$(aws iam get-role --role-name "$ROLE_NAME" --query Role.Arn --output text)"
 
-# ---- 3. the package ------------------------------------------------------
+# ---- 2. the package ------------------------------------------------------
 echo "==> building"
 cp "$HERE/lambda_worker.py" "$HERE/../agent.py" "$HERE/../db.py" \
    "$HERE/../schema.sql" "$BUILD/"
@@ -68,7 +57,7 @@ cp "$HOME/.postgresql/root.crt" "$BUILD/root.crt"
 (cd "$BUILD" && zip -qr package.zip .)
 echo "    $(du -h "$BUILD/package.zip" | cut -f1) package"
 
-# ---- 4. the function -----------------------------------------------------
+# ---- 3. the function -----------------------------------------------------
 DSN_WITH_CERT="${PRECEDENT_DSN%%&sslrootcert=*}&sslrootcert=/var/task/root.crt"
 if aws lambda get-function --function-name "$FN" --region "$REGION" >/dev/null 2>&1; then
   aws lambda update-function-code --function-name "$FN" --region "$REGION" \
@@ -85,7 +74,7 @@ else
 fi
 echo "    deployed $FN"
 
-# ---- 5. the schedule -----------------------------------------------------
+# ---- 4. the schedule -----------------------------------------------------
 aws events put-rule --name "${FN}-tick" --region "$REGION" \
     --schedule-expression "rate(5 minutes)" >/dev/null
 FN_ARN="$(aws lambda get-function --function-name "$FN" --region "$REGION" \

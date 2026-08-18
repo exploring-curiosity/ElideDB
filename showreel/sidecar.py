@@ -31,10 +31,12 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "native"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import blob                                                        # noqa: E402
 
 STORE = "rcasa"
 SIGLIP = "google/siglip2-base-patch16-224"
-TRACES = pathlib.Path(os.environ.get("PRECEDENT_TRACES", ROOT / "showreel" / "traces"))
 
 
 class Engine:
@@ -50,9 +52,11 @@ class Engine:
     def __init__(self):
         self._txt = None
         self._cache: dict = {}
-        n = len(list(TRACES.glob("*.npy"))) if TRACES.exists() else 0
-        print(f"[showreel] {n} traces on disk at {TRACES}", file=sys.stderr, flush=True)
-        if not n:
+        n = blob.stats()["cached_traces"]
+        where = f"s3://{blob.BUCKET}/traces + cache" if blob.enabled() else str(blob.CACHE)
+        print(f"[showreel] {n} traces cached, source {where}",
+              file=sys.stderr, flush=True)
+        if not n and not blob.enabled():
             print("[showreel] no traces: run dump_traces.py, or stage 2 is skipped",
                   file=sys.stderr, flush=True)
         self.n_traces = n
@@ -88,12 +92,13 @@ class Engine:
 
         The cache is bounded: a demo asks about a few hundred recordings, and an
         unbounded dict here would slowly reintroduce exactly the resident corpus
-        this design removed.
+        this design removed. `blob` decides whether the file is already on disk
+        or has to come from S3 first; this function does not care which.
         """
         z = self._cache.get(rid)
         if z is None:
-            p = TRACES / f"{rid}.npy"
-            if not p.exists():
+            p = blob.trace_path(rid)
+            if p is None:
                 return None
             z = np.load(p).astype(np.float32)
             if len(self._cache) > 512:
@@ -105,6 +110,8 @@ class Engine:
         from relmo.vjmatch import dtw
         from relmo.vjzeval import PAD_COST, _pad
 
+        # One parallel fetch before the loop, not 49 serial ones inside it.
+        blob.prefetch([query] + list(cand))
         q = self._zs(query)
         if q is None:
             return {}
@@ -143,7 +150,7 @@ def main() -> int:
                 eng = Engine()
             c = req.get("cmd")
             if c == "ping":
-                reply(dict(ok=True, n=eng.n_traces))
+                reply(dict(ok=True, n=eng.n_traces, **blob.stats()))
             elif c == "text":
                 reply(dict(ok=True, vecs=eng.text(req["texts"])))
             elif c == "pair":

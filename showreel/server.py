@@ -41,10 +41,22 @@ import psycopg2
 import psycopg2.extras
 from fastapi import FastAPI
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
-                               Response)
+                               RedirectResponse, Response)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import blob                                                        # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
-DSN = os.environ.get("SHOWREEL_DSN", "postgresql://localhost:5433/brigade")
+# One database, so one secret. SHOWREEL_DSN stays for the local split where the
+# corpus is in Postgres and the agent's memory is already in CockroachDB; a
+# deployment sets PRECEDENT_DSN alone and both halves follow it.
+DSN = (os.environ.get("SHOWREEL_DSN") or os.environ.get("PRECEDENT_DSN")
+       or "postgresql://localhost:5433/brigade")
+# The sidecar runs in its own interpreter because RelMo needs transformers 4.57
+# and the control venv is pinned to 4.53 for LIBERO. In the container there is no
+# LIBERO and no conflict, so this points at the same interpreter and the split
+# survives only for the reason that still applies: RelMo prints on first use, and
+# the JSON line protocol owns stdout.
 RELMO_PY = os.environ.get("SHOWREEL_RELMO_PYTHON",
                           str(ROOT.parent / "myenv" / "bin" / "python"))
 PREFILTER_M = 48          # candidates stage 1 hands to stage 2
@@ -159,10 +171,22 @@ def stats():
 
 @app.get("/api/video")
 def video(id: str = ""):
+    """Hand the browser the clip, or the address of the clip.
+
+    When the corpus is in S3 this redirects to a presigned URL and the video
+    never enters this process. Streaming 1.34 GB through the app would make it
+    the bottleneck for bytes it does not look at, and on a 2 vCPU host it would
+    compete with the ranker for the CPU that actually matters.
+    """
     r = q("SELECT video FROM moments WHERE rec_id = %s", (id,))
-    if not r or not os.path.exists(r[0]["video"]):
+    if not r:
         return JSONResponse(dict(error="no such clip"), status_code=404)
-    return FileResponse(r[0]["video"], media_type="video/mp4")
+    loc, is_url = blob.video_url(r[0]["video"])
+    if is_url:
+        return RedirectResponse(loc, status_code=307)
+    if not os.path.exists(loc):
+        return JSONResponse(dict(error="no such clip"), status_code=404)
+    return FileResponse(loc, media_type="video/mp4")
 
 
 @app.post("/api/text")
@@ -467,6 +491,23 @@ def metrics():
         "# TYPE precedent_autonomy gauge",
         f'precedent_autonomy {st["by_agent"] / max(1, st["filings"]):.4f}',
     ]
+    # The corpus counters. On S3 these say how much of the 1.1 GB of traces this
+    # instance has actually pulled, which is the elision claim measured at the
+    # deployment level rather than asserted: a Space that has served a hundred
+    # queries should still be holding tens of megabytes, not the corpus.
+    b = SIDE.rpc(dict(cmd="ping")) or {}
+    if b.get("bucket"):
+        lines += [
+            "# HELP precedent_trace_cache traces resident in this instance",
+            "# TYPE precedent_trace_cache gauge",
+            f'precedent_trace_cache {b.get("cached_traces", 0)}',
+            "# HELP precedent_s3_bytes_total bytes pulled from S3 since boot",
+            "# TYPE precedent_s3_bytes_total counter",
+            f'precedent_s3_bytes_total {b.get("s3_bytes", 0)}',
+            "# HELP precedent_trace_cache_hits_total trace reads served locally",
+            "# TYPE precedent_trace_cache_hits_total counter",
+            f'precedent_trace_cache_hits_total {b.get("cache_hits", 0)}',
+        ]
     return Response("\n".join(lines) + "\n", media_type="text/plain")
 
 
@@ -493,8 +534,10 @@ def main() -> int:
         print("WARNING: RelMo sidecar failed; the text arm and DTW re-rank "
               "will be unavailable", flush=True)
     n = q("SELECT count(*) n FROM moments")[0]["n"]
-    print(f"{n} moments indexed. http://localhost:8100", flush=True)
-    uvicorn.run(app, host="0.0.0.0", port=8100, log_level="warning")
+    port = int(os.environ.get("PORT", "8100"))          # HF Spaces publish 7860
+    print(f"{n} moments indexed, storage {blob.stats()}", flush=True)
+    print(f"listening on :{port}", flush=True)
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
     return 0
 
 
