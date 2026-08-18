@@ -75,8 +75,12 @@ fi
 echo "    deployed $FN"
 
 # ---- 4. the schedule -----------------------------------------------------
+# Created DISABLED. A schedule is a standing commitment: it keeps waking up
+# against a live cluster long after anyone is watching, and a demo account
+# should not acquire one by side effect. The command to turn it on is printed
+# at the end, and it is one line.
 aws events put-rule --name "${FN}-tick" --region "$REGION" \
-    --schedule-expression "rate(5 minutes)" >/dev/null
+    --schedule-expression "rate(5 minutes)" --state DISABLED >/dev/null
 FN_ARN="$(aws lambda get-function --function-name "$FN" --region "$REGION" \
           --query Configuration.FunctionArn --output text)"
 aws lambda add-permission --function-name "$FN" --region "$REGION" \
@@ -84,9 +88,12 @@ aws lambda add-permission --function-name "$FN" --region "$REGION" \
     --principal events.amazonaws.com >/dev/null 2>&1 || true
 aws events put-targets --rule "${FN}-tick" --region "$REGION" \
     --targets "Id=1,Arn=$FN_ARN" >/dev/null
-echo "    scheduled every 5 minutes"
+echo "    schedule created, DISABLED"
 
 rm -rf "$BUILD"
 echo
-echo "==> done. drain the queue now with:"
-echo "    aws lambda invoke --function-name $FN --region $REGION /dev/stdout"
+echo "==> done."
+echo "    run one pass now:"
+echo "      aws lambda invoke --function-name $FN --region $REGION /dev/stdout"
+echo "    let it run every 5 minutes:"
+echo "      aws events enable-rule --name ${FN}-tick --region $REGION"

@@ -56,9 +56,20 @@ def connect(autocommit: bool = True):
 
 
 def q(sql: str, args=()) -> list[dict]:
-    """One statement, autocommitted. For reads and single writes."""
+    """One statement, autocommitted. For reads and single writes.
+
+    Passing NO second argument when there are no parameters is not tidiness. An
+    empty tuple still puts psycopg2 into interpolation mode, where a literal %
+    in the SQL is read as a placeholder, so
+
+        SELECT count(*) FROM moments WHERE video LIKE 's3://%'
+
+    raises IndexError rather than running. It is a good failure in a script and
+    a bad one at 3 a.m., and doubling the % to hide it moves the trap instead of
+    removing it. Omitting args means psycopg2 sends the statement untouched.
+    """
     with connect() as (_c, cur):
-        cur.execute(sql, args)
+        cur.execute(sql, args) if args else cur.execute(sql)
         return [dict(r) for r in cur.fetchall()] if cur.description else []
 
 

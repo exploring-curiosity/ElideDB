@@ -115,6 +115,40 @@ brew services start postgresql@18
 
 Then open <http://localhost:8100>.
 
+## Or run it against the cloud
+
+The same code, with the corpus in S3 and the memory in CockroachDB. `blob.py`
+decides which, from one environment variable, and nothing above it changes.
+
+```bash
+BUCKET=precedent-corpus-yourname ./showreel/deploy/setup_bucket.sh
+```
+
+```bash
+BUCKET=precedent-corpus-yourname .venv-libero/bin/python showreel/deploy/upload_assets.py
+```
+
+```bash
+./showreel/space/build_space.sh ~/precedent-space
+```
+
+The container runs on ONE interpreter, because the version conflict that forced
+two is a LIBERO problem and there is no LIBERO in it: the ranker imports ten
+RelMo modules and all of them are numpy. Measured on the assembled tree, one
+interpreter, empty trace cache, against CockroachDB Cloud and S3:
+
+| | |
+|---|---|
+| resident | 1.37 GB (0.10 server + 1.27 sidecar) |
+| clip query | P@8 1.000, reranked, 98.6% elided |
+| stage 2 | 2,123 ms cold, 143 ms warm |
+| S3 pulled | 17.2 MB for 49 traces, of 1.1 GB on offer |
+| video | 307 to a presigned URL, never through the app |
+
+Cold stage 2 is the price of a first-touch S3 fetch over home broadband. In
+region it is a fraction of that, and every later query that shares a candidate
+pays nothing.
+
 Two interpreters, as everywhere in this repo: SigLIP 2's text tower needs
 `transformers` 4.57, which the control venv is pinned away from. `sidecar.py`
 is that boundary. `ingest.py` does **not** need it: loading a RelMo store reads

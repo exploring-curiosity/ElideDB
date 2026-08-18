@@ -145,28 +145,77 @@ Cloud.**
 
 ---
 
-## Deployment: free by construction
+## Deployment: three places, and each holds what it is good at
 
-| | | cost |
-|---|---|---|
-| CockroachDB Basic | the memory, `aws-us-east-2` | $15/mo credit, scales to zero |
-| S3 | 1.34 GB of clips, private + SSE | 5 GiB always free |
-| Lambda | the agent worker, on a 5-minute tick | 1M requests always free |
-| EventBridge | the tick | free |
+```
+CockroachDB Basic   aws-us-east-2    the memory. Four tables and the vectors.
+S3                  us-east-1        the corpus. 6,958 objects, 2.35 GB, private.
+Lambda              us-east-2        the worker. Beside its memory, on purpose.
+HF Space / any CPU  container        the read path. About 1.4 GB resident.
+```
 
-No EC2, no NAT gateway, no API Gateway, no RDS: on an account created after
-2025-07-15 those draw straight down the $200 of credits, and a NAT gateway alone
-is ~$33/month for doing nothing.
+Nothing here is a diagram of intent. The Lambda has run against the live
+cluster and returned `{"dispositioned": 9, "escalated": 9, "health": {"ok":
+true}}`; the bucket holds the corpus; the tests pass against CockroachDB Cloud
+rather than against Postgres pretending to be it.
 
-*In-region matters, measured:* a vector query from a laptop to the us-east-2
-cluster takes ~706 ms, nearly all of it network. From a Lambda in us-east-2 it
-is a local hop. Retrieval latency here is a deployment property, not a database
-one.
+**The regions are not the same, and that is the decision.** The worker makes a
+handful of round trips to CockroachDB per invocation and reads zero bytes of
+S3, so it belongs in the cluster's region; `deploy.sh` parses that region out of
+the DSN rather than defaulting to one. The corpus belongs near whoever is
+watching the video. A vector query from this laptop to us-east-2 costs about
+706 ms, nearly all of it network, and from a Lambda in us-east-2 it is a local
+hop: retrieval latency here is a deployment property, not a database one.
+
+**The app is not a file server.** The `video` column holds an `s3://` key and
+the console answers with a presigned URL, so 1.25 GB of video goes from S3 to
+the browser and never through a 2 vCPU host. The bucket has public access
+blocked, SSE-S3 on, and CORS limited to GET and HEAD with Range.
+
+**Two IAM identities, because one of them lives in a secret store.** The
+deploying user can write S3 and IAM. The Space gets `precedent-space`, whose
+entire policy is `s3:GetObject` on `traces/*` and `clips/*`. Verified rather
+than assumed:
+
+```
+GetObject     ALLOWED
+DeleteObject  DENIED
+PutObject     DENIED
+```
+
+**The read path pulls what a query needs, not what the corpus weighs.** A
+query touches 48 of 3,556 traces, so a cold instance answers its first query
+having downloaded tens of megabytes instead of 1.1 GB, and `/metrics` exports
+`precedent_s3_bytes_total` and `precedent_trace_cache` so that claim is
+measured at the deployment rather than asserted in a README.
+
+Measuring it found a real defect. Stage 2 was fetching its candidates one at a
+time inside the ranking loop: 49 sequential round trips, 37.3 s for a query
+whose actual work is under a second. The candidate list is known before any of
+it is ranked, so it became one parallel prefetch, 9.1 s from a laptop and
+bandwidth-bound rather than latency-bound. Scores identical cold and warm.
+
+**Free by construction.** No EC2, no NAT gateway, no API Gateway, no RDS. On an
+account created after 2025-07-15 those draw straight down the $200 of credits,
+and a NAT gateway alone is about $33/month for doing nothing. S3 holds 2.35 GB
+of the always-free 5 GiB; Lambda's tick is 8,640 invocations a month against a
+free million. The EventBridge rule is created DISABLED, because a schedule is a
+standing commitment that keeps waking up long after anyone is watching.
 
 ```bash
-export PRECEDENT_DSN='postgresql://...cockroachlabs.cloud:26257/defaultdb?sslmode=verify-full'
-export BUCKET=precedent-clips-yourname
+BUCKET=precedent-corpus-yourname ./showreel/deploy/setup_bucket.sh
+```
+
+```bash
+BUCKET=precedent-corpus-yourname .venv-libero/bin/python showreel/deploy/upload_assets.py
+```
+
+```bash
 ./showreel/deploy/deploy.sh
+```
+
+```bash
+./showreel/space/build_space.sh ~/precedent-space
 ```
 
 ---
