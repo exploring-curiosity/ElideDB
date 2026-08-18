@@ -40,7 +40,8 @@ import numpy as np
 import psycopg2
 import psycopg2.extras
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
+                               Response)
 
 ROOT = Path(__file__).resolve().parent
 DSN = os.environ.get("SHOWREEL_DSN", "postgresql://localhost:5433/brigade")
@@ -381,6 +382,58 @@ def agent_overturn(body: dict):
 
     return A.cascade(body["filing_id"], body.get("disposition", "MISFILED"),
                      by_whom="reviewer", note="overturned from the console")
+
+
+@app.get("/healthz")
+def healthz():
+    """Liveness AND readiness. A 200 here means work is actually moving.
+
+    Deliberately not "the process is up": a queue whose oldest pending episode
+    is ageing, or that has dead-lettered anything, is broken in the way that
+    matters and returns 503 so a load balancer or an alarm sees it.
+    """
+    import agent as A
+
+    try:
+        h = A.health()
+    except Exception as exc:                                      # noqa: BLE001
+        return JSONResponse(dict(ok=False, error=str(exc)[:200]), status_code=503)
+    body = dict(ok=h["ok"], queue=h, relmo=SIDE.ready,
+                engine=__import__("db").engine())
+    return JSONResponse(body, status_code=200 if h["ok"] else 503)
+
+
+@app.get("/metrics")
+def metrics():
+    """Prometheus text format. The four numbers an operator would alert on."""
+    import agent as A
+
+    h, st = A.health(), A.stats()
+    lines = [
+        "# HELP precedent_queue_depth episodes waiting to be dispositioned",
+        "# TYPE precedent_queue_depth gauge",
+        f'precedent_queue_depth{{state="pending"}} {h["pending"]}',
+        f'precedent_queue_depth{{state="working"}} {h["working"]}',
+        f'precedent_queue_depth{{state="dead"}} {h["dead"]}',
+        "# HELP precedent_queue_oldest_seconds age of the oldest waiting episode",
+        "# TYPE precedent_queue_oldest_seconds gauge",
+        f'precedent_queue_oldest_seconds {h["oldest_s"]}',
+        "# HELP precedent_filings total live filings",
+        "# TYPE precedent_filings gauge",
+        f'precedent_filings{{source="agent"}} {st["by_agent"]}',
+        f'precedent_filings{{source="all"}} {st["filings"]}',
+        "# HELP precedent_autonomy fraction of filings the agent made unaided",
+        "# TYPE precedent_autonomy gauge",
+        f'precedent_autonomy {st["by_agent"] / max(1, st["filings"]):.4f}',
+    ]
+    return Response("\n".join(lines) + "\n", media_type="text/plain")
+
+
+@app.post("/api/agent/reclaim")
+def agent_reclaim():
+    import agent as A
+
+    return A.reclaim()
 
 
 @app.get("/api/pair")

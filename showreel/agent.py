@@ -79,24 +79,39 @@ def enqueue(rec_ids: list[str], fleet: str = FLEET) -> int:
 def claim(worker: str, fleet: str = FLEET) -> dict | None:
     """Take one episode, atomically, without blocking other workers.
 
-    SKIP LOCKED is what lets N agent processes drain one queue: a row already
-    being claimed is stepped over rather than waited on. Without it every worker
-    serialises behind the oldest pending row and adding workers adds nothing.
+    ONE STATEMENT, not a SELECT followed by an UPDATE. The update takes the
+    write intent directly and RETURNING hands back the row it took, so there is
+    no window between choosing an episode and owning it.
+
+    WHY NOT `SELECT ... FOR UPDATE SKIP LOCKED` ON COCKROACHDB, which is the
+    textbook queue and what this used to do. Measured: under SERIALIZABLE a
+    freshly committed row is invisible to a SKIP LOCKED read for a moment —
+    SKIP LOCKED promises never to wait, so rather than block on the uncertainty
+    window it returns nothing. The row is not lost and a later claim finds it,
+    but a worker loop that treats an empty claim as "queue empty" stops early
+    with work still pending, and nothing anywhere reports an error. It cost
+    three failing tests to find and it would have cost a silent production
+    stall. Contention is handled instead by the SERIALIZABLE retry in db.tx,
+    which is what CockroachDB expects a client to do.
+
+    PostgreSQL keeps SKIP LOCKED in the subquery, where it is well defined and
+    is what lets many workers share one queue.
     """
+    skip = "FOR UPDATE SKIP LOCKED" if db.engine() != "cockroach" else ""
+
     def go(cur):
-        cur.execute("""
-            SELECT item_id, rec_id FROM inbox
-             WHERE fleet = %s AND state IN ('pending','reopened')
-             ORDER BY arrived LIMIT 1
-               FOR UPDATE SKIP LOCKED""", (fleet,))
+        cur.execute(f"""
+            UPDATE inbox
+               SET state='working', claimed_by=%s, claimed_at=now(),
+                   attempts = attempts + 1
+             WHERE item_id = (
+                   SELECT item_id FROM inbox
+                    WHERE fleet = %s AND state IN ('pending','reopened')
+                    ORDER BY arrived
+                    LIMIT 1 {skip})
+         RETURNING item_id, rec_id""", (worker, fleet))
         row = cur.fetchone()
-        if not row:
-            return None
-        cur.execute("""UPDATE inbox
-                          SET state='working', claimed_by=%s, claimed_at=now(),
-                              attempts = attempts + 1
-                        WHERE item_id=%s""", (worker, row["item_id"]))
-        return dict(row)
+        return dict(row) if row else None
     return db.tx(go)
 
 
@@ -200,6 +215,12 @@ def cascade(filing_id: str, disposition: str, by_whom: str = "reviewer",
     lookup instead of a scan.
     """
     def go(cur):
+        # TENANCY IS ENFORCED INSIDE THE WALK, not only on the read that
+        # started it. Without the join to filings the recursion follows any
+        # edge it finds, and a correction in one fleet supersedes another
+        # fleet's filings — a correctness bug and a privacy one, and silent.
+        # Caught by test_cascade_does_not_cross_fleets, which exists for
+        # exactly this and failed the first time it was run.
         cur.execute("""
             WITH RECURSIVE tainted(filing_id) AS (
                 SELECT %s::uuid
@@ -207,24 +228,28 @@ def cascade(filing_id: str, disposition: str, by_whom: str = "reviewer",
                 SELECT fp.filing_id
                   FROM filing_precedents fp
                   JOIN tainted t ON fp.precedent_id = t.filing_id
+                  JOIN filings f ON f.filing_id = fp.filing_id AND f.fleet = %s
             )
             SELECT filing_id FROM tainted WHERE filing_id <> %s::uuid""",
-            (filing_id, filing_id))
+            (filing_id, fleet, filing_id))
         hit = [r["filing_id"] for r in cur.fetchall()]
 
         cur.execute("""UPDATE filings SET disposition=%s, source='human'
-                        WHERE filing_id=%s""", (disposition, filing_id))
+                        WHERE filing_id=%s AND fleet=%s""",
+                    (disposition, filing_id, fleet))
         if hit:
             # Only AGENT filings are reopened. A human already looked at the
             # others and their answer does not become wrong because a different
             # filing did.
             cur.execute("""UPDATE filings SET superseded=true, superseded_by=%s
-                            WHERE filing_id = ANY(%s::uuid[]) AND source='agent'""",
-                        (filing_id, hit))
+                            WHERE filing_id = ANY(%s::uuid[]) AND source='agent'
+                              AND fleet=%s""", (filing_id, hit, fleet))
             cur.execute("""UPDATE inbox SET state='reopened'
-                            WHERE item_id IN (SELECT item_id FROM filings
-                                               WHERE filing_id = ANY(%s::uuid[])
-                                                 AND source='agent')""", (hit,))
+                            WHERE fleet=%s AND item_id IN (
+                                  SELECT item_id FROM filings
+                                   WHERE filing_id = ANY(%s::uuid[])
+                                     AND source='agent' AND fleet=%s)""",
+                        (fleet, hit, fleet))
         cur.execute("""INSERT INTO verdicts (filing_id, fleet, disposition,
                                              by_whom, note, cascade_n)
                        VALUES (%s,%s,%s,%s,%s,%s)""",
@@ -236,6 +261,58 @@ def cascade(filing_id: str, disposition: str, by_whom: str = "reviewer",
 
 
 # ------------------------------------------------------------------- helpers
+
+# ------------------------------------------------------------- resilience
+
+STUCK_AFTER = "5 minutes"      # a worker that claimed an episode and died
+MAX_ATTEMPTS = 3               # after this it is the queue's problem, not the agent's
+
+
+def reclaim(fleet: str = FLEET) -> dict:
+    """Put back episodes whose worker never came home, and park the poison ones.
+
+    A queue without this leaks: `claim` sets state='working', and if the process
+    dies between the claim and the filing that row is claimed forever by nobody.
+    Nothing errors — the episode simply never gets dispositioned and no one
+    finds out, which is the worst failure a queue has.
+
+    An episode that has been claimed MAX_ATTEMPTS times is not retried again.
+    Something about it is broken (a missing video, an unreadable vector) and
+    retrying it forever would starve the queue behind it; it is moved to 'dead'
+    where a person can see it. Both numbers are conservative on purpose: a
+    stuck episode costs one repeat, a poison one costs three.
+    """
+    back = db.q(f"""UPDATE inbox SET state='pending', claimed_by=NULL
+                  WHERE fleet=%s AND state='working'
+                    AND claimed_at < now() - INTERVAL '{STUCK_AFTER}'
+                    AND attempts < %s
+              RETURNING item_id""", (fleet, MAX_ATTEMPTS))
+    dead = db.q(f"""UPDATE inbox SET state='dead'
+                  WHERE fleet=%s AND state='working'
+                    AND claimed_at < now() - INTERVAL '{STUCK_AFTER}'
+                    AND attempts >= %s
+              RETURNING item_id""", (fleet, MAX_ATTEMPTS))
+    return dict(requeued=len(back), dead_lettered=len(dead))
+
+
+def health(fleet: str = FLEET) -> dict:
+    """What an operator needs to know before being paged about it."""
+    r = db.q("""SELECT
+               count(*) FILTER (WHERE state='pending')   AS pending,
+               count(*) FILTER (WHERE state='working')   AS working,
+               count(*) FILTER (WHERE state='reopened')  AS reopened,
+               count(*) FILTER (WHERE state='dead')      AS dead,
+               coalesce(extract(epoch from now() -
+                        min(arrived) FILTER (WHERE state IN ('pending','reopened'))
+                        ), 0) AS oldest_s
+             FROM inbox WHERE fleet=%s""", (fleet,))[0]
+    out = {k: (int(v) if k != "oldest_s" else round(float(v), 1))
+           for k, v in r.items()}
+    # A queue is unhealthy when work is arriving faster than it leaves, which
+    # shows up as the oldest pending item ageing, not as an error anywhere.
+    out["ok"] = out["dead"] == 0 and out["oldest_s"] < 3600
+    return out
+
 
 def reset(fleet: str = FLEET) -> None:
     """Forget everything. The agent must start each run knowing nothing."""

@@ -2552,3 +2552,18 @@ CockroachDB Basic: $15/mo credit = 50M RUs + 10 GiB, scales to zero. Our memory
 is ~27 MB. AWS changed free tier on 2025-07-15: new accounts get $200 credits,
 not 12-month allowances; Lambda/DynamoDB/SNS always free; S3 5 GiB always free.
 Video is 1.34 GB so S3 free tier fits. Avoid NAT gateway (~$33/mo) and EC2.
+
+2026-08-17 - SKIP LOCKED is a trap on CockroachDB under SERIALIZABLE
+A freshly committed row is briefly invisible to SELECT ... FOR UPDATE SKIP
+LOCKED: SKIP LOCKED promises never to wait, so instead of blocking on the
+uncertainty window it returns nothing. The row is not lost, but a worker loop
+that treats an empty claim as "queue empty" stops early with work pending and
+nothing errors. Replaced with a single UPDATE ... WHERE item_id = (SELECT ...)
+RETURNING, letting the db.tx SERIALIZABLE retry handle contention. Postgres
+keeps SKIP LOCKED in the subquery. Found by 3 failing tests.
+
+2026-08-17 - Tenancy must be enforced INSIDE the recursive cascade
+The precedent-graph walk followed any edge it found, so a correction in one
+fleet superseded another fleet's filings. Correctness bug and privacy bug, and
+silent. Fixed by joining filings with fleet= inside the recursive step, plus
+fleet predicates on every UPDATE. Caught by test_cascade_does_not_cross_fleets.
