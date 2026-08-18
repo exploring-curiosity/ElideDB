@@ -106,3 +106,7 @@ vendor_robosuite/
 # Brigade runtime artefacts
 brigade/artifacts/clips/
 eval_logs/*/videos/
+
+# real credentials, never committed
+showreel/.env.local
+.env.local

@@ -2567,3 +2567,15 @@ The precedent-graph walk followed any edge it found, so a correction in one
 fleet superseded another fleet's filings. Correctness bug and privacy bug, and
 silent. Fixed by joining filings with fleet= inside the recursive step, plus
 fleet predicates on every UPDATE. Caught by test_cascade_does_not_cross_fleets.
+
+2026-08-17 - Live on CockroachDB Cloud (brigade-db-32108, aws-us-east-2)
+3402 moments migrated (5m42s, 3 vector indexes built), schema applied, 8/8 tests
+green, full agent pipeline re-run: cold start, sweep, cascade (1 overturn -> 8
+direct -> 9 transitive). Storage 1.11 MiB -> ~30 MiB of 6 GiB; RU budget 60M/mo.
+Credential lives ONLY in showreel/.env.local (gitignored, verified absent from
+all tracked files and git history).
+
+2026-08-17 - Vector query latency is a DEPLOYMENT property, not a DB one
+706 ms laptop -> us-east-2 cluster, almost entirely network; 1.18 s/episode for
+the agent loop. In-region Lambda makes it a local hop. This is the argument for
+deploying the worker to us-east-2 rather than tuning the database.
