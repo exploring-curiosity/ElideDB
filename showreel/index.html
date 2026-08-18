@@ -310,6 +310,16 @@ function draw(gridId, hits, mode){
 
 function setScore(side, p, task, caption){
   const ch = chancePct(task);
+  // UNGRADED IS NOT ZERO. If the typed words cannot be mapped to a kind the
+  // corpus has, there is nothing to score against — printing 0% would read as
+  // "it got everything wrong" when the truth is "we cannot say".
+  if(!task){
+    $(side+'-p').textContent = '—';
+    $(side+'-p').classList.add('none');
+    $(side+'-cap').textContent = caption;
+    $(side+'-bar').style.width = '0';
+    return;
+  }
   $(side+'-p').textContent = (p*100).toFixed(0) + '%';
   $(side+'-p').classList.remove('none');
   $(side+'-bar').style.width = Math.max(1.5, p*100) + '%';
