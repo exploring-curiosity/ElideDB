@@ -17,7 +17,7 @@
   <nav><a href="/agent">The agent →</a></nav>
   <div class="stat"><b id="s-corpus">: </b><span>recordings</span></div>
   <div class="stat"><b id="s-kinds">: </b><span>kinds of moment</span></div>
-  <div class="stat"><b>pgvector</b><span>stage 1 · HNSW</span></div>
+  <div class="stat"><b id="s-engine">vector index</b><span id="s-engine-sub">stage 1</span></div>
   <div class="stat"><b>DTW</b><span>stage 2 · exact</span></div>
 </header>
 
@@ -104,6 +104,9 @@ async function boot(){
   CATALOGUE=s.catalogue||[]; COUNTS=s.counts||{}; CORPUS=s.moments||1;
   $('s-corpus').textContent=s.moments.toLocaleString();
   $('s-kinds').textContent=s.tasks;
+  const crdb = s.engine==='cockroach';
+  $('s-engine').textContent = crdb ? 'CockroachDB' : 'pgvector';
+  $('s-engine-sub').textContent = 'stage 1 · ' + (crdb ? 'VECTOR INDEX' : 'HNSW');
   const sug=document.querySelector('.suggest');
   TRIES.forEach(([t,k])=>{
     const el=document.createElement('div');

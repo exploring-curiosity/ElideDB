@@ -164,7 +164,10 @@ def static(name: str):
 def stats():
     n = q("SELECT count(*) n, count(DISTINCT task) k FROM moments")[0]
     tasks = q("SELECT task, count(*) c FROM moments GROUP BY task ORDER BY task")
+    # The page names the engine it is actually talking to. Hardcoding "pgvector"
+    # meant a CockroachDB deployment described itself as Postgres on screen.
     return dict(moments=int(n["n"]), tasks=int(n["k"]), ready=SIDE.ready,
+                engine=__import__("db").engine(),
                 catalogue=[t["task"] for t in tasks],
                 counts={t["task"]: int(t["c"]) for t in tasks})
 
