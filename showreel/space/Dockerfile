@@ -20,14 +20,18 @@ ENV PYTHONUNBUFFERED=1 \
     OMP_NUM_THREADS=2 \
     SHOWREEL_RELMO_PYTHON=/usr/local/bin/python
 
-# libpq for psycopg2, ca-certificates for the CockroachDB Cloud chain.
+# libpq for psycopg2, plus the cluster's root explicitly.
 #
-# The DSN must say sslrootcert=system. Under verify-full libpq does NOT fall
-# back to the system trust store: it looks for ~/.postgresql/root.crt and fails
-# when the file is absent, which in a container it always is. The cluster
-# presents a Let's Encrypt chain and ISRG Root X1 is in this bundle, so naming
-# the system store is all that is needed, and shipping a copied root.crt would
-# only add a file to rotate.
+# Two things that look like they should work do not. Under sslmode=verify-full
+# libpq does NOT fall back to the system trust store: it opens
+# ~/.postgresql/root.crt and errors when the file is absent, which in a container
+# it always is. And sslrootcert=system does not rescue it either, because
+# psycopg2-binary statically links its own OpenSSL and that name resolves to a
+# compiled-in directory rather than this image's /etc/ssl/certs.
+#
+# So the root travels with the image and the DSN names it by path. root.crt is a
+# public CA certificate, not a secret, and this is the same thing deploy.sh does
+# for the Lambda, which is the version that was already proven to connect.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
 
@@ -39,6 +43,7 @@ RUN pip install -r requirements.txt
 
 USER user
 COPY --chown=user:user . /home/user/app
+# PRECEDENT_DSN must end with sslrootcert=/home/user/app/root.crt
 
 # Bake the text tower in. Downloading 1.5 GB of weights on first request would
 # make the first query look like a 90 s hang, and a Space that sleeps and wakes
