@@ -92,6 +92,13 @@ SIDE = Sidecar()
 
 def q(sql: str, args=()) -> list[dict]:
     con = psycopg2.connect(DSN)
+    # AUTOCOMMIT, and this is not a preference. psycopg2 opens a transaction
+    # implicitly and this helper closes the connection without committing, so
+    # every UPDATE issued through it was silently rolled back. Reads were
+    # unaffected, which is what made it invisible: the holdout reported success,
+    # changed nothing, and the agent went on retrieving the very clips that were
+    # supposed to be absent from its memory.
+    con.autocommit = True
     try:
         with con.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(sql, args)
@@ -155,7 +162,7 @@ def by_text(body: dict):
                             status_code=503)
     t = time.perf_counter()
     rows = q("""SELECT rec_id, task, seconds, 1 - (siglip <=> %s) AS score
-                FROM moments WHERE siglip IS NOT NULL
+                FROM moments WHERE siglip IS NOT NULL AND NOT held_out
                 ORDER BY siglip <=> %s LIMIT %s""",
              (vec(r["vecs"][0]), vec(r["vecs"][0]), k))
     sql_ms = (time.perf_counter() - t) * 1e3
@@ -192,11 +199,12 @@ def by_clip(body: dict):
     t = time.perf_counter()
     rows = q(f"""SELECT rec_id, task, seconds, 1 - ({col} <=> %s) AS score
                  FROM moments WHERE {col} IS NOT NULL AND rec_id <> %s
+                   AND NOT held_out
                  ORDER BY {col} <=> %s LIMIT %s""",
              (src[0]["v"], rid, src[0]["v"], max(k, PREFILTER_M)))
     stage1_ms = (time.perf_counter() - t) * 1e3
 
-    total = q("SELECT count(*) n FROM moments")[0]["n"]
+    total = q("SELECT count(*) n FROM moments WHERE NOT held_out")[0]["n"]
     stage2_ms, reranked = 0.0, False
     if SIDE.ready:
         r = SIDE.rpc(dict(cmd="rank", query=rid,
@@ -224,6 +232,63 @@ def sample(task: str = "", n: int = 1):
              (task, task, n))
     return dict(clips=[dict(id=r["rec_id"], task=r["task"],
                             seconds=round(float(r["seconds"] or 0), 1)) for r in rows])
+
+
+@app.post("/api/holdout")
+def holdout(body: dict):
+    """Take whole kinds of moment OUT of the memory, or put them back.
+
+    This is how "the agent has never seen this before" is created honestly:
+    the rows are not hidden from the answer, they are absent from the corpus
+    being searched. The holdout is CONSTRUCTED with labels — that is the
+    experiment design — but nothing the agent decides at run time reads one.
+    """
+    tasks = list(body.get("tasks") or [])
+    if body.get("reset"):
+        q("UPDATE moments SET held_out = false")
+        return dict(held_out=[], live=q("SELECT count(*) n FROM moments")[0]["n"])
+    q("UPDATE moments SET held_out = false")
+    if tasks:
+        q("UPDATE moments SET held_out = true WHERE task = ANY(%s)", (tasks,))
+    live = q("SELECT count(*) n FROM moments WHERE NOT held_out")[0]["n"]
+    return dict(held_out=tasks, live=live,
+                out=q("SELECT count(*) n FROM moments WHERE held_out")[0]["n"])
+
+
+@app.post("/api/remember")
+def remember(body: dict):
+    """THE AGENT WRITES. A clip it has just seen enters the memory.
+
+    This is the third verb, and the one that makes the loop a loop: the next
+    time something like this arrives it will have a precedent, because the agent
+    put one there. Nothing about the clip is described or labelled on the way
+    in — the vectors were computed from pixels and the row carries no sentence.
+    """
+    rid = (body.get("id") or "").strip()
+    q("UPDATE moments SET held_out = false WHERE rec_id = %s", (rid,))
+    return dict(remembered=rid,
+                live=q("SELECT count(*) n FROM moments WHERE NOT held_out")[0]["n"])
+
+
+@app.post("/api/act")
+def act(body: dict):
+    """THE AGENT ACTS, durably. Escalations are a queue a person works from."""
+    q("""CREATE TABLE IF NOT EXISTS agent_actions (
+             id SERIAL PRIMARY KEY, ts TIMESTAMPTZ DEFAULT now(),
+             run TEXT, saw TEXT, action TEXT, precedent TEXT,
+             score FLOAT, note TEXT)""")
+    q("""INSERT INTO agent_actions (run, saw, action, precedent, score, note)
+         VALUES (%s,%s,%s,%s,%s,%s)""",
+      (body.get("run"), body.get("saw"), body.get("action"),
+       body.get("precedent"), float(body.get("score") or 0), body.get("note")))
+    return dict(logged=True)
+
+
+@app.get("/api/actions")
+def actions(run: str = "", k: int = 40):
+    rows = q("""SELECT ts, saw, action, precedent, score, note FROM agent_actions
+                WHERE (%s = '' OR run = %s) ORDER BY id DESC LIMIT %s""", (run, run, k))
+    return dict(actions=rows)
 
 
 @app.get("/api/pair")
