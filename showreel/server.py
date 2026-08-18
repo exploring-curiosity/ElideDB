@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Showreel — two ways to search 3,400 videos, side by side, live-graded.
+"""Showreel: two ways to search 3,400 videos, side by side, live-graded.
 
     .venv-libero/bin/python showreel/server.py      # then open :8100
 
 LEFT PANEL is how video search works today: you type words. SigLIP2's text
 tower embeds the sentence into the space its image tower shares, and the
-database ranks every recording by cosine. This is not a straw man — it is the
+database ranks every recording by cosine. This is not a straw man: it is the
 standard zero-shot text-to-video method, implemented properly, over the raw
 SigLIP2 column rather than a whitened one the text tower knows nothing about.
 
@@ -15,7 +15,7 @@ full descriptor traces.
 
 Every result is graded against the folder RoboCasa filed the episode under, so
 the precision on screen is computed from the query you just ran. The grading
-column is never matched against and never read by retrieval — deleting it would
+column is never matched against and never read by retrieval: deleting it would
 not change one ranking.
 
 Measured on this corpus before any of this was built (relmo.vjtextbench):
@@ -252,7 +252,7 @@ def sample(task: str = "", n: int = 1, clear: int = 0):
     something: nobody hands you their blurriest, most half-occluded footage and
     says "find more like this".
 
-    Clarity is measured without labels — a candidate's score is the mean
+    Clarity is measured without labels: a candidate's score is the mean
     similarity of its own five nearest neighbours, so a clip sitting in a dense
     part of the space wins and an oddity loses. The grading column is not read.
     """
@@ -282,8 +282,8 @@ def holdout(body: dict):
 
     This is how "the agent has never seen this before" is created honestly:
     the rows are not hidden from the answer, they are absent from the corpus
-    being searched. The holdout is CONSTRUCTED with labels — that is the
-    experiment design — but nothing the agent decides at run time reads one.
+    being searched. The holdout is CONSTRUCTED with labels: that is the
+    experiment design, but nothing the agent decides at run time reads one.
     """
     tasks = list(body.get("tasks") or [])
     if body.get("reset"):
@@ -304,7 +304,7 @@ def remember(body: dict):
     This is the third verb, and the one that makes the loop a loop: the next
     time something like this arrives it will have a precedent, because the agent
     put one there. Nothing about the clip is described or labelled on the way
-    in — the vectors were computed from pixels and the row carries no sentence.
+    in: the vectors were computed from pixels and the row carries no sentence.
     """
     rid = (body.get("id") or "").strip()
     q("UPDATE moments SET held_out = false WHERE rec_id = %s", (rid,))
@@ -335,7 +335,7 @@ def actions(run: str = "", k: int = 40):
 
 # ------------------------------------------------------- the agent, live
 # These drive the /agent page. Each one is a thin wrapper over agent.py so the
-# page and the benchmark exercise exactly the same code — a demo that runs a
+# page and the benchmark exercise exactly the same code: a demo that runs a
 # different path from the thing being measured is a demo of nothing.
 
 @app.get("/agent", response_class=HTMLResponse)

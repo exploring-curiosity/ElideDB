@@ -10,7 +10,7 @@ rather than sprinkled through the agent:
     retries          cockroach can return 40001 (serialisation) on a contended
                      transaction and EXPECTS the client to retry. Postgres under
                      READ COMMITTED rarely does. The retry lives here so every
-                     caller gets it for free — omitting it is the single most
+                     caller gets it for free: omitting it is the single most
                      common way a CockroachDB app is wrong in production.
 
 Everything else in this codebase writes plain SQL.
@@ -124,8 +124,8 @@ def apply_schema() -> dict:
 def vector_index(table: str, column: str) -> str:
     """The one statement that genuinely differs between the two engines.
 
-    CockroachDB does NOT accept IF NOT EXISTS on CREATE VECTOR INDEX — it is a
-    syntax error at the ON, not a no-op — so the name is explicit and callers
+    CockroachDB does NOT accept IF NOT EXISTS on CREATE VECTOR INDEX: it is a
+    syntax error at the ON, not a no-op, so the name is explicit and callers
     swallow the already-exists error. pgvector wants an access method and an
     operator class; CockroachDB infers both. Found by running it against a real
     node rather than by reading about it.

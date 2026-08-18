@@ -3,7 +3,7 @@
 
     .venv-libero/bin/python showreel/bench.py          # server must be running
 
-A demo that shows one query proves nothing — the first one might be the one
+A demo that shows one query proves nothing: the first one might be the one
 that worked. This runs BOTH arms over the whole task catalogue and reports the
 aggregate, so what the page claims per query is checkable in bulk.
 

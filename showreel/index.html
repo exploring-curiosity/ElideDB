@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>Precedent — why you cannot search video with words</title>
+<title>Precedent: why you cannot search video with words</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="/static/style.css">
 <style>.split{grid-template-columns:1fr 1fr}  .disclosure{margin-top:9px; font-family:var(--serif); font-size:12.5px;
@@ -15,8 +15,8 @@
     is how it is done today.</p>
   <div class="fill"></div>
   <nav><a href="/agent">The agent →</a></nav>
-  <div class="stat"><b id="s-corpus">—</b><span>recordings</span></div>
-  <div class="stat"><b id="s-kinds">—</b><span>kinds of moment</span></div>
+  <div class="stat"><b id="s-corpus">: </b><span>recordings</span></div>
+  <div class="stat"><b id="s-kinds">: </b><span>kinds of moment</span></div>
   <div class="stat"><b>pgvector</b><span>stage 1 · HNSW</span></div>
   <div class="stat"><b>DTW</b><span>stage 2 · exact</span></div>
 </header>
@@ -24,7 +24,7 @@
 <section class="thesis">
   <p><strong>A text encoder cannot tell opening from closing.</strong> The two
     sentences arrive at almost the same vector, so the distinction a query needs
-    is destroyed before the search begins — and no rewording recovers it.</p>
+    is destroyed before the search begins, and no rewording recovers it.</p>
   <div class="eq">cos(“open the drawer”, “close the drawer”) = <span id="cos">…</span></div>
   <div class="cite">typed 0.285 · shown 0.840 · chance 0.02<br>
     24 of 57 typed queries at or below chance<br>
@@ -38,7 +38,7 @@
   </div>
   <div class="suggest"><span class="lede">Try</span></div>
   <p class="disclosure">These five are the kinds where the measured gap is
-    largest — chosen from <span>eval_logs/per_class.json</span>, not by hand.
+    largest: chosen from <span>eval_logs/per_class.json</span>, not by hand.
     Across all 57 kinds the means are <b>0.774 shown</b> against
     <b>0.311 typed</b>; on five kinds typing actually wins, and
     <span>CloseDrawer</span> is one of them.</p>
@@ -51,7 +51,7 @@
         <span class="kicker">how video search works today</span>
         <span class="timing" id="l-timing"></span></div>
       <div class="figure">
-        <div class="n void" id="l-p">—</div>
+        <div class="n void" id="l-p">: </div>
         <div class="cap">of what came back was<br>the moment asked for
           <em id="l-cap">awaiting a query</em></div>
       </div>
@@ -70,7 +70,7 @@
         <span class="kicker">hand it the clip instead</span>
         <span class="timing" id="r-timing"></span></div>
       <div class="figure">
-        <div class="n void" id="r-p">—</div>
+        <div class="n void" id="r-p">: </div>
         <div class="cap">of what came back was<br>the moment asked for
           <em id="r-cap">awaiting a clip</em></div>
       </div>
@@ -78,7 +78,7 @@
       <div class="scale-key" id="r-key"></div>
     </div>
     <div class="reel" id="r-reel">
-      <p class="blank">Click any result on the left — even a wrong one — and this
+      <p class="blank">Click any result on the left: even a wrong one, and this
         column finds more moments like it.</p>
     </div>
     <div class="footnote" id="seed" style="display:none">
@@ -118,7 +118,7 @@ async function boot(){
 }
 
 /* Which kind a typed query is ABOUT, decided from the query text alone. The
-   grading key is never used to retrieve — only to mark what came back. When
+   grading key is never used to retrieve: only to mark what came back. When
    nothing matches, results are shown ungraded rather than scored against a
    guess, because an unscoreable query is not a failed one. */
 function expectedTask(text){
@@ -155,7 +155,7 @@ function paint(side,hits,mode){
 
 function score(side,p,task,cap){
   if(!task){
-    $(side+'-p').textContent='—'; $(side+'-p').classList.add('void');
+    $(side+'-p').textContent=': '; $(side+'-p').classList.add('void');
     $(side+'-cap').textContent=cap; $(side+'-bar').style.width='0';
     $(side+'-key').textContent=''; return;
   }
@@ -165,7 +165,7 @@ function score(side,p,task,cap){
   $(side+'-bar').style.width=Math.max(1.5,p*100)+'%';
   $(side+'-ch').style.left=ch+'%';
   $(side+'-cap').textContent=cap;
-  $(side+'-key').textContent=`chance ${ch.toFixed(1)}% — ${COUNTS[task]} of `+
+  $(side+'-key').textContent=`chance ${ch.toFixed(1)}%: ${COUNTS[task]} of `+
     `${CORPUS.toLocaleString()} recordings are ${task}`;
 }
 
@@ -181,7 +181,7 @@ async function run(forceTask){
     if(d.error){$('l-reel').innerHTML=`<p class="blank">${esc(d.error)}</p>`;return;}
     $('l-timing').textContent=`${d.embed_ms.toFixed(0)} ms encoder · ${d.sql_ms.toFixed(1)} ms sql`;
     paint('l',d.hits,'text');
-    score('l',d.precision,want,want?`looking for ${want}`:'ungraded — no matching kind in the corpus');
+    score('l',d.precision,want,want?`looking for ${want}`:'ungraded, no matching kind in the corpus');
     WANT=want;
     $('seed').style.display=want?'block':'none';
     $('seed-lede').textContent=d.precision===0?'Nothing on the left is right.':'Cannot describe it?';

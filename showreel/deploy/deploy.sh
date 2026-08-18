@@ -32,7 +32,7 @@ if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
   echo "    created s3://$BUCKET"
 fi
 # Block public access. Clips are served with presigned URLs, never by making the
-# bucket world-readable — a public bucket is the single most common way a demo
+# bucket world-readable: a public bucket is the single most common way a demo
 # leaks data it did not mean to.
 aws s3api put-public-access-block --bucket "$BUCKET" \
     --public-access-block-configuration \
@@ -49,7 +49,7 @@ if ! aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
     "Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}' >/dev/null
   aws iam attach-role-policy --role-name "$ROLE_NAME" \
       --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-  echo "    created role $ROLE_NAME (logs only — the agent needs nothing else)"
+  echo "    created role $ROLE_NAME (logs only: the agent needs nothing else)"
   sleep 12                      # IAM is eventually consistent
 fi
 ROLE_ARN="$(aws iam get-role --role-name "$ROLE_NAME" --query Role.Arn --output text)"

@@ -1,4 +1,4 @@
--- PRECEDENT — the agent's memory. Four tables, four different jobs.
+-- PRECEDENT: the agent's memory. Four tables, four different jobs.
 --
 -- Written to be valid on BOTH PostgreSQL+pgvector and CockroachDB, because the
 -- port is meant to be a connection string and not a rewrite. That constrains a
@@ -15,7 +15,7 @@
 -- engines, so it lives in db.py rather than here.
 
 -- ---------------------------------------------------------------------------
--- 1. THE INBOX — task state. Episodes arrive here and wait to be dispositioned.
+-- 1. THE INBOX: task state. Episodes arrive here and wait to be dispositioned.
 --
 -- Claimed with FOR UPDATE SKIP LOCKED so any number of agent workers can drain
 -- one queue without two of them taking the same episode. This is the table that
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS inbox (
 );
 
 -- ---------------------------------------------------------------------------
--- 2. FILINGS — what the agent decided, and how sure it was.
+-- 2. FILINGS: what the agent decided, and how sure it was.
 --
 -- `disposition` is a string the AGENT coined or a human supplied. Nothing seeds
 -- it: on an empty memory the first episode of every kind is escalated and the
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS filings (
 );
 
 -- ---------------------------------------------------------------------------
--- 3. THE PRECEDENT GRAPH — which filings supported which other filing.
+-- 3. THE PRECEDENT GRAPH, which filings supported which other filing.
 --
 -- THIS IS THE TABLE THAT MAKES THE MEMORY CORRECTABLE. A vector store can tell
 -- you what is similar; it cannot tell you which decisions LEANED ON a decision
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS filing_precedents (
 );
 
 -- ---------------------------------------------------------------------------
--- 4. VERDICTS — a person's answer. The only place a human writes.
+-- 4. VERDICTS: a person's answer. The only place a human writes.
 --
 -- An escalation produces one of these. So does an overturn, and an overturn is
 -- what triggers the cascade: every filing that leaned on the corrected one is

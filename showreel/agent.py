@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PRECEDENT — the agent. It claims work, remembers, decides, and is correctable.
+"""PRECEDENT: the agent. It claims work, remembers, decides, and is correctable.
 
     .venv-libero/bin/python showreel/agent.py --demo
 
@@ -10,8 +10,8 @@ is searchable. This agent starts with an EMPTY memory and no vocabulary at all.
 
     CLAIM      take one episode off the queue (FOR UPDATE SKIP LOCKED)
     RETRIEVE   the nearest precedents this fleet has already filed
-    ACT        they agree -> file it alone, and record WHICH ones convinced it
-               they don't -> escalate; a person answers and that becomes memory
+    ACT        they agree -> file it alone, recording WHICH ones convinced it;
+               they don't -> escalate, and a person's answer becomes memory
     STORE      the filing, its precedent edges, and the verdict if there was one
 
 Everything the agent knows it wrote itself. The first episode of every kind is
@@ -20,7 +20,7 @@ the humans answered, not a taxonomy anyone designed.
 
 WHY CONSENSUS RATHER THAN A SIMILARITY THRESHOLD, measured the hard way: an
 earlier version escalated when the top match scored below a fitted cut and the
-arms came out backwards — storing made escalation WORSE. Every DTW score sat
+arms came out backwards: storing made escalation WORSE. Every DTW score sat
 between 0.16 and 0.27 whether the precedent was right or wrong. This retrieval
 ranks well (precision@8 0.840) and calibrates badly, and those are different
 properties. Agreement among the top-k needs no calibration.
@@ -85,7 +85,7 @@ def claim(worker: str, fleet: str = FLEET) -> dict | None:
 
     WHY NOT `SELECT ... FOR UPDATE SKIP LOCKED` ON COCKROACHDB, which is the
     textbook queue and what this used to do. Measured: under SERIALIZABLE a
-    freshly committed row is invisible to a SKIP LOCKED read for a moment —
+    freshly committed row is invisible to a SKIP LOCKED read for a moment
     SKIP LOCKED promises never to wait, so rather than block on the uncertainty
     window it returns nothing. The row is not lost and a later claim finds it,
     but a worker loop that treats an empty claim as "queue empty" stops early
@@ -122,7 +122,7 @@ def precedents(rec_id: str, fleet: str = FLEET, k: int = K) -> list[dict]:
 
     The join is the point. A vector search over the whole corpus would return
     clips the agent has never dispositioned, which are not evidence about
-    anything — they are just pixels that look similar. Only a filing is a
+    anything: they are just pixels that look similar. Only a filing is a
     precedent, so the similarity scan and the decision log are read together,
     and the predicate is pushed into the query rather than filtered afterwards
     in Python (which silently starves the agent as the corpus grows).
@@ -206,7 +206,7 @@ def cascade(filing_id: str, disposition: str, by_whom: str = "reviewer",
     ONE transaction, and it has to be: the corrected filing, the verdict, the
     transitive set of filings that inherited the mistake, and their queue rows
     all move together or not at all. A crash halfway through the old way would
-    leave filings marked superseded that were never re-queued — invisible work
+    leave filings marked superseded that were never re-queued: invisible work
     that no longer exists anywhere.
 
     The recursive CTE walks the precedent graph BACKWARDS: not "what did this
@@ -218,7 +218,7 @@ def cascade(filing_id: str, disposition: str, by_whom: str = "reviewer",
         # TENANCY IS ENFORCED INSIDE THE WALK, not only on the read that
         # started it. Without the join to filings the recursion follows any
         # edge it finds, and a correction in one fleet supersedes another
-        # fleet's filings — a correctness bug and a privacy one, and silent.
+        # fleet's filings: a correctness bug and a privacy one, and silent.
         # Caught by test_cascade_does_not_cross_fleets, which exists for
         # exactly this and failed the first time it was run.
         cur.execute("""
@@ -273,7 +273,7 @@ def reclaim(fleet: str = FLEET) -> dict:
 
     A queue without this leaks: `claim` sets state='working', and if the process
     dies between the claim and the filing that row is claimed forever by nobody.
-    Nothing errors — the episode simply never gets dispositioned and no one
+    Nothing errors: the episode simply never gets dispositioned and no one
     finds out, which is the worst failure a queue has.
 
     An episode that has been claimed MAX_ATTEMPTS times is not retried again.

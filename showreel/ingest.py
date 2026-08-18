@@ -20,7 +20,7 @@ table so the database can do the first stage of retrieval:
                 the pooled mean.
 
 `task` is the folder name RoboCasa filed the episode under. It is display and
-grading only — the retrieval path never reads it, and it is not what any query
+grading only: the retrieval path never reads it, and it is not what any query
 matches against. It exists so a viewer can see a green tick instead of taking
 the ranking on faith, and so precision can be computed live rather than quoted
 from a README.
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS moments (
     -- the same trace reduced to what moved
     motion      VECTOR(768),
     -- THE TEXT ARM, and it must be a fair one or the comparison is worthless.
-    -- Raw mean-pooled SigLIP2 image embedding, L2'd — the space SigLIP2's TEXT
+    -- Raw mean-pooled SigLIP2 image embedding, L2'd: the space SigLIP2's TEXT
     -- tower was trained to share. Cosine between a sentence and this column is
     -- exactly how zero-shot text-to-video retrieval is done everywhere, done
     -- properly. Whitened columns are deliberately NOT used here: they live in a

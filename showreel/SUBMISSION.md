@@ -3,13 +3,13 @@
 **An agent that starts with no memory and no vocabulary, and earns both.**
 
 A robot fleet records more video than anyone can watch. Every episode still has
-to be dispositioned — filed under what it is — before it can be counted,
+to be dispositioned: filed under what it is, before it can be counted,
 compared or acted on. Today that means defining a taxonomy up front and buying a
 labelling contract before a single clip is searchable.
 
 This agent is handed an empty database and a queue. For each episode it asks its
 own memory for precedent, files the episode if the precedent agrees, escalates it
-to a person if it does not — and writes down what it decided either way. Its own
+to a person if it does not, and writes down what it decided either way. Its own
 past filings are what let it stop asking.
 
 ```
@@ -20,7 +20,7 @@ MEMORY OFF        1.00   1.00   1.00   1.00   1.00   1.00
 
 The OFF arm is the identical agent over the identical feed with **only the write
 removed**. It never accumulates a precedent, so every episode reaches a person,
-forever. Without its memory the agent does not degrade — it does no work at all.
+forever. Without its memory the agent does not degrade: it does no work at all.
 
 ---
 
@@ -31,8 +31,8 @@ video with words. Over 57 kinds of moment, one query per kind, precision@8:
 
 | | precision@8 | chance | |
 |---|---|---|---|
-| **type it** — SigLIP 2 text tower → video | 0.285 | 0.018 | 16× |
-| **show it** — query by example | **0.840** | 0.021 | **41×** |
+| **type it**. SigLIP 2 text tower → video | 0.285 | 0.018 | 16× |
+| **show it**: query by example | **0.840** | 0.021 | **41×** |
 
 **24 of the 57 typed queries land at or below chance.** Six return nothing
 correct at all. The reason is one number:
@@ -42,7 +42,7 @@ cos( "open the drawer" , "close the drawer" )  =  0.9766
 ```
 
 To a text encoder those are the same sentence. The distinction the query needs
-was destroyed at the embedding, before search began — and no prompt fixes it.
+was destroyed at the embedding, before search began, and no prompt fixes it.
 The console at `/` shows this live: type "taking something out of the drawer"
 and watch drawers *closing* come back.
 
@@ -51,7 +51,7 @@ why its vocabulary has to be earned from human answers rather than assumed.
 
 ---
 
-## What CockroachDB holds — four tables, four jobs
+## What CockroachDB holds: four tables, four jobs
 
 Memory here is not a vector column with an app around it.
 
@@ -63,10 +63,10 @@ Memory here is not a vector column with an app around it.
 | `filing_precedents` | **which filings convinced it** | the graph a correction walks |
 | `verdicts` | the only place a human writes | the trigger |
 
-### The cascade — the thing a vector store cannot do
+### The cascade: the thing a vector store cannot do
 
 A reviewer overturns one filing. A recursive CTE walks the precedent graph
-**backwards** — not "what did this lean on" but "what leaned on this" — and
+**backwards**: not "what did this lean on" but "what leaned on this", and
 reopens every filing that inherited the mistake, transitively, in one
 serialisable transaction with the verdict and the queue rows.
 
@@ -106,7 +106,7 @@ a constant.
 
 ## Production readiness
 
-**Resilience.** `reclaim()` returns episodes whose worker claimed them and died —
+**Resilience.** `reclaim()` returns episodes whose worker claimed them and died
 without it `state='working'` is a permanent leak that raises nothing and simply
 means an episode is never dispositioned. Poison episodes dead-letter after three
 attempts instead of starving the queue behind them.
@@ -114,7 +114,7 @@ attempts instead of starving the queue behind them.
 **Observability.** `/healthz` is readiness, not liveness: 503 when anything has
 dead-lettered or the oldest pending episode is ageing, because that is what
 broken looks like here. `/metrics` exposes queue depth by state, the age of the
-oldest waiting episode, and **autonomy** — the fraction of filings the agent
+oldest waiting episode, and **autonomy**: the fraction of filings the agent
 made unaided, the one number that says whether the memory is working.
 
 **Access control.** Every table is scoped by `fleet`. Tenancy is enforced inside
@@ -127,13 +127,13 @@ into the deployment package.
 ### Two bugs the tests found, both silent
 
 **Tenancy leaked through the cascade.** The recursive walk followed any edge it
-found, so correcting a filing in one fleet superseded another fleet's filings —
+found, so correcting a filing in one fleet superseded another fleet's filings
 a correctness bug and a privacy one, reporting success the whole time.
 
 **`SKIP LOCKED` is a trap on CockroachDB.** Under `SERIALIZABLE` a freshly
 committed row is briefly invisible to `SELECT ... FOR UPDATE SKIP LOCKED`: the
 clause promises never to wait, so rather than block on the uncertainty window it
-returns nothing. The row is not lost and a later claim finds it — but a worker
+returns nothing. The row is not lost and a later claim finds it, but a worker
 loop that treats an empty claim as "queue empty" **stops early with work still
 pending, and nothing raises.** `claim()` is now a single
 `UPDATE ... WHERE item_id = (SELECT ...) RETURNING`, leaving contention to the
@@ -145,7 +145,7 @@ Cloud.**
 
 ---
 
-## Deployment — free by construction
+## Deployment: free by construction
 
 | | | cost |
 |---|---|---|
@@ -154,7 +154,7 @@ Cloud.**
 | Lambda | the agent worker, on a 5-minute tick | 1M requests always free |
 | EventBridge | the tick | free |
 
-No EC2, no NAT gateway, no API Gateway, no RDS — on an account created after
+No EC2, no NAT gateway, no API Gateway, no RDS: on an account created after
 2025-07-15 those draw straight down the $200 of credits, and a NAT gateway alone
 is ~$33/month for doing nothing.
 
@@ -196,7 +196,7 @@ export BUCKET=precedent-clips-yourname
 **One domain.** 3,402 RoboCasa kitchen episodes. The retrieval claim is about
 text-vs-example on this corpus, not about generalising to arbitrary CCTV.
 
-**The "human" in the benchmark is the corpus's own folder name** — what a
+**The "human" in the benchmark is the corpus's own folder name**: what a
 reviewer would type. It is never read by retrieval, never stored on a clip, and
 enters memory only as the answer to an escalation.
 

@@ -10,7 +10,7 @@ Two jobs, and they are the two halves of the demo.
 
 THE TEXT ARM is `text`. SigLIP2's text tower embeds a sentence into the space
 its image tower shares, which is the only way words can reach video without
-captioning every frame first. This is not a weakened baseline built to lose —
+captioning every frame first. This is not a weakened baseline built to lose:
 it is how zero-shot text-to-video retrieval is done, and the `pair` command
 exists so anyone can check the thing that makes it fail: "open the drawer" and
 "close the drawer" come out of that tower nearly parallel.

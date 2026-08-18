@@ -4,7 +4,7 @@
     .venv-libero/bin/python showreel/watch.py
 
 A robot fleet produces more episodes than anyone can watch. Each one has to be
-dispositioned — filed under what it is, so it can be counted, compared and acted
+dispositioned: filed under what it is, so it can be counted, compared and acted
 on. Today that is a person, or a labelling contract, or a taxonomy someone has
 to define before a single video can be filed.
 
@@ -25,7 +25,7 @@ escalated when the top match scored below a cut, and it did not work: measured,
 every DTW score sat between 0.16 and 0.27 whether the precedent was right or
 wrong. This system ranks well (precision@8 0.840) and calibrates badly, and
 those are different properties. Agreement among the top-k is a relative signal
-and needs no calibration — if the five nearest things memory holds all say the
+and needs no calibration: if the five nearest things memory holds all say the
 same word, memory knows this; if they say five different words, it does not.
 
 WHAT THE RUN SHOWS. Escalation starts at 100% because an empty memory can do

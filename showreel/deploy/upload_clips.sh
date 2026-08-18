@@ -5,7 +5,7 @@
 #
 # 1.34 GB sits inside S3's always-free 5 GiB. The `video` column becomes an
 # s3:// key rather than a local path, and the console serves each clip with a
-# short-lived presigned URL — the bucket itself stays private.
+# short-lived presigned URL: the bucket itself stays private.
 set -euo pipefail
 : "${BUCKET:?set BUCKET}"
 REGION="${AWS_REGION:-us-east-2}"

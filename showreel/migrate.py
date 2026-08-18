@@ -7,7 +7,7 @@
 The point of running this is to find out what actually differs between the two
 engines rather than to assert that nothing does. What it found:
 
-    VECTOR(n) and CREATE VECTOR INDEX both exist on CockroachDB v26 — the
+    VECTOR(n) and CREATE VECTOR INDEX both exist on CockroachDB v26: the
     schema and the vector index are portable as written.
     Batches must be modest. CockroachDB's default transaction size limits are
     tighter than Postgres's, and a 3,402-row insert of 2,048 floats each is a

@@ -3,7 +3,7 @@
 
     .venv-libero/bin/python -m pytest showreel/test_precedent.py -q
 
-Not coverage for its own sake — these cover the three failures that would leave
+Not coverage for its own sake: these cover the three failures that would leave
 the system looking healthy while being wrong:
 
   THE CASCADE MISSING A FILING. Transitive by definition, so a bug shows up as

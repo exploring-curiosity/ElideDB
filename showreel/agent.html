@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>Precedent — an agent that earns its own memory</title>
+<title>Precedent: an agent that earns its own memory</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="/static/style.css">
 <style>
@@ -66,7 +66,7 @@
   <div class="stat"><b id="s-fil">0</b><span>filings</span></div>
   <div class="stat"><b id="s-vocab">0</b><span>vocabulary</span></div>
   <div class="stat"><b id="s-edge">0</b><span>precedent edges</span></div>
-  <div class="stat"><b id="s-auto">—</b><span>filed unaided</span></div>
+  <div class="stat"><b id="s-auto">: </b><span>filed unaided</span></div>
 </header>
 
 <section class="controls">
@@ -76,7 +76,7 @@
     <button class="quiet" id="stop" disabled>Pause</button>
     <div style="flex:1"></div>
     <p class="standfirst" style="padding:0; font-size:13.5px; max-width:58ch">
-      Its vocabulary is not a taxonomy anyone designed — every word in it was a
+      Its vocabulary is not a taxonomy anyone designed: every word in it was a
       person’s answer to an episode the agent could not place.</p>
   </div>
 </section>
@@ -108,16 +108,16 @@
     <div class="reel" style="display:block">
       <div class="key">
         <span><i style="background:var(--pass)"></i>memory on</span>
-        <span><i style="background:var(--fail)"></i>memory off — identical agent, write removed</span>
+        <span><i style="background:var(--fail)"></i>memory off, identical agent, write removed</span>
       </div>
       <svg id="chart" viewBox="0 0 420 196" preserveAspectRatio="none"></svg>
       <table>
-        <thead><tr><th>Filing — click to overturn</th><th style="text-align:right">by</th>
+        <thead><tr><th>Filing: click to overturn</th><th style="text-align:right">by</th>
           <th style="text-align:right">cited</th></tr></thead>
         <tbody id="fils"><tr><td colspan="3" style="color:var(--ink-3)">none yet</td></tr></tbody>
       </table>
       <p class="ledger-note" id="note">A reviewer changing one answer reopens every
-        filing that leaned on it — transitively, in one transaction. Similarity
+        filing that leaned on it: transitively, in one transaction. Similarity
         search finds what looks alike; only the precedent graph knows what
         inherited a mistake.</p>
     </div>
@@ -135,7 +135,7 @@ function stats(s){
   if(!s)return;
   $('s-fil').textContent=s.filings; $('s-vocab').textContent=s.vocabulary;
   $('s-edge').textContent=s.edges;
-  $('s-auto').textContent=s.filings?Math.round(s.by_agent/s.filings*100)+'%':'—';
+  $('s-auto').textContent=s.filings?Math.round(s.by_agent/s.filings*100)+'%':', ';
 }
 
 /* A chart with axes, because a bare sparkline asks the reader to take the shape
@@ -180,7 +180,7 @@ function episode(d){
     <dl>
       <div><dt>consensus among precedents</dt><dd>${(d.consensus??0).toFixed(2)}</dd></div>
       <div><dt>precedents consulted</dt><dd>${d.precedents.length}</dd></div>
-      <div><dt>truth — never shown to the agent</dt><dd>${esc(d.truth)}</dd></div>
+      <div><dt>truth: never shown to the agent</dt><dd>${esc(d.truth)}</dd></div>
       ${d.escalated?'':`<div><dt>was it right</dt>
         <dd class="${d.correct?'yes':'no'}">${d.correct?'yes':'no'}</dd></div>`}
     </dl>`;
@@ -204,11 +204,11 @@ async function ledger(){
 }
 
 async function overturn(id){
-  const r=await post('/api/agent/overturn',{filing_id:id,disposition:'Misfiled — corrected'});
+  const r=await post('/api/agent/overturn',{filing_id:id,disposition:'Misfiled, corrected'});
   await ledger();
   $('fils').querySelectorAll('tr').forEach(el=>el.classList.add('moved'));
   $('note').innerHTML=`One answer changed. <b>${r.reopened} filings reopened</b>,
-    transitively, in a single transaction — every one of them had leaned on the
+    transitively, in a single transaction: every one of them had leaned on the
     filing you just overturned. Similarity search cannot do this: it knows what
     looks alike, not what inherited a mistake.`;
 }

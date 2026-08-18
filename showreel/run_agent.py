@@ -14,7 +14,7 @@ Three things, in order, because each depends on the last:
   3. THE CASCADE. Overturn one filing and watch every filing that leaned on it
      reopen, transitively, in one transaction.
 
-The "human" is the corpus's own folder name — the thing a reviewer would type.
+The "human" is the corpus's own folder name: the thing a reviewer would type.
 It is never read by retrieval and never stored on a clip; it enters memory only
 as the answer to an escalation, which is exactly how a real reviewer's answer
 would.
@@ -110,7 +110,7 @@ def main() -> int:
     on = one_pass(feed, True, agent.CONSENSUS, "memory on ")
     off = one_pass(feed, False, agent.CONSENSUS, "memory off")
     s_on, s_off = summarise(on), summarise(off)
-    print("1. COLD START — escalation as the agent's own filings accumulate\n")
+    print("1. COLD START: escalation as the agent's own filings accumulate\n")
     print(f"   {'episodes seen':<16}" + "".join(f"{i*(len(on)//6):>8}"
                                                 for i in range(6)))
     print(f"   {'MEMORY ON':<16}" + "".join(f"{v:>8.2f}" for v in curve(on)))
@@ -118,10 +118,10 @@ def main() -> int:
     print(f"\n   ON  {s_on['escalated']:.0%} reached a person   "
           f"({s_on['auto_n']} filed alone, {s_on['auto_acc']:.1%} right)")
     print(f"   OFF {s_off['escalated']:.0%} reached a person   "
-          f"— identical agent, write removed\n")
+          f": identical agent, write removed\n")
 
     # ---- 2. the curve ---------------------------------------------------
-    print("2. THE KNOB — consensus required before the agent acts alone\n")
+    print("2. THE KNOB: consensus required before the agent acts alone\n")
     print(f"   {'consensus':>10}{'escalated':>12}{'filed alone':>13}"
           f"{'of those, right':>17}")
     sweep = []
@@ -135,7 +135,7 @@ def main() -> int:
 
     # ---- 3. the cascade -------------------------------------------------
     one_pass(feed, True, agent.CONSENSUS, "rebuild", quiet=True)
-    print("3. THE CASCADE — one person overturns one filing\n")
+    print("3. THE CASCADE: one person overturns one filing\n")
     seed = db.q("""SELECT f.filing_id, f.disposition,
                           (SELECT count(*) FROM filing_precedents p
                             WHERE p.precedent_id = f.filing_id) AS leaned_on

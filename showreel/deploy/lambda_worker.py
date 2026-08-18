@@ -2,7 +2,7 @@
 
 Deployed as a scheduled function: EventBridge fires it, it claims and
 dispositions whatever is waiting, and it exits. Nothing is long-running, which
-is why this costs nothing — Lambda's always-free tier is 1M requests and 400k
+is why this costs nothing. Lambda's always-free tier is 1M requests and 400k
 GB-seconds a month, and an agent that wakes on a schedule fits inside it with
 room to spare.
 
@@ -18,7 +18,7 @@ same query from a Lambda in us-east-2 is a local hop. Retrieval latency here is
 a deployment property, not a database one.
 
 WHAT DOES NOT RUN HERE. The V-JEPA 2 / SigLIP 2 encoder is a batch job over new
-video and has no place in a request path — it runs offline and writes vectors.
+video and has no place in a request path: it runs offline and writes vectors.
 This function only reads them, which is why the package is a few megabytes and
 not a few gigabytes.
 """
@@ -43,7 +43,7 @@ def handler(event, context):
 
     # Recover anything a previous invocation claimed and died holding. A Lambda
     # that times out mid-episode leaves state='working' forever otherwise, and
-    # nothing errors — the episode is simply never dispositioned again.
+    # nothing errors: the episode is simply never dispositioned again.
     recovered = agent.reclaim(fleet)
 
     done, escalated = 0, 0
