@@ -110,3 +110,6 @@ eval_logs/*/videos/
 # real credentials, never committed
 showreel/.env.local
 .env.local
+
+# 1.16 GB of precomputed DTW traces, rebuilt by showreel/dump_traces.py
+showreel/traces/

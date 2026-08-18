@@ -3,7 +3,6 @@
 
     {"cmd":"text","texts":[...]}            -> SigLIP2 text-tower vectors
     {"cmd":"rank","query":id,"cand":[ids]}  -> stage-2 DTW over the traces
-    {"cmd":"vec","id":rec_id}               -> a recording's three vectors
     {"cmd":"pair","a":"...","b":"..."}      -> cosine between two sentences
 
 Two jobs, and they are the two halves of the demo.
@@ -22,6 +21,8 @@ descriptor traces, which is the part that sees the order things happened in.
 from __future__ import annotations
 
 import json
+import os
+import pathlib
 import sys
 import time
 from pathlib import Path
@@ -33,19 +34,28 @@ sys.path.insert(0, str(ROOT / "native"))
 
 STORE = "rcasa"
 SIGLIP = "google/siglip2-base-patch16-224"
+TRACES = pathlib.Path(os.environ.get("PRECEDENT_TRACES", ROOT / "showreel" / "traces"))
 
 
 class Engine:
-    def __init__(self):
-        from relmo.vjstore import Store
+    """Holds a text tower and nothing else.
 
-        t0 = time.time()
-        print(f"[showreel] loading {STORE} ...", file=sys.stderr, flush=True)
-        self.st = Store(STORE)
-        print(f"[showreel] {len(self.st.ids)} recordings, {time.time()-t0:.0f}s",
-              file=sys.stderr, flush=True)
+    It used to open the whole RelMo store, which is 17.64 GB of peak RSS and a
+    6.53 GB padded DTW bank over all 3,556 recordings, to answer queries that
+    never touch more than 48. Traces are read from disk per query instead: 11 ms
+    for a shortlist, 30 MB resident, and the process now fits on a free CPU host
+    with room to spare. `dump_traces.py` writes them.
+    """
+
+    def __init__(self):
         self._txt = None
-        self._z = None
+        self._cache: dict = {}
+        n = len(list(TRACES.glob("*.npy"))) if TRACES.exists() else 0
+        print(f"[showreel] {n} traces on disk at {TRACES}", file=sys.stderr, flush=True)
+        if not n:
+            print("[showreel] no traces: run dump_traces.py, or stage 2 is skipped",
+                  file=sys.stderr, flush=True)
+        self.n_traces = n
 
     # ---- words --------------------------------------------------------------
 
@@ -74,26 +84,36 @@ class Engine:
     # ---- the trace ----------------------------------------------------------
 
     def _zs(self, rid):
-        from relmo.vjeval import l2
-        from relmo.vjstore import zs
+        """One recording's DTW representation, off disk, memoised.
 
-        if self._z is None:
-            self._z = {}
-        if rid not in self._z:
-            fix, sig = self.st.raw[rid]
-            self._z[rid] = l2(np.concatenate(
-                [zs(fix.astype(np.float32)), zs(sig.astype(np.float32))], -1))
-        return self._z[rid]
+        The cache is bounded: a demo asks about a few hundred recordings, and an
+        unbounded dict here would slowly reintroduce exactly the resident corpus
+        this design removed.
+        """
+        z = self._cache.get(rid)
+        if z is None:
+            p = TRACES / f"{rid}.npy"
+            if not p.exists():
+                return None
+            z = np.load(p).astype(np.float32)
+            if len(self._cache) > 512:
+                self._cache.clear()
+            self._cache[rid] = z
+        return z
 
     def rank(self, query: str, cand: list[str], band: float = 0.25) -> dict:
         from relmo.vjmatch import dtw
         from relmo.vjzeval import PAD_COST, _pad
 
-        cand = [c for c in cand if c in self.st.raw]
-        if query not in self.st.raw or not cand:
-            return {}
         q = self._zs(query)
-        Z = [self._zs(c) for c in cand]
+        if q is None:
+            return {}
+        pairs = [(c, self._zs(c)) for c in cand]
+        pairs = [(c, z) for c, z in pairs if z is not None]
+        if not pairs:
+            return {}
+        cand = [c for c, _ in pairs]
+        Z = [z for _, z in pairs]
         P, ok = _pad(Z)
         L = np.array([len(z) for z in Z])
         C = 1.0 - np.einsum("sd,nkd->nsk", q, P)
@@ -101,16 +121,9 @@ class Engine:
         s = -dtw(C, False, L, band)
         return {c: round(max(0.0, 1.0 + float(v)), 6) for c, v in zip(cand, s)}
 
-    def vec(self, rid: str) -> dict:
-        if rid not in self.st.raw:
-            return {}
-        n = self.st.ids.index(rid)
-        fix, sig = self.st.raw[rid]
-        app = np.concatenate([self.st.pf[n], self.st.ps[n]]) / np.sqrt(2.0)
-        mot = sig.std(0); mot /= np.linalg.norm(mot) + 1e-9
-        raw = sig.mean(0); raw /= np.linalg.norm(raw) + 1e-9
-        r = lambda a: [round(float(x), 7) for x in a]
-        return dict(appearance=r(app), motion=r(mot), siglip=r(raw))
+    # `vec` is gone with the store. The three vectors it returned are columns in
+    # the database, written once by ingest.py, and reading them from there costs
+    # a SELECT instead of 18 GB.
 
 
 def main() -> int:
@@ -130,7 +143,7 @@ def main() -> int:
                 eng = Engine()
             c = req.get("cmd")
             if c == "ping":
-                reply(dict(ok=True, n=len(eng.st.ids)))
+                reply(dict(ok=True, n=eng.n_traces))
             elif c == "text":
                 reply(dict(ok=True, vecs=eng.text(req["texts"])))
             elif c == "pair":
@@ -139,8 +152,6 @@ def main() -> int:
                 t = time.time()
                 s = eng.rank(req["query"], req["cand"], float(req.get("band", 0.25)))
                 reply(dict(ok=True, scores=s, ms=round((time.time()-t)*1e3, 1)))
-            elif c == "vec":
-                reply(dict(ok=True, **eng.vec(req["id"])))
             elif c == "quit":
                 return 0
             else:
