@@ -2525,3 +2525,17 @@ scratch on exactly the inputs it is allowed.
 Consecutive rows share SPAN-HOP seconds of video, so an unguarded 1-NN asks
 whether a clip can find itself shifted by one hop. It read 1.000 where the honest
 number was 0.324, and it reversed the ranking of every arm tested.
+
+2026-08-17 - Pivoted the hackathon entry from Brigade (robot) to Showreel (search)
+Brigade's memory claim was proven for one object and blocked for two (no
+instance identity in RelMo spans, no "take out" action in libero_goal, one bowl
+in the scene). The measured strength was never the robot — it is label-free
+query-by-example over video. Showreel drops the policy entirely and shows the
+market problem instead of explaining it: type a query, watch text return the
+opposite action; hand it a clip, watch it work.
+
+2026-08-17 - Which prefilter view wins depends on what the corpus varies in
+appearance 0.786 / motion 0.391 on RoboCasa (57 tasks, different rooms).
+appearance 0.649 / motion 0.748 on LIBERO (10 behaviours, one kitchen). Match on
+appearance when the corpus varies in SCENE, on motion when it varies only in
+ACTION. Both indexed; `view` selects per query.
