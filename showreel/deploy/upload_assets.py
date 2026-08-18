@@ -12,6 +12,11 @@ Two asset classes, both outside the database, uploaded to one private bucket:
 console hands out presigned URLs with an hour of life, so the only way to read a
 clip is to have asked this app for it.
 
+Only the database this DSN points at is repointed, which is why local Postgres
+and CockroachDB end up different: the laptop keeps playing files off disk with
+no AWS credentials at all, and the cloud deployment reads S3. `repoint.py` moves
+either one in either direction.
+
 Resumable by construction. It lists what the bucket already holds and uploads
 the difference, so an interrupted run costs the objects in flight rather than
 the run. That matters at 7,000 objects over a home connection.
