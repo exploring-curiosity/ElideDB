@@ -20,9 +20,14 @@ ENV PYTHONUNBUFFERED=1 \
     OMP_NUM_THREADS=2 \
     SHOWREEL_RELMO_PYTHON=/usr/local/bin/python
 
-# libpq for psycopg2, ca-certificates so sslmode=verify-full can verify
-# CockroachDB Cloud without shipping a root.crt: the cluster presents a
-# Let's Encrypt chain, and ISRG Root X1 is already in this bundle.
+# libpq for psycopg2, ca-certificates for the CockroachDB Cloud chain.
+#
+# The DSN must say sslrootcert=system. Under verify-full libpq does NOT fall
+# back to the system trust store: it looks for ~/.postgresql/root.crt and fails
+# when the file is absent, which in a container it always is. The cluster
+# presents a Let's Encrypt chain and ISRG Root X1 is in this bundle, so naming
+# the system store is all that is needed, and shipping a copied root.crt would
+# only add a file to rotate.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
 
