@@ -19,6 +19,17 @@ elidedb query   kitchen  /clips/spill.mp4        # ask
 3 hits in 554 ms
 ```
 
+### Try it without installing anything
+
+| demo | what it shows | cold start |
+|---|---|---|
+| **[Query by example](https://huggingface.co/spaces/SudharshanR/elidedb-qbe)** | pick a few clips, get their kind back. Loads **no model at all** — everything it ranks was computed at ingest. | seconds |
+| **[Text search](https://huggingface.co/spaces/SudharshanR/elidedb-demo)** | describe what you want in words. Five text towers, so the first boot is slow. | ~15 min |
+
+Both run on the public [demo store](https://huggingface.co/datasets/SudharshanR/elidedb-demo-store)
+(1,122 recordings, ~1.3 GB) — the same store you get locally with the commands
+under [Run the demos yourself](#run-the-demos-yourself).
+
 ---
 
 ## What it's for
@@ -66,7 +77,8 @@ Requires Python 3.11+, `ffmpeg`, and ~8 GB RAM. Apple Silicon (MPS) or CPU;
 CUDA untested.
 
 ```bash
-git clone <this repo> && cd StreetDex
+git clone https://github.com/exploring-curiosity/ElideDB.git
+cd ElideDB
 pip install torch transformers numpy tqdm
 brew install ffmpeg            # or apt install ffmpeg
 cd native
@@ -149,6 +161,46 @@ treated as genuinely different.
 - Single machine. No server, no auth, no replication.
 - Search cost grows linearly with store size; ~550 ms at 3.5k recordings.
 
+## Models and checkpoints
+
+**There are no ElideDB weights.** Nothing here is trained on your data, which
+is why the numbers above hold on unfamiliar material — there is no model to
+drift, retrain, or version when you point it somewhere new.
+
+The two encoders are frozen, off-the-shelf, and downloaded from Hugging Face
+on first use (~1.5 GB total, cached under `~/.cache/huggingface`):
+
+| checkpoint | role |
+|---|---|
+| [`facebook/vjepa2-vitl-fpc64-256`](https://huggingface.co/facebook/vjepa2-vitl-fpc64-256) | what changed, moment to moment |
+| [`google/siglip2-base-patch16-224`](https://huggingface.co/google/siglip2-base-patch16-224) | what it looks like |
+
+To pre-fetch them (air-gapped machines, or to get the download out of the way):
+
+```bash
+huggingface-cli download facebook/vjepa2-vitl-fpc64-256
+huggingface-cli download google/siglip2-base-patch16-224
+```
+
+`native/wm_*.pt` are artifacts of a retired world-model experiment. They are
+not on any read path and you do not need them.
+
+## Run the demos yourself
+
+Both Hugging Face Spaces above are this repo's `deploy/` directory pointed at
+a downloaded store. To run the same thing locally:
+
+```bash
+pip install -r deploy/requirements-qbe.txt
+huggingface-cli download SudharshanR/elidedb-demo-store --repo-type dataset --local-dir lake
+python deploy/qbe_serve.py --port 7860        # http://localhost:7860
+```
+
+The query-by-example demo loads no model, so it warms in about a second and
+answers in ~250 ms. The text demo is `deploy/serve.py` with
+`deploy/requirements.txt`; it downloads five text towers first, so give it
+time. `deploy/README.md` covers deployment and the staging scripts.
+
 ## Repo layout
 
 | path | what |
@@ -160,4 +212,44 @@ treated as genuinely different.
 | `native/SYSTEM.md` | architecture and measured numbers |
 | `native/EXPERIMENTS.md` | every approach tried and what it scored |
 
-Anything in `native/relmo/` not listed above is internal.
+| `python/elidedb/` | the **store layer** — Parquet tables, channels, query-by-example (`qbe.py`) |
+| `deploy/` | the two web demos, and the scripts that stage them to Hugging Face |
+| `docs/FORMAT.md` | on-disk format, byte layout |
+| `docs/ARCHITECTURE.md` | how the pieces fit |
+| `BENCHMARKS.md` | every benchmark run, raw |
+
+Anything in `native/relmo/` not listed above is internal. `deprecated/`,
+`bench/`, `eval/` and `scripts/` are research history kept for provenance —
+useful if you want to see what was tried and what it scored, not needed to
+run anything.
+
+There are **two entry points**, and they answer different questions:
+
+- **`native/relmo`** — the current system. Query a store with a video clip.
+  This is what the CLI and `Memory` API above drive.
+- **`python/elidedb`** — the store layer the web demos serve, including
+  multi-channel query-by-example and text search. Use this if you want the
+  Parquet format, the channel fusion, or the demos.
+
+## Contributing
+
+Issues and pull requests are welcome. Two things make a change easy to accept:
+
+1. **Numbers, not intuitions.** This project's rule is that a claim about
+   retrieval quality comes with the run that produced it. `BENCHMARKS.md` has
+   the format; `native/EXPERIMENTS.md` records approaches that were tried and
+   *failed*, which is just as useful.
+2. **Say why in the code.** Comments here explain the design decision behind a
+   line, not what the line does. If you change a constant, say what you
+   measured.
+
+Please do not add: a network layer, auth, or per-dataset configuration.
+Nothing may be hardwired about a particular corpus — no label vocabularies,
+no class lists, no dataset-specific priors. Everything the ranker uses is
+computed from the data at hand.
+
+## License
+
+MIT — see [LICENSE](LICENSE). The upstream encoders carry their own licenses
+(V-JEPA 2 and SigLIP 2 are both permissive; check their model cards before
+commercial use).
