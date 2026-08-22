@@ -2712,3 +2712,9 @@ Moved showreel out of StreetDex and the Dell demo out of fleetmem into ~/Studies
 
 2026-08-22 - Tool-boundary ordering beats briefing wording
 The sandboxed agent ignored the comparator's pick and delivered the twin. First probe is now required to be the comparator's exemplar, enforced in /tool/probe; later probes stay free so re-anchor and abstain keep their authority.
+
+2026-08-22 - A second Space instead of a second mode in the first
+Query by example ships as its own image and Space: it loads no model, so bundling it with the text service would have made it inherit torch and a 15 min first boot for nothing. Both read the same public store dataset; neither writes to it.
+
+2026-08-22 - Scratch stripped, checkpoints to LFS
+GitHub rejected the branch over 1.26 GB of scratch_distill .npz in history. filter-repo removed those paths from all commits and git lfs migrate moved *.pt (236 MB) to LFS; backup bundle at ~/Studies/MyProjects/ElideDB-backup-20260822.bundle. Pre-rewrite commit hashes are dead.
