@@ -213,8 +213,18 @@ def _score(A, op, seeds):
         pm = A[seeds].mean(0)
         return np.log(A + 1e-12) @ pm
     cen = A[seeds].mean(0)
-    n = np.linalg.norm(cen)
-    return A @ (cen / n) if n > 0 else np.zeros(len(A))
+    n = float(np.linalg.norm(cen))
+    # A seed row can be absent from a channel (the store holds 1,121 of
+    # 1,122 episodes for sig2 and iv2), and leave-one-out scores a single
+    # seed at a time, so a degenerate centroid is reachable in normal
+    # operation. `n > 0` admitted denormals, and the division then raised
+    # divide-by-zero and overflow on every query. The scores it produced
+    # were masked downstream by the isfinite check, so the ranking never
+    # changed - but a query that prints three numpy warnings reads as
+    # broken, and a guard that only mostly holds is not a guard.
+    if not np.isfinite(n) or n <= 1e-12:
+        return np.zeros(len(A))
+    return A @ (cen / n)
 
 
 def _pair(A, op, rows, cols):

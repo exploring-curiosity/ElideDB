@@ -1,0 +1,34 @@
+# ElideDB query-by-example service. Build from the REPO ROOT:
+#   docker build -f deploy/Dockerfile.qbe -t elidedb-qbe .
+#   docker run -p 7860:7860 -v $PWD/lake:/app/lake elidedb-qbe
+#
+# Deliberately not the text image. That one carries torch and five text
+# towers because a sentence has to be encoded before it can be matched.
+# Query by example matches vectors the store already holds, so this image
+# has no model in it at all - it boots as fast as the store downloads.
+FROM python:3.11-slim
+
+# ffmpeg muxes the clips the results play; every frame is decoded from the
+# stored video's own bytes, so there is no image or preview cache anywhere.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY deploy/requirements-qbe.txt /app/deploy/requirements-qbe.txt
+RUN pip install --no-cache-dir -r deploy/requirements-qbe.txt
+
+COPY python /app/python
+COPY deploy/entrypoint-qbe.sh /app/deploy/entrypoint-qbe.sh
+COPY deploy/qbe_serve.py /app/deploy/qbe_serve.py
+COPY deploy/qbe_ui.html /app/deploy/qbe_ui.html
+RUN chmod +x /app/deploy/entrypoint-qbe.sh
+
+ENV PYTHONPATH=/app/python \
+    ELIDEDB_DEVICE=cpu \
+    DEMO_STORE_DATASET=SudharshanR/elidedb-demo-store \
+    ELIDEDB_LAKE=lake \
+    PORT=7860 \
+    HF_HOME=/app/hf_cache
+
+EXPOSE 7860
+CMD ["/app/deploy/entrypoint-qbe.sh"]

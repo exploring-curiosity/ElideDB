@@ -1,0 +1,198 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ElideDB · Query by Example</title>
+<style>
+  :root{
+    --bg:#0b0e10; --panel:#131719; --line:#232a2e; --ink:#e2e8ea;
+    --dim:#8a969c; --accent:#6ee7a8; --accent-dim:#1d3a2e; --warn:#e3b341;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.55 var(--mono)}
+  header{padding:16px 22px;border-bottom:1px solid var(--line)}
+  h1{margin:0;font-size:15px;font-weight:600;letter-spacing:.01em}
+  header p{margin:5px 0 0;color:var(--dim);font-size:12px;max-width:76ch}
+  header b{color:var(--ink);font-weight:600}
+  main{padding:16px 22px 40px}
+  .bar{position:sticky;top:0;z-index:5;background:var(--bg);
+       border-bottom:1px solid var(--line);padding:11px 0;margin-bottom:14px;
+       display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .bar .count{color:var(--dim);font-size:12px}
+  .bar .count b{color:var(--accent)}
+  button{background:var(--accent-dim);border:1px solid #2f5c48;
+    color:var(--accent);padding:8px 16px;border-radius:6px;
+    font:13px var(--mono);cursor:pointer}
+  button:disabled{opacity:.35;cursor:default}
+  button.ghost{background:transparent;border-color:var(--line);
+    color:var(--dim)}
+  h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+     color:var(--dim);margin:22px 0 9px;font-weight:600}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+        gap:9px}
+  .c{position:relative;border:1px solid var(--line);border-radius:6px;
+     overflow:hidden;background:var(--panel);cursor:pointer;aspect-ratio:4/3}
+  .c img,.c video{width:100%;height:100%;object-fit:cover;display:block}
+  .c .ph{width:100%;height:100%;background:#0f1315}
+  .c.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .c .t{position:absolute;left:0;bottom:0;right:0;padding:3px 6px;
+        background:linear-gradient(transparent,rgba(0,0,0,.82));
+        font-size:10px;color:#c7d0d4}
+  .c .n{position:absolute;top:5px;left:6px;font-size:10px;color:var(--accent);
+        background:rgba(0,0,0,.6);padding:1px 5px;border-radius:3px}
+  #results .c{cursor:default}
+  .why{border:1px solid var(--line);border-radius:8px;background:var(--panel);
+       padding:12px 14px;margin:10px 0 4px}
+  .why .h{font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+          color:var(--dim);margin-bottom:9px}
+  .w{display:flex;align-items:center;gap:9px;margin:4px 0;font-size:12px}
+  .w .nm{width:62px;color:var(--ink)}
+  .w .track{flex:1;height:7px;background:#0f1315;border-radius:4px;
+            overflow:hidden}
+  .w .fill{height:100%;background:var(--accent)}
+  .w .v{width:44px;text-align:right;color:var(--dim)}
+  .note{color:var(--dim);font-size:11.5px;margin-top:9px;line-height:1.5}
+  .note b{color:var(--ink);font-weight:600}
+  .err{color:var(--warn)}
+  .tray{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+  .tray .chip{width:62px;height:47px;object-fit:cover;border-radius:4px;
+    border:1px solid var(--accent);cursor:pointer}
+  .pager{display:flex;gap:10px;align-items:center;margin:6px 0 10px}
+</style>
+<header>
+  <h1>ElideDB · query by example</h1>
+  <p><b>1,122 robot episodes, and not one word of text.</b> Pick clips that
+  show the same kind of moment; the archive returns its own kind. Nothing is
+  described, nothing is labelled, and no model runs to answer you — every
+  vector was computed when the video was written, so a query is arithmetic
+  over columns.</p>
+</header>
+<main>
+  <div class="bar">
+    <span class="count"><b id="nsel">0</b> picked <span id="hint">·
+      8–10 of the same kind works best</span></span>
+    <button id="go" disabled>find more like these</button>
+    <button id="clear" class="ghost">clear</button>
+    <span class="count" id="stat"></span>
+  </div>
+  <div id="seltray" class="tray"></div>
+  <div id="out"></div>
+  <h2 id="archhead">the archive</h2>
+  <div class="pager" id="pager"></div>
+  <div class="grid" id="archive"></div>
+  <div class="pager" id="pager2"></div>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+const esc=t=>String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let EPS=[], STORE='', sel=[];
+
+const thumb=(e,w)=>`/api/thumb?store=${encodeURIComponent(STORE)}&stream=${encodeURIComponent(e.stream)}&t=${e.ts}&w=${w||220}`;
+const clip =e=>`/api/clip?store=${encodeURIComponent(STORE)}&stream=${encodeURIComponent(e.stream)}&t0=${e.ts}&t1=${e.ts+6000000000}&w=420`;
+const shortName=e=>e.stream.split('/').pop()+' · '+new Date(e.ts/1e6).toISOString().slice(11,19);
+
+// Thumbnails are decoded on demand from the video's own bytes - there is no
+// pre-baked image anywhere in the store. A page at a time is what makes that
+// affordable: 120 decodes at ~50 ms, not 1,122. They load eagerly on purpose.
+// Both deferred approaches - IntersectionObserver and loading="lazy" - left
+// the grid blank in verification, and an archive you cannot see is not an
+// archive you can pick from. A bounded page costs less than a clever one.
+const PAGE=120; let page=0;
+
+function card(e,i){
+  return `<div class="c${sel.includes(i)?' on':''}" data-i="${i}">
+    <img decoding="async" src="${thumb(e)}" alt="">
+    <div class="t">${esc(shortName(e))}</div></div>`;
+}
+
+function paintArchive(){
+  const n=Math.ceil(EPS.length/PAGE);
+  page=Math.max(0,Math.min(page,n-1));
+  const a=page*PAGE, b=Math.min(a+PAGE,EPS.length);
+  $('#archive').innerHTML=EPS.slice(a,b).map((e,k)=>card(e,a+k)).join('');
+  $('#pager').innerHTML=`<button class="ghost" id="prev" ${page?'':'disabled'}>&larr;</button>
+    <span class="count">${a+1}–${b} of ${EPS.length}</span>
+    <button class="ghost" id="next" ${page<n-1?'':'disabled'}>&rarr;</button>`;
+  const pv=$('#prev'), nx=$('#next');
+  if(pv)pv.onclick=()=>{page--;paintArchive();};
+  if(nx)nx.onclick=()=>{page++;paintArchive();};
+}
+
+function refreshSel(){
+  $('#nsel').textContent=sel.length;
+  $('#go').disabled=sel.length===0;
+  $('#hint').textContent=sel.length>=8?'· good sample size':(sel.length?'· add a few more of the same kind':'· 8–10 of the same kind works best');
+  [...$('#archive').children].forEach(d=>{
+    d.classList.toggle('on', sel.includes(+d.dataset.i));
+  });
+  const t=$('#seltray');
+  t.innerHTML=sel.length?sel.map(i=>
+    `<img class="chip" src="${thumb(EPS[i],120)}" data-i="${i}" title="click to drop">`).join(''):'';
+}
+
+$('#archive').addEventListener('click',ev=>{
+  const c=ev.target.closest('.c'); if(!c)return;
+  const i=+c.dataset.i, k=sel.indexOf(i);
+  if(k>=0) sel.splice(k,1); else sel.push(i);
+  refreshSel();
+});
+$('#seltray').addEventListener('click',ev=>{
+  if(ev.target.dataset.i===undefined)return;
+  const k=sel.indexOf(+ev.target.dataset.i);
+  if(k>=0){sel.splice(k,1);refreshSel();}
+});
+$('#clear').onclick=()=>{sel=[];refreshSel();$('#out').innerHTML='';$('#stat').textContent='';};
+
+$('#go').onclick=async()=>{
+  $('#go').disabled=true; $('#stat').textContent='ranking…';
+  const body={store:STORE,k:24,seeds:sel.map(i=>[EPS[i].stream,EPS[i].ts])};
+  let d;
+  try{ d=await (await fetch('/api/like',{method:'POST',body:JSON.stringify(body)})).json(); }
+  catch(e){ d={error:String(e)}; }
+  $('#go').disabled=false;
+  if(d.error){ $('#stat').innerHTML=`<span class="err">${esc(d.error)}</span>`; return; }
+  $('#stat').textContent=`${d.ms} ms`;
+  const ws=Object.entries(d.weights||{});
+  const mx=Math.max(...ws.map(x=>x[1]),1e-9);
+  $('#out').innerHTML=`
+    <h2>what came back — ${d.clips.length} moments</h2>
+    <div class="grid" id="results">${d.clips.map((e,i)=>
+      `<div class="c" data-r="${i}">
+         <img decoding="async" src="${thumb(e)}" alt="">
+         <span class="n">${i+1}</span>
+         <div class="t">${esc(shortName(e))}</div></div>`).join('')}
+    </div>
+    <div class="why">
+      <div class="h">which model recognised your pick</div>
+      ${ws.map(([c,w])=>`<div class="w"><span class="nm">${esc(c)}</span>
+        <span class="track"><span class="fill" style="width:${(100*w/mx).toFixed(1)}%"></span></span>
+        <span class="v">${w.toFixed(2)}</span></div>`).join('')}
+      <div class="note">Every channel votes, but not equally. The weight is
+      how tightly that model pulls <b>your</b> picks together relative to how
+      it holds the whole archive — computed from the query itself, with no
+      labels and no training. ${d.note?`<br><b>${esc(d.note)}</b>`:''}
+      <br>The number returned is a <b>ceiling, not a target</b>: each pick is
+      held out in turn to see how deep its own kind ranks, and the set stops
+      where that evidence stops. Returned means believed.</div>
+    </div>`;
+  const g=$('#results');
+  [...g.children].forEach((div,i)=>{
+    const e=d.clips[i];
+    div.onclick=()=>{
+      if(div.querySelector('video'))return;
+      const v=document.createElement('video');
+      v.src=clip(e); v.controls=true; v.autoplay=true; v.loop=true; v.muted=true;
+      div.querySelector('img').replaceWith(v);
+    };
+  });
+  window.scrollTo({top:0,behavior:'smooth'});
+};
+
+(async()=>{
+  const d=await (await fetch('/api/archive')).json();
+  EPS=d.episodes; STORE=d.store;
+  $('#archhead').textContent=`the archive — ${EPS.length} episodes, ${d.channels.length} channels (${d.channels.join(', ')})`;
+  paintArchive();
+})();
+</script>

@@ -25,6 +25,10 @@ hf_cache/
 deploy/demo/
 # HF Space staging: deploy/stage_space.py
 deploy/space/
+# staged Space repos: assembled by deploy/stage_space*.py and pushed to
+# their own Hugging Face remotes, so tracking them here would keep two
+# copies of the same files in two histories.
+deploy/space_qbe/
 
 # ---- separate research project, not part of the database product ----------
 # FDNN_BrainModel is the neuron/pruning research this repo's context tower

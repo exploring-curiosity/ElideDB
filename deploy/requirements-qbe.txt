@@ -1,0 +1,13 @@
+# The query-by-example service. NO MODEL RUNS AT QUERY TIME: every vector
+# was computed at ingest, so serving is numpy over parquet columns and the
+# torch stack that the text service needs is simply absent. That is the
+# difference between a fifteen minute first boot and a fifteen second one,
+# and it is the storage argument made concrete rather than asserted.
+numpy<2.1
+pyarrow>=17
+pillow>=10
+huggingface_hub>=0.26
+# the frame decoder behind every thumbnail and clip: frames are decoded
+# from the stored video's own byte ranges on demand, never pre-baked, so
+# the decoder is not optional even though no model is.
+opencv-python-headless>=4.10
