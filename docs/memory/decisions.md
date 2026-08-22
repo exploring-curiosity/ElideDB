@@ -2596,3 +2596,119 @@ transitive imports are ten RelMo modules, all numpy, taken from sys.modules.
 
 2026-08-18 - EventBridge rule created DISABLED
 A schedule is a standing commitment against a live cluster. Enable is one line.
+2026-08-20 - mission control lives inside fleet_api.py
+Chose extending the fleet API with a host-only /ui surface (event bus + transcript tailer + /media) over a separate dashboard server, because the page then observes the exact server the agent talks to — a mirror, never an input; the sandbox egress policy (only /fleet/**) means the agent cannot see the UI. Agent reasoning is tailed from OpenClaw's own session jsonl, not re-narrated.
+
+2026-08-20 - fleet-memory concept rejected; build frozen
+Author's verdict: "what is the use of just telling the robot is not good at doing task x
+so dont do it... they know what the robot is meant to do before it ships." Capability
+discovery is a spec-sheet fact, not a purchasable pain. The error was anchoring on a
+STATIC property of a policy. Real pains are about CHANGE (new checkpoint silently
+regresses, new site doesn't transfer) and SCALE (data pile grows, nobody knows what's in
+it; next 500 demos cost six figures and nobody knows which 500). Re-ideating from
+evidence rather than intuition. Assets remain reusable: GR00T+RoboCasa sim, ElideDB
+pixels-only retrieval, Qwen3-VL, 30B sandboxed agent, mission-control UI.
+
+2026-08-21 - Apprentice: the demo job is the WORDING gap, not composition
+Chose "a person's words vs the sentence the policy obeys" over "compose a new
+job from atomic skills" because the second was measured dead on this machine:
+PrepareCoffee 0/6 across naive/2-step/3-step, atomic button presses 0/4,
+OpenDrawer 0/6, and two-fixture jobs fail on reach (the base will not drive).
+CloseDrawer is 39/40 when addressed as trained and ~0 when asked in plain
+English - that gap is real, measured here, and is the product.
+
+2026-08-21 - Decomposition is not universally better; say so
+FlushTheTap measured one-sentence 4/6 vs two-step plan 2/6: splitting a single
+continuous handle motion HURTS. Kept the finding in THESIS.md rather than
+quietly dropping the arm that disagreed with the pitch.
+
+2026-08-21 - Custom composite envs subclass RoboCasa, never write goal state
+apprentice/sim/custom_envs.py defines jobs (FlushTheTap, DrawerCheck,
+ShutTheDrawers, CloseUpStation) by subclassing shipped tasks: reset sets up the
+scene the way robocasa's own tasks do, checkers only READ. The headline demo
+uses RoboCasa's unmodified CloseDrawer, which is the most defensible option of
+all.
+
+2026-08-21 - apprentice: attempt ids come from the filesystem, not a counter
+Restarting the API restarted numbering at a001, so a new attempt overwrote the
+previous one's plan, video and progress file - and the progress watcher opened
+the OLD progress file and replayed it onto the live page. Ids now continue from
+what is on disk.
+
+2026-08-21 - apprentice: the API refuses a plan that still has a blank in it
+Older CloseDrawer episodes recorded the sentence as "close the <left or right>
+drawer" but not which side. An agent pasted that template to the robot verbatim
+and nothing moved. Chose a guard (refuse "<...>"; tell the agent to fill it and
+to try the other filling if nothing moves) over silently substituting a side -
+the missing detail IS the product claim, so the agent must resolve it.
+
+2026-08-21 - apprentice: the skill write-down runs in a FRESH session
+Appending "now write the skill" to the working session overflowed qwen3's 32k
+window twice and returned "context overflow" instead of a skill. The closing
+turn now opens a new session key carrying only the winning sentence, the memory
+ids and the job text. Also: /fleet/recall returns the tally + 6 citable examples
+instead of up to 40 near-identical rows, and OpenClaw is pinned to tools.allow
+= ["exec"] (24 tool schemas -> 1; 24.5k chars -> 2k, and the agent stops
+reaching for its useless built-in memory_search).
+
+2026-08-21 - apprentice: one job = one room, pinned by a per-job gym registration
+Every retry had been happening in a DIFFERENT kitchen: layout, style and which
+drawer is open all come from Kitchen.self.rng, seeded when the env is
+constructed - env.reset(seed=) only touches the global numpy RNG. So "that
+wording failed, try the other side" was chasing a side that had already moved,
+and the recall clip was footage of a room that no longer existed. Fix: register
+a per-job gym id carrying kwargs={"seed": N} (gym registrations can hold default
+kwargs) and use it for every attempt in the job. Verified: 3 runs, same
+layout/style/side.
+
+2026-08-21 - apprentice: the last card on the page is the record, not the claim
+A run ended with the agent telling the person "I closed the right drawer for
+you" after a recorded failure; the timing-based supervisor could not see it
+(the claim came after the outcome existed). Added (a) a correction turn that
+hands back the record whenever nothing landed, and (b) a `verdict` event built
+only from attempt records, rendered last. No claim-parsing, no judge model -
+the sim predicate is the arbiter.
+
+2026-08-21 - apprentice memory indexes spans, not episodes
+Chose to carve composite episodes into one memory per phase (ingest_spans.py)
+over indexing whole episodes, because every corpus clip was a 2s OPENING and a
+mid-job state resembles none of them - so a halfway-through agent had nothing
+to retrieve. Phase boundaries come from the plan runner's own record (it chose
+when to change the sentence), so no annotation is involved; the step->second
+factor is measured per episode rather than hard-coded so a recorder change
+cannot silently move every boundary. A phase carries its own verified outcome,
+so a failed composite can still contribute a part that worked.
+
+2026-08-21 - /fleet/recall_from_here rather than a parameter on /fleet/recall
+Chose a second route over an `at=` argument, because the agent is a 30B model
+on a 32k context and a route it can be told when to use is cheaper to follow
+than a flag it has to reason about. Same store, same k; only the query clip
+changes (last 2s vs first 2s).
+
+2026-08-21 - demo surface: harness, not apprentice
+Chose fleetmem/harness (fleet mission control: preview -> induce ->
+attempt/escalate) over fleetmem/apprentice (drawer/sink composite
+decomposition) because the user rejected the drawer as irrelevant and asked
+for something already built and measured. Harness has G3 measured (n=200,
+AUC 0.848 vs base 0.29), G4 producing real local-VLM escalations, and G5
+rehearsed inside the OpenShell sandbox. Its demo does not depend on the VLA
+succeeding, so nothing on stage is a coin flip. Apprentice is set aside, not
+deleted — it shares the fleet API and chassis.
+
+2026-08-22 - Agent re-anchoring gated on unreliable retrievals only
+Chose offering TRY only on SCATTERED/EMPTY over always-offering it because the model tightness-shops: it abandoned the correct close-microwave anchor (MIXED@40, hub asymmetry) for the tighter open cluster and delivered the twin. Alternatives were already judged worse at choose time; matches the measured spans-corpus ablation result.
+
+2026-08-22 - Agent self-check measured in the index's own space
+Chose DTW reciprocity (results retrieve anchor back) over pooled-space coherence because pooled anti-correlates exactly where the motion index wins: fridge QbE 0.96 read as SCATTERED@8 and mean fell 0.79->0.59.
+
+2026-08-22 - Selection is a measured subroutine, not free-form agency
+Chose /tool/compare (14B align+choose, gate-measured) over the 30B agent's free-form anchor choice because three briefing iterations failed the same way: literal token match beats pure exemplar on composite descriptions. The agent keeps probe/re-probe/abstain; delegation to measured subroutines is the design.
+
+2026-08-22 - Tool responses steer next actions
+Empty compare result now says 'POST /tool/abstain now' - the 30B ended turns without the mandatory final call until the tool response directed it.
+
+2026-08-22 - Submissions live beside the engine, not inside it
+Moved showreel out of StreetDex and the Dell demo out of fleetmem into ~/Studies/MyProjects/hackathons (gb10 + precedent). gb10 imports ElideDB via ELIDEDB_HOME rather than vendoring it, so the demo runs on the same code an outside caller gets; the bench also stopped carrying a 1.16 GB trace cache and deployment credentials.
+
+2026-08-22 - Tool-boundary ordering beats briefing wording
+The sandboxed agent ignored the comparator's pick and delivered the twin. First probe is now required to be the comparator's exemplar, enforced in /tool/probe; later probes stay free so re-anchor and abstain keep their authority.
