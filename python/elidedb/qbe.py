@@ -392,11 +392,39 @@ def search_like(store, seed_keys, k_max=50, power=ZPOWER, drop_pc=DROP_PC):
     seeds = np.array(sorted({pos[k] for k in seed_keys if k in pos}))
     if not len(seeds):
         return {"clips": [], "weights": {}, "note": "no seed in store"}
-    q = {c: max(loo_quality(A, ok, seeds, op), 0.0)
-         for c, (A, ok, op) in M.items()}
+    # THE WEIGHTING LADDER IS BOUNDED BY SEED COUNT, and must degrade
+    # rather than refuse. loo_quality needs three seeds to form ordered
+    # pairs and coherence needs two; below that there is no statistic
+    # the query itself supplies, and the first form of this returned
+    # NOTHING - a one-seed query read as "no channel responded", which
+    # on a working index is indistinguishable from a broken one. It is
+    # the weighting that is unavailable, not the retrieval: the
+    # centroid of one seed is still a query. So the fallback is an
+    # unweighted vote, which is measurably blunter (equal weights let
+    # five near-noise channels outvote the one that recognises the
+    # query) but is an answer, and the note says which rung ran.
+    if len(seeds) >= 3:
+        q = {c: max(loo_quality(A, ok, seeds, op), 0.0)
+             for c, (A, ok, op) in M.items()}
+        note = ""
+    elif len(seeds) == 2:
+        q = {c: max(coherence(A, ok, seeds, op), 0.0)
+             for c, (A, ok, op) in M.items()}
+        note = ("Two seeds: channels weighted by seed coherence, not by "
+                "leave-one-out retrieval. Add a third for the sharper "
+                "weighting.")
+    else:
+        q = {c: 1.0 for c in M}
+        note = ("One seed: every channel votes equally, because nothing "
+                "in a single example says which model recognised it. "
+                "Add two more seeds to weight them.")
     mx = max(q.values()) if q else 0.0
     if mx <= 0:
-        return {"clips": [], "weights": q, "note": "no channel responded"}
+        # Every channel at chance. Still not a reason to return nothing.
+        q = {c: 1.0 for c in M}
+        mx = 1.0
+        note = ("No channel separated these seeds from the corpus, so "
+                "all of them vote equally - treat this ranking as weak.")
     w = {c: (v / mx) ** power for c, v in q.items()}
     tot = None
     for c, (A, ok, op) in M.items():
@@ -466,4 +494,5 @@ def search_like(store, seed_keys, k_max=50, power=ZPOWER, drop_pc=DROP_PC):
         cut = otsu_cut(tot[order], k_max)
     return {"clips": [keys[i] for i in order[:cut]],
             "weights": {c: round(x, 3) for c, x in
-                        sorted(q.items(), key=lambda kv: -kv[1])}}
+                        sorted(q.items(), key=lambda kv: -kv[1])},
+            "note": note}
