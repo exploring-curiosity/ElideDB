@@ -2718,3 +2718,21 @@ Query by example ships as its own image and Space: it loads no model, so bundlin
 
 2026-08-22 - Scratch stripped, checkpoints to LFS
 GitHub rejected the branch over 1.26 GB of scratch_distill .npz in history. filter-repo removed those paths from all commits and git lfs migrate moved *.pt (236 MB) to LFS; backup bundle at ~/Studies/MyProjects/ElideDB-backup-20260822.bundle. Pre-rewrite commit hashes are dead.
+
+2026-08-22 - ElideDB open-sourced, main is the rewritten history
+Fast-forwarded main onto relmo-vjepa-span (main was a strict ancestor after
+the filter-repo rewrite) and force-pushed over the stale pre-rewrite remote
+main; all 101 remote-only commits had identical subjects locally, so nothing
+was lost. Repo flipped PUBLIC after a secret scan of tracked files and full
+history came back clean. MIT license. README now carries the two HF Space
+links, the upstream checkpoint links, and states plainly that no ElideDB
+weights exist - that absence is the load-bearing claim, not an omission.
+
+2026-08-22 - QbE weighting degrades instead of refusing
+search_like returned nothing below three seeds, because loo_quality needs
+three to form ordered pairs and coherence needs two; every channel scored 0
+and the engine bailed. On the deployed Space that read as an index answering
+"0 moments" to everything. What is unavailable at one seed is the WEIGHTING,
+not the retrieval - a single seed is still a centroid - so the ladder now
+degrades (loo at 3+, coherence at 2, equal vote at 1) and the note says which
+rung ran. 3/5/8-seed results byte-identical.
