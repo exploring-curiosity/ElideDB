@@ -215,7 +215,8 @@ class Memory:
 
         if self._enc is None:
             from transformers import AutoModel, VJEPA2Model
-            dev = "mps" if torch.backends.mps.is_available() else "cpu"
+            from relmo.device import pick as _pick_device  # cuda > mps > cpu
+            dev = _pick_device()
             print(f"loading encoders onto {dev} (once per process)...",
                   flush=True)
             vj = VJEPA2Model.from_pretrained(
@@ -289,14 +290,27 @@ def _write_manifest(ds, vids, fps=None):
     """Manifest is derived from the FILES, never trusted from a prior run."""
     out = R.BASE / "datasets" / ds
     out.mkdir(parents=True, exist_ok=True)
-    eps, skipped = [], 0
+    # Recording ids come from filenames, but customer pipelines routinely
+    # name every clip the same thing (frames.mp4 in per-run folders). A bare
+    # stem would then collide: the second file matches the first one's
+    # already-written trace and is SILENTLY skipped as done. Disambiguate
+    # colliding stems with the parent folder, then a path hash - stable
+    # across re-runs, so resume still works.
+    from collections import Counter
+    import hashlib
+    stems = Counter(v.stem for v in vids)
+    seen, eps, skipped = set(), [], 0
     for v in vids:
         f = fps or _probe_fps(v)
         dur = _probe_dur(v)
         if dur < 4.0:                       # shorter than one encoder window
             skipped += 1
             continue
-        eps.append(dict(id=v.stem, video=str(v.resolve()), fps=f,
+        rid = v.stem if stems[v.stem] == 1 else f"{v.parent.name}_{v.stem}"
+        if rid in seen:
+            rid = f"{rid}_{hashlib.sha1(str(v.resolve()).encode()).hexdigest()[:8]}"
+        seen.add(rid)
+        eps.append(dict(id=rid, video=str(v.resolve()), fps=f,
                         T=int(round(dur * f))))
     if skipped:
         print(f"  skipping {skipped} clips shorter than the 4.0s window",

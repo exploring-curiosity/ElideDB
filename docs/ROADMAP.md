@@ -127,6 +127,7 @@ else can reproduce, and the cost of ingest drops with it.
 | Text as an entry point, built on the motion representation | designed; the first two layers require no training |
 | Continuous ingest pipeline (video in, trace kept, video deleted) | designed, not yet running |
 | Per-store adaptation (Phase 2) | next engineering phase |
+| Wire the memory layer onto the v1 database engine (Parquet store, elision reads) | engine functional, integration parked while the model layer matures |
 | Faster core and a hosted service | the store format is language-neutral by design, so the engine can be rewritten under it without touching data |
 
 ---

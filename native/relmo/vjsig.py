@@ -86,7 +86,8 @@ def main():
                  if not p.name.startswith("_")]
     if a.limit:
         files = files[:a.limit]
-    dev = "mps" if torch.backends.mps.is_available() else "cpu"
+    from relmo.device import pick as _pick_device  # cuda > mps > cpu
+    dev = _pick_device()
     print(f"loading {a.model} onto {dev}...", flush=True)
     model = AutoModel.from_pretrained(a.model, dtype=torch.float32).to(dev).eval()
     npar = sum(p.numel() for p in model.parameters())

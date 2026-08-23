@@ -199,7 +199,8 @@ def main():
     from tqdm import tqdm
     from transformers import VJEPA2Model
 
-    dev = "mps" if torch.backends.mps.is_available() else "cpu"
+    from relmo.device import pick as _pick_device  # cuda > mps > cpu
+    dev = _pick_device()
     dtype = torch.float32          # fp16 on MPS has produced NaNs here before
     # Load BEFORE the progress bar exists and say so: a lazy multi-GB load
     # inside iteration one hides behind a bar reading 0/N and looks hung.

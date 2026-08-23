@@ -134,6 +134,8 @@ def record_all(model, sg, torch, dev, frames, src_fps, cal, layer, dt_torch,
         frame0.append(idx[np.arange(CTX, n_t) * TUBELET])
     if dev == "mps":
         torch.mps.synchronize()
+    elif dev == "cuda":
+        torch.cuda.synchronize()
     if T is not None:
         T["vjepa"] += time.time() - t
 
@@ -172,6 +174,8 @@ def record_all(model, sg, torch, dev, frames, src_fps, cal, layer, dt_torch,
     sig = siglip_at(sg, torch, dev, frames, f0, sig_batch, mean, std)
     if dev == "mps":
         torch.mps.synchronize()
+    elif dev == "cuda":
+        torch.cuda.synchronize()
     if T is not None:
         T["siglip"] += time.time() - t
     assert len(sig) == len(f0), f"{len(sig)} != {len(f0)}"
@@ -250,7 +254,8 @@ def main():
     P = np.load(pfile)
     proj = P["W"].astype(np.float32)
 
-    dev = "mps" if torch.backends.mps.is_available() else "cpu"
+    from relmo.device import pick as _pick_device  # cuda > mps > cpu
+    dev = _pick_device()
     dt_torch = torch.float16 if a.fp16 else torch.float32
     print(f"loading {MODEL} + {SIG_MODEL} onto {dev} in "
           f"{'fp16' if a.fp16 else 'fp32'} (excluded from timings)...",
