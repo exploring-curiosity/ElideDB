@@ -46,5 +46,5 @@
 - user does not need the web UI; the 3D simulator window is the view they want (2026-08-21)
 - the judge-facing number is p_hat tracking per-task base rate, not AUC; a mixed panel reads the table in seconds where AUC needs explaining (2026-08-21)
 - g3_results.json row OpenSingleDoor__ep036__FAIL is a 1-in-40 outlier and happens to be the row a file preview shows; never conclude from one row (2026-08-21)
-- Landing page site/index.html rebuilt for QbE 2026-08-23 (was pitching deprecated v1 text search). Deploys to elide-db.vercel.app via whatever Vercel is wired to (no CLI here; likely Git integration from site/). Owner must push main / redeploy for it to go live
+- Landing page site/index.html rebuilt for QbE 2026-08-23 (was pitching deprecated v1 text search). Live at https://www.elidedb.com/ (apex 308s to www); rebuilt page verified serving 2026-08-23. Owner deploys via Vercel
 - pyproject.toml still packages the v1 engine (version 2.0.0, mlx/opencv/duckdb deps, python>=3.10); `pip install -e .` installs the parked product, not the memory layer (2026-08-23)

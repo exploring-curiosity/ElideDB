@@ -11,9 +11,9 @@ Point it at video, then query it with more video.
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-green)](docs/USAGE.md#1-install)
 [![Device](https://img.shields.io/badge/device-CUDA%20%7C%20Apple%20Silicon%20%7C%20CPU-lightgrey)](docs/USAGE.md#device-selection)
 [![Demo](https://img.shields.io/badge/%F0%9F%A4%97%20demo-query%20by%20example-yellow)](https://huggingface.co/spaces/SudharshanR/elidedb-qbe)
-[![Website](https://img.shields.io/badge/website-elide--db.vercel.app-2cff7e)](https://elide-db.vercel.app)
+[![Website](https://img.shields.io/badge/website-elidedb.com-2cff7e)](https://www.elidedb.com/)
 
-[Website](https://elide-db.vercel.app) ·
+[Website](https://www.elidedb.com/) ·
 [Know the project](#know-the-project) ·
 [See it](#see-it-in-two-clicks) ·
 [What it does](#what-it-does) ·
@@ -61,7 +61,7 @@ pick what you want to know.
 | [**Third-party notices**](THIRD_PARTY_NOTICES.md) | every model, library, and dataset used, with verified licenses |
 | [**License**](LICENSE) | PolyForm Noncommercial 1.0.0 |
 | [`docs/FORMAT.md`](docs/FORMAT.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | the v1 database engine: on-disk format and how its pieces fit |
-| [**elide-db.vercel.app**](https://elide-db.vercel.app) | the one-page pitch, for sending to someone who will not open a repository |
+| [**elidedb.com**](https://www.elidedb.com/) | the one-page pitch, for sending to someone who will not open a repository |
 
 ## See it in two clicks
 
