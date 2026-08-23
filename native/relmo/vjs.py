@@ -79,8 +79,19 @@ def probe_dims(mp4: Path):
 
 
 def read_frames(mp4: Path, w: int, h: int) -> np.ndarray:
-    p = subprocess.run(["ffmpeg", "-v", "error", "-i", str(mp4), "-f",
-                        "rawvideo", "-pix_fmt", "rgb24", "-"],
+    """Every frame the file actually contains, once each.
+
+    Without -fps_mode passthrough, ffmpeg's rawvideo output is constant-rate
+    at the container's DECLARED rate: a KITTI file tagged 25/1 over 10 Hz
+    content came back as 271 frames for 108 real ones, and with the content
+    rate used for timing, every stored trace of it was stretched 2.5x.
+    Passthrough hands back the real frames; the caller times them by the
+    real duration (frames / container duration), which is self-consistent
+    whatever the tag says. Files whose tag is honest are unchanged.
+    """
+    p = subprocess.run(["ffmpeg", "-v", "error", "-i", str(mp4),
+                        "-fps_mode", "passthrough",
+                        "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
                        stdout=subprocess.PIPE, check=True)
     return np.frombuffer(p.stdout, np.uint8).reshape(-1, h, w, 3)
 

@@ -43,7 +43,15 @@ def fit_whiten(X, k, eps=1e-3):
 
 
 def apply_w(X, w):
-    return (X - w[0]) @ w[1]
+    # Apple's Accelerate BLAS raises spurious divide/overflow/invalid status
+    # flags on this sgemm (inputs and outputs verified finite, |w| ~ 1), which
+    # numpy then reports as RuntimeWarnings on every query. Silence the flag,
+    # and make a REAL non-finite result loud instead of a warning.
+    with np.errstate(all="ignore"):
+        Y = (X - w[0]) @ w[1]
+    if not np.isfinite(Y).all():
+        raise FloatingPointError("whitening produced non-finite values")
+    return Y
 
 
 def participation(X, n=20000, seed=0):

@@ -313,7 +313,8 @@ def _brute(c, free_ends):
     return best
 
 
-def arc_resample(seq, mag, ds, aux=None, min_len=4, max_len=512):
+def arc_resample(seq, mag, ds, aux=None, min_len=4, max_len=512,
+                 return_src=False):
     """Re-index a trace by CUMULATIVE CHANGE instead of by time.
 
     seq  (T, D) descriptors
@@ -321,6 +322,10 @@ def arc_resample(seq, mag, ds, aux=None, min_len=4, max_len=512):
     ds          arc-length per output step; the corpus median of `mag` keeps
                 output length comparable to input length for a typical event
     aux         optional list of (T, *) arrays resampled on the same grid
+    return_src  also return `src` (n_out,): the fractional ORIGINAL step each
+                output step was sampled from. This is the only way back from
+                arc-length units to stream time, so a matched span of output
+                steps can be reported in seconds.
 
     A 7 s and a 20 s execution of one motion accumulate the same total change,
     so they emit the SAME number of steps. Idle stretches contribute little and
@@ -331,7 +336,9 @@ def arc_resample(seq, mag, ds, aux=None, min_len=4, max_len=512):
     s = np.concatenate([[0.0], np.cumsum(m)])          # (T+1,) knot positions
     total = float(s[-1])
     if total <= 0 or ds <= 0:
-        return (seq, list(aux or []))
+        ident = np.arange(len(seq), dtype=np.float64)
+        return (seq, list(aux or [])) if not return_src else \
+            (seq, list(aux or []), ident)
     n_out = int(np.clip(round(total / ds), min_len, max_len))
     # sample at step CENTRES so the first and last steps are represented
     want = (np.arange(n_out) + 0.5) * (total / n_out)
@@ -345,4 +352,6 @@ def arc_resample(seq, mag, ds, aux=None, min_len=4, max_len=512):
         ww = w if x.ndim == 2 else w[:, 0]
         return ((1 - ww) * x[lo] + ww * x[hi]).astype(np.float32)
 
+    if return_src:
+        return take(seq), [take(x) for x in (aux or [])], src
     return take(seq), [take(x) for x in (aux or [])]

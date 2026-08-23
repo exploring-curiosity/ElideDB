@@ -32,7 +32,9 @@ Two frozen, off-the-shelf encoders each contribute a channel:
 | **change** | V-JEPA 2 (ViT-L, `facebook/vjepa2-vitl-fpc64-256`) | how the scene is changing from moment to moment. V-JEPA 2 is a video model trained to predict its own future; the signal used here is its observed change over a window, pooled by where the model's own attention concentrates |
 | **appearance** | SigLIP 2 (`google/siglip2-base-patch16-224`) | what things look like: objects, surfaces, layout |
 
-The geometry is fixed and does not depend on the clip:
+The geometry is fixed and does not depend on the clip. Timing comes from
+the frames a file actually holds over its duration, never from the
+container's declared rate, which research files routinely get wrong:
 
 - video is resampled to **8 frames per second**
 - the encoder window is **32 frames, so 4 seconds**
@@ -129,10 +131,20 @@ similarity in [0, 1].
 
 ---
 
-## Step 5: ranking and the robot's special case
+## Step 5: ranking, the span, and the robot's special case
 
 Candidates are sorted by alignment score and the top k are returned with the
-recording id, its source path, and its time span.
+recording id, its source path, and the span inside it where the match lies.
+
+The span comes from a second, cheap pass. The ranking alignment is anchored
+at both ends, so its path spans the whole recording by construction and
+cannot say *where* inside a long recording the event sits. So for each
+returned recording the query is slid along the recording's trace and the
+window with the highest mean step similarity is taken; its start, mapped
+back from change-steps to stream seconds through the positions the
+resampler kept, is where the span begins, and it runs for the query's
+duration. On a known sub-clip this recovers the source offset exactly. A
+recording no longer than the query is reported whole.
 
 When the querier is a robot asking about its own history, the query is a
 trace that already exists in the store. Encoding is skipped entirely; only

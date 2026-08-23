@@ -11,8 +11,9 @@ full experimental record is in [native/EXPERIMENTS.md](../native/EXPERIMENTS.md)
 
 **What works now**
 
-- Query any store with a video clip and get ranked timestamps back in about
-  half a second, on a single machine.
+- Query any store with a video clip and get ranked results back in about
+  half a second, each with the span inside the recording where the match
+  lies.
 - Works on day one, on video the system has never seen. There is no setup
   model, no labeling step, and no tuning period. Measured precision is as
   good on unfamiliar tasks as on familiar ones.
@@ -26,10 +27,10 @@ full experimental record is in [native/EXPERIMENTS.md](../native/EXPERIMENTS.md)
   at "show me the closest matches" and not yet strong at "show me every
   instance." Exhaustive recall is the gap that matters most for the
   fleet-mining use case, and it is the top of this roadmap.
-- Results are whole recordings, not the exact matching moment inside them.
-- Queries are by example only; there is no text search yet.
-- Single machine, no server, no replication. Search cost grows linearly with
-  store size.
+- Queries are by example. The v1 text search is deprecated; its
+  replacement, a vocabulary layer on top of the memory, is being optimised
+  for top-tier performance before it is released.
+- Search cost grows linearly with store size.
 - Clips shorter than four seconds cannot be encoded.
 
 ---
@@ -123,8 +124,7 @@ else can reproduce, and the cost of ingest drops with it.
 | item | status |
 |---|---|
 | Exhaustive recall for fleet mining (the top-20 falloff) | the active work; the read side is fully explored, so the levers are features and data breadth |
-| Return the exact matching moment, not the whole recording | the alignment already computes it; surfacing it is product work |
-| Text as an entry point, built on the motion representation | designed; the first two layers require no training |
+| Vocabulary layer: words as an entry point, built on the motion representation | being optimised for top-tier performance; replaces the deprecated v1 text search |
 | Continuous ingest pipeline (video in, trace kept, video deleted) | designed, not yet running |
 | Per-store adaptation (Phase 2) | next engineering phase |
 | Wire the memory layer onto the v1 database engine (Parquet store, elision reads) | engine functional, integration parked while the model layer matures |

@@ -108,6 +108,62 @@ class Store:
         self.ps, self._ws = rawpool("sig")
         self.raw = {i: (D[i]["fix"].astype(np.float32),
                         D[i]["sig"].astype(np.float32)) for i in self.ids}
+        # original stream-time step of every arc step, for span reporting
+        self.tsrc = {i: D[i].get("t_src") for i in self.ids}
+
+    @staticmethod
+    def query_vec(fix, sig):
+        """Raw channel traces -> the standardised, unit-step query trace.
+        The same construction the bank uses, so query and references live
+        in one space."""
+        fix = np.asarray(fix, np.float32)
+        sig = np.asarray(sig, np.float32)
+        return l2(np.concatenate([zs(fix), zs(sig)], -1))
+
+    def localize(self, q, rid):
+        """Where inside recording `rid` the query matches best.
+
+        -> (a, b, L): the query-length window [a, b) of reference steps with
+        the highest mean step cosine against q, and the reference length L.
+        Rigid sliding window, no warping: the RANKING already decided this
+        recording contains the event (elastically); this only answers WHERE,
+        at one trace step (0.25 s) of resolution. A reference no longer than
+        the query is matched whole.
+
+        Kept separate from ranking on purpose - an anchored DTW path spans
+        the entire reference by construction and cannot yield a sub-span,
+        and changing the matcher would have to re-clear the fidelity gate.
+        """
+        R = l2(self.Z[rid])
+        Lq, Lr = len(q), len(R)
+        if Lr <= Lq:
+            return 0, Lr, Lr
+        # S[o] = mean_i <q_i, R_{o+i}>  for every offset o - one matmul per
+        # offset is fine at top_k x (Lr - Lq) x Lq x d.
+        S = np.array([(q * R[o:o + Lq]).sum() for o in range(Lr - Lq + 1)])
+        o = int(np.argmax(S))
+        return o, o + Lq, Lr
+
+    def span_seconds(self, rid, a, b):
+        """Arc steps [a, b) of recording rid -> (t0, t1) stream seconds.
+
+        Arc steps are units of CHANGE, not time (a changeful 10 s drive is
+        32 time steps but 106 arc steps), so the way back is the original
+        step each arc step was sampled from. Original step j is the
+        descriptor at stream time lead + j*dt, produced from an encoder
+        window reaching back to the start of its 4 s clip; the span reported
+        is the footage that produced the matched descriptors."""
+        from relmo.vjrec4 import CTX
+        from relmo.vjrec6 import STREAM_FPS
+        from relmo.vjs import TUBELET
+        dt = TUBELET / STREAM_FPS
+        lead = CTX * dt
+        src = self.tsrc.get(rid)
+        if src is None:                       # no positions: time-indexed
+            ja, jb = float(a), float(b - 1)
+        else:
+            ja, jb = float(src[a]), float(src[max(a, b - 1)])
+        return max(0.0, ja * dt), lead + (jb + 1.0) * dt
 
     def query(self, fix, sig, top_k=10, prefilter_m=100, band=0.25,
               exclude=None):
@@ -117,7 +173,7 @@ class Store:
         fix = np.asarray(fix, np.float32)
         sig = np.asarray(sig, np.float32)
         from relmo.vjreps import apply_w
-        q = l2(np.concatenate([zs(fix), zs(sig)], -1))
+        q = self.query_vec(fix, sig)
         qf = apply_w(fix.mean(0)[None], self._wf)[0]
         qf /= (np.linalg.norm(qf) + 1e-9)
         qs_ = apply_w(sig.mean(0)[None], self._ws)[0]

@@ -121,7 +121,10 @@ disk. It is one pass per video; nothing is revisited.
 ### Accepted input
 
 - Formats: `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, any resolution, any
-  frame rate. Frame rate and duration are probed per file with `ffprobe`.
+  frame rate. Timing comes from the frames a file actually holds over its
+  duration, not from the container's rate tag, so files whose tag lies
+  (a 10 Hz capture muxed as 25 fps is common in research datasets) are
+  timed correctly.
 - Minimum length: **4 seconds**, the encoder window. Shorter clips are
   skipped and reported as a count.
 - Filenames do not need to be unique. Pipelines that write every clip as
@@ -169,7 +172,8 @@ python -m relmo.cli stats mystore
 ## 3. Query
 
 Four ways to ask. All of them return the same thing: recordings, best
-first, with a similarity score and the time span.
+first, each with a similarity score and the span inside the recording where
+the match lies.
 
 ### With a clip from outside the store
 
@@ -226,7 +230,7 @@ python -m relmo.cli query mystore /clips/incident.mp4 --json
 | `id` | the recording id inside the store |
 | `score` | similarity in [0, 1]; higher is closer. It is one minus the normalised alignment cost (see [HOW_IT_WORKS.md](HOW_IT_WORKS.md)) |
 | `video` | absolute path of the source file as recorded at ingest |
-| `start`, `end` | the span of the recording, in seconds |
+| `start`, `end` | the matched span inside the recording, in seconds: it starts where the best-matching window begins and runs for the query's duration, clamped to the recording. A recording no longer than the query is reported whole |
 
 ### Options common to `query` and `like`
 
@@ -238,10 +242,13 @@ python -m relmo.cli query mystore /clips/incident.mp4 --json
 
 ### What to expect on timing
 
-The first query in a process loads the two encoders (a few seconds). Every
-query after that is search only: about half a second on a store of 3,500
-recordings, growing linearly with store size. `like` skips encoding and is
-search only from the first call.
+Two one-time costs per process: opening a store loads every trace and fits
+the prefilter (about a minute for a 3,500-recording store, seconds for a
+small one), and the first `query` loads the two encoders (a few seconds).
+Every query after that is search only: about half a second on a store of
+3,500 recordings, growing linearly with store size. `like` never loads the
+encoders. For interactive use keep one process alive (the Python API) rather
+than paying the store open on every command-line call.
 
 ---
 
@@ -371,7 +378,7 @@ An immutable record of one result.
 | `id` | `str` | recording id in the store |
 | `score` | `float` | similarity in [0, 1], higher is closer |
 | `video` | `str` | source path as recorded at ingest |
-| `start`, `end` | `float` | span in seconds |
+| `start`, `end` | `float` | the matched span inside the recording, seconds. Starts where the best-matching window begins, runs for the query's duration, clamped to the recording; whole when the recording is no longer than the query |
 | `label` | `str` (property) | a human-readable name: the filename, or `folder/filename` when the filename is generic (`frames.mp4`, `video.mp4`, `clip.mp4`) |
 
 ### A complete example
@@ -443,7 +450,8 @@ old locations until you re-ingest or edit it; search is unaffected.
 | operation | cost (reference machine, Apple Silicon) |
 |---|---|
 | ingest | ~14 compute-min per video-hour (4x real time), one pass, resumable |
-| first query in a process | a few seconds (encoder load) |
+| opening a store (once per process) | ~1 min for 3,500 recordings; seconds for small stores |
+| first `query` in a process | a few seconds (encoder load) |
 | query, 3,556-recording store | 554 ms median, 1.9 s p99 |
 | query, exact scan, same store | ~20 s |
 | `like` (no encoding) | search time only |
@@ -496,7 +504,8 @@ measured 0.95 to 1.0x). Run one ingest per device.
 | `clip is 2.8s; the encoder window is 4.0s` | the query clip or slice is too short. Pass a longer clip or widen `--start`/`--end` |
 | `skipping N clips shorter than the 4.0s window` at ingest | informational. Those files are not in the store and cannot be |
 | `store 'x' has no records on disk` | the store name is wrong, or ingest wrote nothing. Run `stores`, then re-run `add` and watch for errors |
-| first query takes 10 s or more | encoder load, once per process. Keep the process alive (the Python API) for interactive use |
+| the first command takes a minute on a big store | opening the store loads every trace once per process. Keep one process alive (the Python API) for interactive use; the command line pays this on every call |
+| first query takes 10 s or more | encoder load, once per process |
 | every query is slow, even the second | check the device: the log line `loading encoders onto cpu` means no GPU was found. Set `RELMO_DEVICE` or fix the torch install |
 | ingest killed, or the machine swaps | memory. Long recordings decode fully into RAM. Use a 16 GB machine for ingest, or split very long files before ingesting |
 | results all show `frames.mp4` | they are labelled by folder in the table view (`run_0114/frames.mp4`); in JSON use the `video` path |

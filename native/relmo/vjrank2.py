@@ -90,15 +90,18 @@ def load_corpus(datasets=("rcasa", "rcasa_eval"), layer=6, arc=ARC_DS,
             # used as a channel. It answers WHERE change happened, which is
             # orthogonal to fix (WHAT changed) and sig (what it LOOKS like).
             wmap = z6["where_map"].reshape(T, -1).astype(np.float32)
+            src = np.arange(T, dtype=np.float64)
             if arc > 0:
                 w = wmap.sum(1)
-                flat, rest = arc_resample(tok.reshape(T, K * D), w, arc,
-                                          aux=[gate, g, sig, fix, wmap],
-                                          max_len=256)
+                flat, rest, src = arc_resample(tok.reshape(T, K * D), w, arc,
+                                               aux=[gate, g, sig, fix, wmap],
+                                               max_len=256, return_src=True)
                 tok = flat.reshape(len(flat), K, D)
                 gate, g, sig, fix, wmap = rest
+            # t_src: original (stream-time) step of every arc step - the way
+            # back to seconds for a matched span
             out[p.stem] = dict(tok=tok, gate=gate, g=g, sig=sig, fix=fix,
-                               wmap=wmap)
+                               wmap=wmap, t_src=src.astype(np.float32))
     return out
 
 

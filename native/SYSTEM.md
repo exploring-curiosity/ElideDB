@@ -67,6 +67,22 @@ Representation is **frozen and untrained**: per-recording z-scored
 matched by anchored symmetric2 DTW. Query encode is free for a robot
 querying its own memory — the trace already exists.
 
+**Spans** (2026-08-23): every hit carries the span inside the recording.
+The anchored DTW path covers the whole reference by construction, so the
+span comes from a second pass, `Store.localize`: slide the query along the
+reference trace, take the window of highest mean step cosine, map its
+start from arc steps back to stream seconds through the resampler's kept
+positions (`t_src`, `Store.span_seconds`), and run for the query's
+duration. Recovers the source offset exactly on 120/120 known sub-clips.
+Ranking is untouched.
+
+**Timing** (2026-08-23): `read_frames` decodes with `-fps_mode passthrough`
+and a clip is timed by frames-held / container-duration, never by the rate
+tag. KITTI/Oxford/drone files carry a 25/1 tag over 10–16 Hz content and
+their stored traces were stretched 2.5x until this; they were re-ingested.
+rcasa and bridge have honest tags and decode identically (825 and 25
+frames, before and after), so every measured number stands.
+
 **Benchmark** (always reports fidelity beside latency):
 ```
 python3 -m relmo.vjstore --bench --store rcasa --queries 60
@@ -105,7 +121,7 @@ There is no third door; all of them were checked.
 | `cli` | **command line** — `python -m relmo.cli` |
 | `vjrec8` | **write path** (one pass) |
 | `vjstore` | **read path** (stores, prefilter, banded DTW) |
-| `vjmatch` | DTW, arc-length resample. `band` is per-reference (v6 bug fixed 2026-08-17) |
+| `vjmatch` | DTW, arc-length resample (`return_src` keeps the way back to seconds). `band` is per-reference (v6 bug fixed 2026-08-17) |
 | `vjrec6/7`, `vjsig6` | legacy per-artifact writers; superseded by vjrec8, kept for reference |
 | `vjsnap` | pin a read path by sha256 (`v9` = the shipped one) |
 | `vjtest`, `vjreps` | evaluation harnesses (chance + lift + seen/unseen breakdown) |

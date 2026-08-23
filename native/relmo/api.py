@@ -36,8 +36,8 @@ class Hit:
     id: str
     score: float
     video: str
-    start: float          # seconds into the source video
-    end: float
+    start: float          # matched span, seconds into the source video
+    end: float            # (the whole recording when it is no longer than the query)
 
     @property
     def label(self):
@@ -131,8 +131,8 @@ class Memory:
         fast:  True  -> ~0.5 s, P@10 0.752 (default, recommended)
                False -> exact scan, P@10 0.765, ~20 s on a 3.5k store
         """
-        fix, sig = self._encode(video, start, end)
-        return self._search(fix, sig, top_k, fast, exclude=None)
+        fix, sig, secs = self._encode(video, start, end)
+        return self._search(fix, sig, top_k, fast, exclude=None, q_seconds=secs)
 
     def query_recording(self, rec_id, top_k=10, fast=True):
         """Find moments like one ALREADY in the store — no re-encoding.
@@ -144,7 +144,8 @@ class Memory:
         if rec_id not in st.raw:
             raise KeyError(f"{rec_id!r} not in store {self.name!r}")
         fix, sig = st.raw[rec_id]
-        return self._search(fix, sig, top_k, fast, exclude={rec_id})
+        return self._search(fix, sig, top_k, fast, exclude={rec_id},
+                            q_seconds=self._span(rec_id)[1] or None)
 
     # ---------------------------------------------------------------- info
     @property
@@ -170,19 +171,34 @@ class Memory:
             self._store = Store(self.name)
         return self._store
 
-    def _search(self, fix, sig, top_k, fast, exclude):
+    def _search(self, fix, sig, top_k, fast, exclude, q_seconds=None):
         st = self._st()
         kw = dict(prefilter_m=100, band=0.25) if fast else \
             dict(prefilter_m=len(st.ids), band=0.0)
         raw = st.query(fix, sig, top_k=top_k, exclude=exclude, **kw)
+        q = st.query_vec(fix, sig)
         out = []
         for rid, sc in raw:
             v, dur = self._span(rid)
+            a, b, L = st.localize(q, rid)
+            if b - a >= L:                       # matched whole
+                t0, t1 = 0.0, dur
+            else:
+                # the START is where the best-matching window begins. The
+                # END runs for the query's real duration: arc-step counts
+                # are not comparable between a clip and a region inside a
+                # longer recording (gate energy is median-normalised over
+                # the whole recording at write), so an arc-based end could
+                # under-cover the event by half. Clamped to the recording.
+                t0, t_arc = st.span_seconds(rid, a, b)
+                t1 = t0 + q_seconds if q_seconds else t_arc
+                if dur:
+                    t1 = min(dur, t1)
             # the matcher returns NEGATED length-normalised DTW cost, where
             # cost is mean (1 - cosine). Users get a similarity, not an
             # internal distance with a sign flip on it.
             out.append(Hit(id=rid, score=round(max(0.0, 1.0 + float(sc)), 4),
-                           video=v, start=0.0, end=round(dur, 2)))
+                           video=v, start=round(t0, 2), end=round(t1, 2)))
         return out
 
     def _span(self, rec_id):
@@ -235,8 +251,11 @@ class Memory:
         if not p.exists():
             raise FileNotFoundError(p)
         w, h = probe_dims(p)
-        F = read_frames(p, w, h)
-        fps = _probe_fps(p)
+        F = read_frames(p, w, h)                 # the real frames, once each
+        dur = _probe_dur(p)
+        # time the decoded array by ITS OWN length over the file's duration:
+        # exact for the frames we hold, immune to a wrong rate tag
+        fps = len(F) / dur if dur > 0 and len(F) else _probe_fps(p)
         if start is not None or end is not None:
             a = int((start or 0) * fps)
             b = int((end or len(F) / fps) * fps)
@@ -251,7 +270,15 @@ class Memory:
             raise ValueError("clip too short to encode")
         rec6, _rec7, sig = out
         fix, _g = vjz.channels(rec6, primary="b")
-        return fix.astype(np.float32), sig.astype(np.float32)
+        fix, sig = fix.astype(np.float32), np.asarray(sig, np.float32)
+        # The store's traces are re-indexed by cumulative change (arc length)
+        # at load; a query must ride the SAME grid or the matcher compares
+        # time steps against change steps. This is exactly what load_corpus
+        # does to every stored recording.
+        from relmo.vjmatch import ARC_DS, arc_resample
+        gate = rec6["where_map"].reshape(len(fix), -1).sum(1)
+        fix, (sig,) = arc_resample(fix, gate, ARC_DS, aux=[sig], max_len=256)
+        return fix, sig, len(F) / fps
 
 
 # ------------------------------------------------------------------ helpers
@@ -266,15 +293,34 @@ def _collect(source, recursive):
 
 
 def _probe_fps(p):
+    """The CONTENT frame rate: frames the file holds / seconds it lasts.
+
+    The container's r_frame_rate tag is not that - research files here carry
+    25/1 over 10 Hz and 16 Hz content - and timing a decode by the tag
+    stretched their traces 2.5x. Prefer frame count over duration; fall
+    back to avg_frame_rate, then the tag, then 30.
+    """
     try:
         out = subprocess.check_output(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=r_frame_rate", "-of", "csv=p=0",
-             str(p)], text=True).strip()
-        n, d = out.split("/")
-        return float(n) / float(d or 1)
+             "-show_entries", "stream=nb_frames,avg_frame_rate,r_frame_rate",
+             "-show_entries", "format=duration", "-of", "json", str(p)],
+            text=True)
+        j = json.loads(out)
+        st = (j.get("streams") or [{}])[0]
+        dur = float((j.get("format") or {}).get("duration") or 0)
+        nb = int(st.get("nb_frames") or 0)
+        if nb > 0 and dur > 0:
+            return nb / dur
+        for key in ("avg_frame_rate", "r_frame_rate"):
+            v = st.get(key) or ""
+            if "/" in v:
+                n, d = v.split("/")
+                if float(d or 0) > 0 and float(n) > 0:
+                    return float(n) / float(d)
     except Exception:                                          # noqa: BLE001
-        return 30.0
+        pass
+    return 30.0
 
 
 def _probe_dur(p):

@@ -55,6 +55,7 @@ Columns: what was tried / the number / the reading.
 | **grading composite by `group_key`** | **chance 0.543, lift 1.09-1.20x** | **INVALID METRIC.** The verb x object parser cannot read compositional names and dumps 900/1152 into `Other/Other`. Any prec measured this way is uninterpretable - it looked like 0.651 vs a 0.314 bar. Use `--event-key task`: 32 groups x 36, chance 0.031 |
 | overlap-InfoNCE with cross-recording negatives only | nce -> 0.005 by epoch 2 | "which video is this" is trivial; the term stops contributing. Same failure as the earlier hard-negative lesson. Fix = within-recording disjoint spans (`--hard-neg`) |
 | V-JEPA 2.1 ViT-B drop-in | unloadable | not in any released transformers; `encoder.layernorm` missing → random init, `predictor.proj` 1664 vs 768 |
+| **timing a decode by the container's rate tag** | **KITTI 108 real frames decoded as 271; stored traces stretched 2.5x** | ffmpeg rawvideo is constant-rate at the DECLARED rate; research mp4s carry 25/1 over 10–16 Hz content. Fixed: `-fps_mode passthrough` + frames/duration. rcasa/bridge tags honest → unchanged; kitti/oxford/drone re-ingested 2026-08-23 |
 
 ## 3. ALIVE — measured wins, keep and build on
 
@@ -72,6 +73,8 @@ Columns: what was tried / the number / the reading.
 | **head+fix+sig fused** | **unseen 0.248→0.314 (+27%)** | best overall 0.341; channels complementary off-domain |
 | **frozen fix+sig, Z-SCORED, 1792d, SEALED corpus** | **0.401 ± 0.021 ALL / 0.404 unseen (240 q)** | **THE RESULT, and it is UNTRAINED.** 14x chance on a corpus 91% unseen-task, and BETTER on unseen (0.404) than seen (0.375) - no generalization gap at all |
 | mined cross-video positives | 94.5% same-task, 1754 pairs | the frozen space is good enough to teach itself; channel consensus rejects look-alikes |
+| **span localization after ranking (Store.localize)** | **exact source offset on 120/120 re-standardised sub-clips; ~3 ms/hit** | anchored DTW cannot give a sub-span (path covers the whole reference), a rigid slide over the standardised trace can. End runs for the query's duration, not its arc-step count: gate energy is median-normalised per recording, so a clip's arc count is not comparable to the same region inside its parent (0–10 s slice read 0.5–5.6 s arc-based, 0.5–10.4 s duration-based) |
+| **external query clips arc-resampled like the store** | **bit-identical trace to the stored one (per-step cosine 1.0000)** | `query clip.mp4` compared TIME steps against ARC steps until 2026-08-23; only `like` (arc vs arc) had ever been benchmarked |
 
 ## 3a. THE DECISIVE CONTROL (2026-08-16) — the trained head is INERT
 
