@@ -1,7 +1,7 @@
 # attic — one-off experiments, kept for provenance
 
 These are exploratory scripts: each answered one question once, and the
-answer is recorded in BENCHMARKS.md, VIOLATIONS.md or a commit message.
+answer is recorded in BENCHMARKS.md, native/VIOLATIONS.md or a commit message.
 They are NOT maintained, are not imported by anything, and may not run
 against the current store schema.
 

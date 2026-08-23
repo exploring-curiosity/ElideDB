@@ -26,7 +26,7 @@ thresholds it was measured under.
 **No dataset priors.** A fitted threshold is legitimate; a hand-written one
 is a NO-HARDWIRE violation. Every value in these files must be the output
 of a fit over corpus statistics, never a constant someone chose because it
-worked on Bridge. See `VIOLATIONS.md`.
+worked on Bridge. See `../native/VIOLATIONS.md`.
 
 **Eval-only truthset.** Nothing here may be fitted on `eval/`. These are
 fitted on the corpus; the truthset only ever measures.

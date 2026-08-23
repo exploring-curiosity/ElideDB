@@ -5,8 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "elidedb"
 version = "2.0.0"
-description = "Parquet-native, timestamp-first multimodal database — the best read is the read elided"
+description = "Video memory: ask a corpus when did something like this happen, get timestamps back"
 readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.10"
 dependencies = [
   "pyarrow>=15",

@@ -1,9 +1,27 @@
+<div align="center">
+
 # ElideDB
 
 **Video memory. Ask "when did something like this happen?" and get timestamps back.**
 
-No labels. No captions. No fine-tuning. No per-dataset configuration. Point it
-at video, then query it with more video.
+No labels. No captions. No fine-tuning. No per-dataset configuration.
+Point it at video, then query it with more video.
+
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-green)](#install)
+[![Platform](https://img.shields.io/badge/platform-Apple%20Silicon%20%7C%20CPU-lightgrey)](#install)
+[![Demo](https://img.shields.io/badge/%F0%9F%A4%97%20demo-query%20by%20example-yellow)](https://huggingface.co/spaces/SudharshanR/elidedb-qbe)
+
+[Live demos](#try-it-without-installing-anything) ·
+[Performance](#performance) ·
+[Install](#install) ·
+[Roadmap](docs/ROADMAP.md) ·
+[The story](docs/STORY.md) ·
+[Licensing](#license)
+
+</div>
+
+---
 
 ```bash
 elidedb add     kitchen  /videos/robot_runs      # ingest
@@ -19,27 +37,26 @@ elidedb query   kitchen  /clips/spill.mp4        # ask
 3 hits in 554 ms
 ```
 
-### Try it without installing anything
+## Try it without installing anything
 
 | demo | what it shows | cold start |
 |---|---|---|
-| **[Query by example](https://huggingface.co/spaces/SudharshanR/elidedb-qbe)** | pick a few clips, get their kind back. Loads **no model at all** — everything it ranks was computed at ingest. | seconds |
-| **[Text search](https://huggingface.co/spaces/SudharshanR/elidedb-demo)** | describe what you want in words. Five text towers, so the first boot is slow. | ~15 min |
+| **[Query by example](https://huggingface.co/spaces/SudharshanR/elidedb-qbe)** | pick a few clips, get their kind back. Loads **no model at all**; everything it ranks was computed at ingest | seconds |
+| **[Text search](https://huggingface.co/spaces/SudharshanR/elidedb-demo)** | describe what you want in words. Five text towers, so the first boot is slow | ~15 min |
 
 Both run on the public [demo store](https://huggingface.co/datasets/SudharshanR/elidedb-demo-store)
-(1,122 recordings, ~1.3 GB) — the same store you get locally with the commands
+(1,122 recordings, ~1.3 GB), the same store you get locally with the commands
 under [Run the demos yourself](#run-the-demos-yourself).
-
----
 
 ## What it's for
 
-**A memory layer for a robot / VLA.** The robot asks "have I been in a
+**A memory layer for a robot or VLA.** The robot asks "have I been in a
 situation like this before?" and gets its own past experiences back, ranked,
 in about half a second. Nothing has to be labelled first, and it works on
-scenes and tasks the system has never seen.
+scenes and tasks the system has never seen. A robot querying its own live
+trace pays no encoding cost at all.
 
-**Mining your own archive.** Find every past instance of a behaviour to review
+**Mining your own archive.** Find past instances of a behaviour to review
 or retrain on, without having tagged any of it.
 
 ## Performance
@@ -57,19 +74,30 @@ setup** (1,152 recordings, random-guess baseline 2.9%):
 | operation | cost |
 |---|---|
 | query (3,556-recording store) | **554 ms** median, 1.9 s p99 |
-| query, robot's own live trace | search only — nothing to encode |
-| ingest | ~14 min of compute per hour of video (4× real time), resumable |
+| query, robot's own live trace | search only; nothing to encode |
+| ingest | ~14 min of compute per hour of video (4x real time), resumable |
 | storage | ~0.8 GB per hour of video |
 
-Precision holds *equally well on unfamiliar material* — on the held-out corpus
-it scores marginally higher on tasks it has never seen (0.404) than on
-familiar ones (0.375). There is no model trained on your data, so there is
-nothing to drift, retrain, or version when you point it somewhere new.
+Precision holds equally well on unfamiliar material: on the held-out corpus
+it scores marginally *higher* on tasks it has never seen (0.404) than on
+familiar ones (0.375). Nothing in the shipped system is trained on your
+data, so there is nothing to drift, retrain, or version when you point it
+somewhere new.
 
-**Where it is weak, stated plainly:** precision falls off past the top ~20.
-If you need to retrieve *every* instance of something (say 35 of 35), it
-currently finds about 40%. It is strong at "show me the closest matches",
-not yet at "show me all of them".
+### Current limitations, stated plainly
+
+- Precision falls off past roughly the top 20 results. Strong at "show me
+  the closest matches", not yet at "show me every instance". Closing this
+  is the top of the [roadmap](docs/ROADMAP.md).
+- Results are whole recordings, not the exact matching moment inside them.
+- Query by example only; text search is designed but not yet built.
+- Clips shorter than 4 seconds cannot be encoded and are skipped at ingest
+  with a count.
+- Single machine. No server, no auth, no replication. Search cost grows
+  linearly with store size (~550 ms at 3.5k recordings).
+
+Where each of these is going, and how the system improves as it runs, is in
+**[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
 ## Install
 
@@ -85,7 +113,9 @@ cd native
 ```
 
 Models download automatically on first use (V-JEPA 2 ViT-L, SigLIP 2 base;
-~1.5 GB total, cached).
+~1.5 GB total, cached). Both are frozen, off-the-shelf, permissively
+licensed, and never fine-tuned; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Use it
 
@@ -101,7 +131,7 @@ python -m relmo.cli like  kitchen <recording-id> # query with something stored
 python -m relmo.cli query kitchen clip.mp4 --json  # machine-readable
 ```
 
-Add `--exact` to any query for the exhaustive scan: ~40× slower, about 1.3
+Add `--exact` to any query for the exhaustive scan: ~40x slower, about 1.3
 percentage points more accurate. The default fast path is recommended.
 
 ### Python
@@ -122,16 +152,19 @@ mem.stats()          # {'store': 'kitchen', 'recordings': 812, 'hours': 6.4, ...
 Memory.list()        # {'kitchen': 812, 'warehouse': 2401}
 ```
 
-`Hit` carries `id`, `score` (similarity, 0–1), `video`, `start`, `end`, and
+`Hit` carries `id`, `score` (similarity, 0-1), `video`, `start`, `end`, and
 `label` (a human-readable source name).
 
 ## Stores
 
-A **store** is one deployment's memory — one robot, one site, one customer.
+A **store** is one deployment's memory: one robot, one site, one customer.
 
 Stores never mix. Every statistic the search uses is computed inside the
 store, so two deployments cannot leak into each other's results. Query one
-store at a time; searching across stores means looping over them deliberately.
+store at a time; searching across stores means looping over them
+deliberately. This isolation is architectural, and it is also the foundation
+of the [growth trajectory](docs/ROADMAP.md#the-growth-trajectory): a store
+adapts to its own data and only its own.
 
 ## How it works
 
@@ -146,34 +179,23 @@ query ──► same two encoders ──► trace
               └─► ranked timestamps
 ```
 
-Both encoders are **frozen, off-the-shelf, and never fine-tuned**. Matching is
-elastic in time, so the same action performed faster or slower still matches —
-but not so elastic that a 7-second event matches a 20-second one, which are
-treated as genuinely different.
+Both encoders are **frozen, off-the-shelf, and never fine-tuned**. Matching
+is elastic in time, so the same action performed faster or slower still
+matches, but not so elastic that a 7-second event matches a 20-second one;
+those are treated as genuinely different.
 
-## Limits
+**There are no ElideDB weights.** Nothing in the shipped system is trained
+on your data, which is why the numbers above hold on unfamiliar material.
+Why an untrained system ships today, and how adaptation arrives without
+giving that property up, is the subject of [docs/ROADMAP.md](docs/ROADMAP.md).
 
-- Clips shorter than **4 seconds** cannot be encoded (the model's window) and
-  are skipped at ingest with a count.
-- Results are whole recordings, not the matching sub-span inside them.
-- Text queries ("show me spills") are **not supported** — query by example
-  only.
-- Single machine. No server, no auth, no replication.
-- Search cost grows linearly with store size; ~550 ms at 3.5k recordings.
+The two encoders download from Hugging Face on first use (~1.5 GB, cached
+under `~/.cache/huggingface`):
 
-## Models and checkpoints
-
-**There are no ElideDB weights.** Nothing here is trained on your data, which
-is why the numbers above hold on unfamiliar material — there is no model to
-drift, retrain, or version when you point it somewhere new.
-
-The two encoders are frozen, off-the-shelf, and downloaded from Hugging Face
-on first use (~1.5 GB total, cached under `~/.cache/huggingface`):
-
-| checkpoint | role |
-|---|---|
-| [`facebook/vjepa2-vitl-fpc64-256`](https://huggingface.co/facebook/vjepa2-vitl-fpc64-256) | what changed, moment to moment |
-| [`google/siglip2-base-patch16-224`](https://huggingface.co/google/siglip2-base-patch16-224) | what it looks like |
+| checkpoint | role | license |
+|---|---|---|
+| [`facebook/vjepa2-vitl-fpc64-256`](https://huggingface.co/facebook/vjepa2-vitl-fpc64-256) | what changed, moment to moment | MIT |
+| [`google/siglip2-base-patch16-224`](https://huggingface.co/google/siglip2-base-patch16-224) | what it looks like | Apache-2.0 |
 
 To pre-fetch them (air-gapped machines, or to get the download out of the way):
 
@@ -201,55 +223,63 @@ answers in ~250 ms. The text demo is `deploy/serve.py` with
 `deploy/requirements.txt`; it downloads five text towers first, so give it
 time. `deploy/README.md` covers deployment and the staging scripts.
 
+## Documentation
+
+| for | read |
+|---|---|
+| **Evaluators and customers** | this page, then [docs/ROADMAP.md](docs/ROADMAP.md) for limitations and where the system is going |
+| **Investors** | [docs/STORY.md](docs/STORY.md), the story of how the product got here and why the design is what it is |
+| **Engineers** | [native/SYSTEM.md](native/SYSTEM.md), the architecture and its measured numbers |
+| **Reviewers of the method** | [native/EXPERIMENTS.md](native/EXPERIMENTS.md), every approach tried and what it scored, including the failures |
+| **Auditors of the claims** | [BENCHMARKS.md](BENCHMARKS.md), the raw benchmark ledger, and [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md), the full engineering history |
+| **Licensing and compliance** | [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) |
+
 ## Repo layout
 
 | path | what |
 |---|---|
 | `native/relmo/api.py` | **the public API** (`Memory`, `Hit`) |
 | `native/relmo/cli.py` | **the command line** |
-| `native/relmo/vjrec8.py` | write path — one encoder pass |
-| `native/relmo/vjstore.py` | read path — stores, prefilter, alignment |
-| `native/SYSTEM.md` | architecture and measured numbers |
-| `native/EXPERIMENTS.md` | every approach tried and what it scored |
-
-| `python/elidedb/` | the **store layer** — Parquet tables, channels, query-by-example (`qbe.py`) |
-| `deploy/` | the two web demos, and the scripts that stage them to Hugging Face |
+| `native/relmo/vjrec8.py` | write path, one encoder pass |
+| `native/relmo/vjstore.py` | read path: stores, prefilter, alignment |
+| `python/elidedb/` | the store layer the web demos serve (Parquet tables, channels, text search) |
+| `deploy/` | the two web demos and the scripts that stage them to Hugging Face |
 | `docs/FORMAT.md` | on-disk format, byte layout |
 | `docs/ARCHITECTURE.md` | how the pieces fit |
-| `BENCHMARKS.md` | every benchmark run, raw |
 
 Anything in `native/relmo/` not listed above is internal. `deprecated/`,
-`bench/`, `eval/` and `scripts/` are research history kept for provenance —
-useful if you want to see what was tried and what it scored, not needed to
-run anything.
-
-There are **two entry points**, and they answer different questions:
-
-- **`native/relmo`** — the current system. Query a store with a video clip.
-  This is what the CLI and `Memory` API above drive.
-- **`python/elidedb`** — the store layer the web demos serve, including
-  multi-channel query-by-example and text search. Use this if you want the
-  Parquet format, the channel fusion, or the demos.
+`bench/`, `eval/` and `scripts/` are research history kept for provenance.
 
 ## Contributing
 
-Issues and pull requests are welcome. Two things make a change easy to accept:
+Issues and pull requests are welcome for evaluation, testing, and research
+use. Two things make a change easy to accept:
 
-1. **Numbers, not intuitions.** This project's rule is that a claim about
-   retrieval quality comes with the run that produced it. `BENCHMARKS.md` has
-   the format; `native/EXPERIMENTS.md` records approaches that were tried and
-   *failed*, which is just as useful.
-2. **Say why in the code.** Comments here explain the design decision behind a
-   line, not what the line does. If you change a constant, say what you
-   measured.
+1. **Numbers, not intuitions.** A claim about retrieval quality comes with
+   the run that produced it. `BENCHMARKS.md` has the format;
+   `native/EXPERIMENTS.md` records approaches that were tried and *failed*,
+   which is just as useful.
+2. **Say why in the code.** Comments here explain the design decision behind
+   a line, not what the line does.
 
 Please do not add: a network layer, auth, or per-dataset configuration.
-Nothing may be hardwired about a particular corpus — no label vocabularies,
-no class lists, no dataset-specific priors. Everything the ranker uses is
-computed from the data at hand.
+Nothing may be hardwired about a particular corpus.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The upstream encoders carry their own licenses
-(V-JEPA 2 and SigLIP 2 are both permissive; check their model cards before
-commercial use).
+ElideDB is **source-available** under the
+[PolyForm Noncommercial License 1.0.0](LICENSE).
+
+**You can**: read the code, run it, evaluate it, test it, use it for
+research, teaching, and personal projects, and open issues and pull
+requests.
+
+**You cannot**: use it for commercial purposes. For commercial licensing,
+contact **sr7431@nyu.edu**.
+
+Earlier snapshots of this repository were published under MIT; the current
+release and everything after it are PolyForm Noncommercial. The product
+pipeline's own dependencies (V-JEPA 2, SigLIP 2, PyTorch, Transformers) are
+all permissively licensed; the noncommercial term is ElideDB's choice, not
+an inherited restriction. Full dependency and dataset terms:
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -2736,3 +2736,9 @@ and the engine bailed. On the deployed Space that read as an index answering
 not the retrieval - a single seed is still a centroid - so the ladder now
 degrades (loo at 3+, coherence at 2, equal vote at 1) and the note says which
 rung ran. 3/5/8-seed results byte-identical.
+
+2026-08-23 - Relicense: MIT -> PolyForm Noncommercial 1.0.0
+User wants review/testing open but commercial use closed. Chose PolyForm NC over BUSL (time-bombed to open, which user did not ask for) and Elastic 2.0 (still allows most commercial use). Repo is source-available, not open source; commercial licensing by contact. Verified the product pipeline itself is unencumbered: V-JEPA 2 MIT, SigLIP 2 Apache-2.0, ffmpeg subprocess-only. KITTI/Oxford are CC BY-NC-SA, eval-only, never ship.
+
+2026-08-23 - Growth trajectory documented (docs/ROADMAP.md)
+User: not sticking to frozen models; corpus-aware wins in-domain but loses generalization. Plan: Phase 1 store-local stats (shipping), Phase 2 per-store learned rankers gated on that store's holdout with frozen fallback, Phase 3 opt-in fleet traces as the wide pool (the measured binding constraint) + query-outcome calibration, Phase 4 distilled encoder as the moat. Sealed-benchmark gate permanent.
