@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Commercial licensing and early access
+    url: mailto:sr7431@nyu.edu?subject=ElideDB%20commercial%20licensing
+    about: ElideDB is source-available for evaluation and research. Commercial use is licensed separately; write to us.
+  - name: Using ElideDB (the manual)
+    url: https://github.com/exploring-curiosity/ElideDB/blob/main/docs/USAGE.md
+    about: Install, ingest your own footage, query, evaluate on your data, troubleshoot. Check the troubleshooting table before filing a bug.

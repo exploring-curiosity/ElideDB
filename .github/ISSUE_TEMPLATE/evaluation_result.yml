@@ -1,0 +1,37 @@
+name: Result on my data
+description: You evaluated ElideDB on your own footage. Good or bad, we want the number.
+title: "[result] "
+labels: ["evaluation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project's rule is that a claim about retrieval quality comes with the run that produced it. Results on corpora we have never seen are the most valuable thing you can send us, especially the bad ones. Section 4 of [docs/USAGE.md](https://github.com/exploring-curiosity/ElideDB/blob/main/docs/USAGE.md#4-evaluate-on-your-own-data) has the three recipes.
+  - type: textarea
+    id: corpus
+    attributes:
+      label: The corpus
+      description: What the footage is (robot, vehicle, site, camera placement), how many recordings, how many hours, typical length. No raw video needed.
+    validations:
+      required: true
+  - type: textarea
+    id: numbers
+    attributes:
+      label: The numbers
+      description: What you measured and how. P@k against your labels, fast-vs-exact overlap, or just what the top hits looked like. Quote the random baseline (support / pool) beside any precision.
+      placeholder: |
+        42 queries, 6 event classes, pool 798.
+        P@1 0.88  P@5 0.74  P@10 0.61  (chance 0.07)
+        fast/exact top-10 overlap 0.63
+    validations:
+      required: true
+  - type: textarea
+    id: worked
+    attributes:
+      label: What worked and what did not
+      description: Which kinds of queries were strong, which failed, anything surprising.
+  - type: input
+    id: env
+    attributes:
+      label: Environment and commit
+      placeholder: "macOS 15, M3 Max, torch 2.6, commit 1469ce9"

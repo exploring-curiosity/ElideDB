@@ -181,6 +181,14 @@ Two generations live here, at different stages:
 | `deploy/` | the two web demos and the scripts that stage them to Hugging Face |
 | `deprecated/`, `bench/`, `eval/`, `scripts/` | research history, kept for provenance |
 
+## Support
+
+An early release, moving fast. Issues are triaged within **two business
+days**. Bug reports and results on your own data each have a template, and
+the [manual](docs/USAGE.md) has a troubleshooting table that covers the
+failures we have seen. Details, including what is and is not supported and
+how to reach us about commercial use, are in [SUPPORT.md](SUPPORT.md).
+
 ## Contributing
 
 Issues and pull requests are welcome for evaluation, testing, and research

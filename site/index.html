@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ElideDB. Search your robot footage by describing what happened.</title>
-<meta name="description" content="ElideDB finds moments in hours of robot, dashcam, and factory video from a plain sentence. No labeling, no scrubbing. Runs on your infrastructure.">
+<title>ElideDB. Video memory: show it a moment, get back every time it happened.</title>
+<meta name="description" content="ElideDB is a memory for video. Show it a clip and it returns every other time something like that happened, with timestamps, in half a second. No labels, nothing trained on your data, works on footage it has never seen.">
 <style>
   :root {
     --bg:#020703; --ink:#c8ffd9; --dim:#7fb494; --faint:#456f57;
@@ -162,36 +162,27 @@
   .final .lede { margin:0 auto 30px; }
   .final .cta { justify-content:center; }
 
-  /* demo launch modal */
-  .modal-back { position:fixed; inset:0; z-index:50; display:none;
-    background:rgba(1,5,3,.8); backdrop-filter:blur(3px);
-    align-items:center; justify-content:center; padding:24px; }
-  .modal-back.on { display:flex; }
-  .modal { width:min(480px, 94vw); border:1px solid var(--green-deep);
-    background:var(--bg); box-shadow:0 0 60px rgba(15,155,76,.25);
-    padding:26px 28px; }
-  .modal h3 { margin:0 0 10px; font-size:17px; color:var(--green);
-    letter-spacing:.04em; }
-  .modal p { margin:0 0 18px; color:var(--dim); font-size:13.5px;
-    line-height:1.7; }
-  .modal .row { display:flex; gap:12px; flex-wrap:wrap; }
-  .modal .status { color:var(--faint); font-size:12px;
-    margin-bottom:16px; }
-  .modal .status.ok { color:var(--green); }
-
   footer { border-top:1px solid var(--line); margin-top:70px;
     padding:32px 0 44px; color:var(--faint); font-size:11.5px; }
   footer .wrap { display:flex; gap:20px; flex-wrap:wrap; }
   footer a { color:var(--dim); text-decoration:none; }
   footer a:hover { color:var(--green); }
   .foot-right { margin-left:auto; }
+  .weak { border-left:2px solid var(--amber); padding:10px 16px;
+    color:var(--dim); font-size:13.5px; max-width:70ch; margin-top:26px; }
+  .weak b { color:var(--amber); }
+  .docs { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px,1fr));
+    gap:12px; }
+  .docs a { display:block; border:1px solid var(--line); background:var(--panel);
+    padding:16px 18px; text-decoration:none; color:var(--ink); font-size:13.5px; }
+  .docs a:hover { border-color:var(--green-deep); }
+  .docs a span { display:block; color:var(--faint); font-size:12px; margin-top:6px; }
 </style>
 </head>
 <body>
 <canvas id="rain"></canvas>
 <div class="crt"></div>
 <div class="vignette"></div>
-
 <main>
 <div class="wrap">
   <header>
@@ -199,88 +190,107 @@
     <nav>
       <a href="#problem">Why</a>
       <a href="#how">How</a>
+      <a href="#numbers">Numbers</a>
       <a href="#faq">FAQ</a>
-      <a href="#demo">Demo</a>
+      <a href="https://github.com/exploring-curiosity/ElideDB">Source</a>
     </nav>
   </header>
 
-  <!-- HERO: say exactly what it does, in the buyer's words -->
+  <!-- HERO -->
   <div class="hero">
-    <h1>Search your robot footage by
-      <em>describing what happened</em>.<span class="cursor"></span></h1>
-    <p class="sub">ElideDB is a database for camera and sensor
-      recordings. Type <b>"the arm closes the drawer"</b> and get back
-      every clip where it actually happens, in seconds. No tagging, no
-      labeling team, no scrubbing through timelines.</p>
+    <h1>Show your footage a moment.
+      <em>Get back every time it happened</em>.<span class="cursor"></span></h1>
+    <p class="sub">ElideDB is a memory for video. Ingest your recordings
+      once. Then hand it a clip, <b>a spill, a dropped part, a near
+      miss</b>, and it returns every other time something like that
+      happened, ranked, with the span inside each recording, in about
+      half a second. No labels. Nothing trained on your data. Works on
+      footage it has never seen.</p>
     <div class="cta">
-      <a class="btn" id="demo-link" href="#demo">Try the live demo</a>
-      <span class="aside">real product, real robot data, nothing staged</span>
+      <a class="btn" href="https://sudharshanr-elidedb-qbe.hf.space" target="_blank" rel="noopener">Try the live demo</a>
+      <span class="aside">loads in seconds: nothing it ranks needs a model at query time</span>
     </div>
     <div class="believe">
-      <span>runs on <b>your infrastructure</b></span>
-      <span>built on <b>open world models</b> from Meta and Google</span>
+      <span>runs on <b>your hardware</b>; your video never leaves</span>
+      <span>built on <b>frozen open models</b> from Meta and Google</span>
       <span>every number on this page is <b>a measurement</b></span>
     </div>
-
-    <!-- product visual: what using it feels like -->
     <div class="term">
-      <div class="bar"><i></i><i></i><i></i><span>elidedb console</span></div>
-      <pre><span class="p">&gt;</span> <span class="o">search "the robot arm closes the drawer"</span>
-<span class="o">10 clips returned</span> <span class="a">4.8 s</span> <span class="c">every one playable, newest first</span>
-<span class="p">&gt;</span> <span class="o">search "fold a piece of towel"</span>
-<span class="o">0 clips returned</span> <span class="c">your footage does not contain that
-action, so it says so instead of guessing</span></pre>
+      <div class="bar"><i></i><i></i><i></i><span>elidedb</span></div>
+      <pre><span class="p">$</span> <span class="o">elidedb add    kitchen  /videos/robot_runs</span>   <span class="c"># ingest, once</span>
+<span class="p">$</span> <span class="o">elidedb query  kitchen  /clips/spill.mp4</span>     <span class="c"># ask with a clip</span>
+
+<span class="c"> #   match             span  source</span>
+<span class="o"> 1   41.2%   12.5-  24.3s  run_0114/frames.mp4</span>
+<span class="o"> 2   38.7%    0.0-  11.8s  run_0088/frames.mp4</span>
+<span class="o"> 3   31.1%    3.2-  15.0s  run_0203/frames.mp4</span>
+
+<span class="o">3 hits in</span> <span class="a">554 ms</span></pre>
     </div>
   </div>
 
-  <!-- PROBLEM: agitate it in their day, not our architecture -->
+  <!-- PROBLEM -->
   <section id="problem">
     <div class="kicker">the problem</div>
     <h2>Your fleet records everything.
-        Your team finds nothing.</h2>
+        Almost none of it is ever looked at again.</h2>
     <div class="pain">
       <p>A gripper drops a part overnight. A test drive clips a cone.
         A customer reports the arm "did something weird" on Tuesday.
         You have the footage. Somewhere. In hours of recordings across
         a dozen cameras.</p>
-      <p>So an engineer opens a timeline and starts scrubbing. That is
-        the state of the art at most robotics companies today:
-        <b>your most expensive people, watching video at 8x,
-        looking for one moment.</b></p>
+      <p>The property you care about, <b>what happened and in what
+        order</b>, is exactly what text search and image search are
+        worst at. To a model trained on captioned photographs, opening
+        a drawer and closing it are nearly the same picture. The
+        difference is in the order the frames arrive.</p>
     </div>
     <div class="costs">
-      <div class="cost"><b>Afternoons lost</b>
-        <span>Every incident review starts with hours of manual
-          scrubbing before the real work begins.</span></div>
-      <div class="cost"><b>Events missed</b>
-        <span>The failures nobody happened to see are the ones that
-          come back in production.</span></div>
-      <div class="cost"><b>Dark data</b>
-        <span>You pay to store every hour of footage. You can use
-          almost none of it, for training or for answers.</span></div>
+      <div class="cost"><b>4 TB a day</b>
+        <span>from one self-driving car; a test vehicle makes 11 to
+          152 TB. Ten vehicles on a shift produce 80 hours of footage
+          a day. Watching it once is ten people doing nothing else.</span></div>
+      <div class="cost"><b>$2,500 a question</b>
+        <span>an engineer hour costs about $64 at U.S. median pay,
+          and reviewing footage takes at least as long as the footage.
+          One question over one week of recordings, before any real
+          work begins.</span></div>
+      <div class="cost"><b>800 hours to label one</b>
+        <span>annotating a single hour of driving data takes about 800
+          person-hours, and the labels only answer the questions the
+          schema anticipated. Every new question is a new labeling pass.</span></div>
+      <div class="cost"><b>90% never analyzed</b>
+        <span>IBM's estimate for data generated by devices, connected
+          vehicles included. The footage sits there and the fleet
+          keeps making the same mistake.</span></div>
     </div>
+    <p class="pain" style="margin-top:18px"><span class="c" style="color:var(--faint);font-size:12.5px">
+      Sources for every figure are linked in the
+      <a href="https://github.com/exploring-curiosity/ElideDB#the-problem" style="color:var(--dim)">project README</a>.</span></p>
   </section>
 
-  <!-- SOLUTION: three steps, all customer actions -->
+  <!-- HOW -->
   <section id="how">
     <div class="kicker">the fix</div>
-    <h2>Ask your footage a question.
-        Get clips, not homework.</h2>
+    <h2>Ask your footage with footage.
+        Get moments, not homework.</h2>
     <div class="steps">
       <div class="step"><span class="n">1</span><b>Point it at your recordings</b>
-        <span>Video files and sensor logs go in as they are. Your raw
-          data is never modified or re-encoded.</span></div>
-      <div class="step"><span class="n">2</span><b>Describe the moment</b>
-        <span>Plain words, the way you would ask a teammate. Colors,
-          objects, actions, directions.</span></div>
-      <div class="step"><span class="n">3</span><b>Review only what matters</b>
-        <span>Every result is a playable clip with its exact
-          timestamp. If nothing matches, it tells you that, with the
-          reason.</span></div>
+        <span>Video goes in as it is. Ingest is one pass, about 14
+          minutes of one GPU per hour of video, resumable. Your files
+          are never copied or modified.</span></div>
+      <div class="step"><span class="n">2</span><b>Show it a moment</b>
+        <span>A clip from anywhere, or a slice of a longer video. A
+          robot asks with its own live trace, which is already in the
+          store, so the question costs nothing to ask.</span></div>
+      <div class="step"><span class="n">3</span><b>Get every time it happened</b>
+        <span>Ranked recordings, each with the span where the match
+          lies, in about half a second. Top result right 95% of the
+          time on tasks the system had never seen.</span></div>
     </div>
   </section>
 
-  <!-- OBJECTIONS: features framed as answers -->
+  <!-- OBJECTIONS -->
   <section>
     <div class="kicker">you are probably thinking</div>
     <h2>The questions every engineering
@@ -288,54 +298,61 @@ action, so it says so instead of guessing</span></pre>
     <div class="obj">
       <div class="ob">
         <div class="q">"We do not have budget for a labeling team."</div>
-        <div class="a2">Good, because ElideDB never asks for labels.
-          It <b>calibrates itself to your footage</b> using open world
-          models. Nothing in it is hand tuned to a dataset, so the
-          same system works on kitchens, warehouses, and roads.</div>
+        <div class="a2">It never asks for labels. Two frozen,
+          off-the-shelf encoders and a time-alignment step.
+          <b>There are no ElideDB weights.</b> Nothing is tuned to a
+          dataset, so the same system works on kitchens, warehouses,
+          and roads on the day it is installed.</div>
       </div>
       <div class="ob">
-        <div class="q">"AI search tools return confident nonsense."</div>
-        <div class="a2">Ours is built to abstain. A question your
-          footage cannot answer returns <b>zero results and the
-          reason</b>, not ten look-alikes. We publish our accuracy the
-          same way we build it: measured on a frozen, hand-graded
-          benchmark, on every change.</div>
+        <div class="q">"Models work on the demo data and fall apart on ours."</div>
+        <div class="a2">Ours was measured on a corpus where 91% of the
+          tasks were never seen during setup, and it scores
+          <b>slightly higher on the unseen tasks than the familiar
+          ones</b>. There is no home corpus to be biased toward,
+          because nothing was trained on one.</div>
       </div>
       <div class="ob">
         <div class="q">"Our footage cannot leave the building."</div>
         <div class="a2">It does not have to. ElideDB runs <b>on your
-          hardware or your cloud account</b>, on open models, with no
-          per-query API calls to anyone. Your data stays yours.</div>
+          hardware or in your cloud account</b>, with no per-query API
+          call to anyone. The store holds compact derived traces and a
+          manifest pointing at your files. The video never moves.</div>
       </div>
       <div class="ob">
-        <div class="q">"We do not want another data silo."</div>
-        <div class="a2">It is a real database, not a black box: one
-          directory of open Parquet files with time travel, SQL, and
-          byte-counted reads. <b>Delete the original recordings and it
-          keeps serving.</b> Walk away and your data is still plain
-          files you can read with anything.</div>
+        <div class="q">"We run several sites. Will their data mix?"</div>
+        <div class="a2">No. One <b>store</b> per robot, site, or
+          customer, and every statistic the search uses is computed
+          inside the store. Two deployments cannot influence each
+          other's results, by construction.</div>
       </div>
     </div>
   </section>
 
-  <!-- PROOF: the value, in their units -->
+  <!-- NUMBERS -->
   <section id="numbers">
     <div class="kicker">what that buys you</div>
-    <h2>Seconds where you spend afternoons</h2>
+    <h2>Half a second where you spend afternoons</h2>
     <div class="stats">
-      <div class="stat"><div class="v">5 s</div>
-        <div class="k">a typical question over a thousand episodes,
-          on two CPU cores, no GPU</div></div>
+      <div class="stat"><div class="v">95%</div>
+        <div class="k">top result correct, on a held-out corpus where
+          91% of tasks were never seen during setup</div></div>
+      <div class="stat"><div class="v">554 ms</div>
+        <div class="k">median query over a 3,556-recording store;
+          a robot querying its own memory encodes nothing</div></div>
       <div class="stat"><div class="v">0</div>
         <div class="k">labels, tags, or annotations you will ever
-          write</div></div>
-      <div class="stat"><div class="v">1</div>
-        <div class="k">directory holding everything: searchable,
-          portable, yours</div></div>
-      <div class="stat"><div class="v">&lt; 5%</div>
-        <div class="k">of file bytes read to replay a moment from an
-          hours-long recording, so storage stays cheap and cold</div></div>
+          write; zero parameters trained on your data</div></div>
+      <div class="stat"><div class="v">14 min</div>
+        <div class="k">of one GPU to ingest an hour of video, once;
+          about 0.8 GB of traces per video-hour</div></div>
     </div>
+    <div class="weak"><b>Where it is weak, stated plainly.</b>
+      Precision falls off past roughly the top 20 results. It is strong
+      at "show me the closest matches" and not yet at "show me every
+      instance": asked for all 35 of 35, it currently finds about 40%.
+      That gap is the top of the roadmap, and we publish it rather than
+      hide it.</div>
   </section>
 
   <!-- FAQ -->
@@ -343,30 +360,56 @@ action, so it says so instead of guessing</span></pre>
     <div class="kicker">faq</div>
     <h2>Fair questions</h2>
     <details><summary>What footage does it work on?</summary>
-      <p>Any timestamped video plus optional sensor streams: robot
-        fleets, dashcams, factory floors, lab rigs. If it has a clock,
-        it fits on the timeline. Nothing about the engine assumes a
-        domain.</p></details>
+      <p>Any video: robot fleets, dashcams, factory floors, lab rigs,
+        drones. It was measured across simulated kitchens, real robot
+        manipulation, road driving, and aerial footage with the same
+        untouched system. Clips shorter than four seconds cannot be
+        encoded.</p></details>
     <details><summary>Do we need GPUs?</summary>
-      <p>Not to search. Heavy encoding happens once at ingest;
-        after that, questions run in seconds on ordinary CPUs. The
-        live demo on this page runs on two CPU cores.</p></details>
+      <p>For ingest, you want one: about 14 minutes of GPU per hour of
+        video on Apple Silicon; CUDA is supported. A robot querying its
+        own memory needs no encoder at all. Querying with an outside
+        clip runs the encoders once per clip, on GPU or CPU.</p></details>
     <details><summary>Is there a language model making things up?</summary>
-      <p>No. There is no generative model in the answer path. Results
-        come from measurable evidence: vision encoders scoring your
-        actual frames, weights fitted to your corpus, and geometric
-        verification when you ask for it. That is why it can honestly
-        return nothing.</p></details>
+      <p>No. There is no generative model anywhere in the path. Two
+        frozen vision encoders turn video into traces, and an elastic
+        time alignment ranks them. Every result is evidence from your
+        actual frames.</p></details>
+    <details><summary>Can I search with words?</summary>
+      <p>Not yet, by design. An earlier version searched by sentence and
+        it taught us the problem: words erase what happened and in what
+        order. That version is deprecated. A vocabulary layer that sits
+        on top of the motion representation, rather than instead of it,
+        is being optimised for release.</p></details>
     <details><summary>What happens to our raw files?</summary>
-      <p>They are never touched. Ingest reads them once, builds its
-        own compact copy and indexes inside the store, and from then
-        on the database serves even if the originals are archived or
-        deleted.</p></details>
+      <p>They are read once and never copied, moved, or modified. The
+        store keeps compact derived traces, about 0.8 GB per hour of
+        video, and a manifest pointing at your files. Deleting a store
+        deletes only the traces.</p></details>
+    <details><summary>Can we evaluate it on our own data before anything else?</summary>
+      <p>That is the intended first step. The source is available for
+        evaluation, testing, and research, with a manual that walks
+        through ingesting your footage and scoring results against your
+        own ground truth. Commercial use is licensed separately.</p></details>
     <details><summary>What does it cost?</summary>
       <p>We are onboarding early teams now and shaping pricing with
-        them. The honest cost model underneath: every query reports
-        exactly how many bytes it read, and in the cloud that number
-        is the bill.</p></details>
+        them. The cost model underneath is simple: ingest is a one-time
+        compute cost per hour of video, and every query after that is
+        half a second on a machine you already own.</p></details>
+  </section>
+
+  <!-- DOCS -->
+  <section>
+    <div class="kicker">read the whole thing</div>
+    <h2>Everything is written down</h2>
+    <div class="docs">
+      <a href="https://github.com/exploring-curiosity/ElideDB#readme">The project<span>what it is, the numbers, the weak spots</span></a>
+      <a href="https://github.com/exploring-curiosity/ElideDB/blob/main/docs/USAGE.md">Using it<span>install, ingest your footage, query, evaluate on your data</span></a>
+      <a href="https://github.com/exploring-curiosity/ElideDB/blob/main/docs/HOW_IT_WORKS.md">How it works<span>moment retrieval step by step, and why nothing is trained</span></a>
+      <a href="https://github.com/exploring-curiosity/ElideDB/blob/main/docs/ROADMAP.md">Roadmap<span>limitations, the growth trajectory, how customer data compounds</span></a>
+      <a href="https://github.com/exploring-curiosity/ElideDB/blob/main/docs/STORY.md">The story<span>what was tried, what failed, why the design is what it is</span></a>
+      <a href="https://github.com/exploring-curiosity/ElideDB/blob/main/native/EXPERIMENTS.md">Experiments<span>every approach tried and what it scored, including the dead ends</span></a>
+    </div>
   </section>
 
   <!-- FOUNDER NOTE -->
@@ -379,10 +422,11 @@ action, so it says so instead of guessing</span></pre>
         every team, ours included, hit the same wall: the recordings
         pile up, and the only search tool anyone has is their own
         eyes.</p>
-      <p>ElideDB is the database I wished existed then. It treats
-        your footage like data instead of dead weight, and it would
-        rather tell you "that never happened" than waste your
-        afternoon on ten wrong clips.</p>
+      <p>ElideDB is the memory I wished those rigs had. We spent weeks
+        trying to teach a model what "similar" means, and the thing that
+        finally worked on footage it had never seen was refusing to
+        teach it anything. It answers from your frames, in half a second,
+        and it tells you where it is weak.</p>
       <div class="sig">Sudharshan Ramesh
         <span>founder, ElideDB</span></div>
     </div>
@@ -391,48 +435,29 @@ action, so it says so instead of guessing</span></pre>
   <!-- FINAL CTA -->
   <section id="demo" class="final">
     <div class="kicker">see it yourself</div>
-    <h2>Ask real robot footage a real question</h2>
-    <p class="lede">The demo is the actual product, read only, loaded
-      with 1,122 robot manipulation episodes. Type a sentence, play
-      the clips it returns. It runs on a small shared CPU instance,
-      the cheapest machine that can hold the whole model stack;
-      production deployments run on your own hardware, next to your
-      data, and move accordingly.</p>
+    <h2>Ask real robot footage with real robot footage</h2>
+    <p class="lede">The demo holds 1,122 robot manipulation recordings.
+      Pick a few clips of a kind and it returns the rest of that kind.
+      Nothing it ranks needs a model at query time, so it loads in
+      seconds. Production deployments run on your own hardware, next to
+      your data.</p>
     <div class="cta">
-      <a class="btn" id="demo-link-2" href="#" data-demo="unset">Open the live demo</a>
+      <a class="btn" href="https://sudharshanr-elidedb-qbe.hf.space" target="_blank" rel="noopener">Open the live demo</a>
       <a class="btn ghost" href="mailto:sr7431@nyu.edu?subject=ElideDB%20early%20access">Get early access</a>
     </div>
   </section>
 </div>
-
-<div class="modal-back" id="demo-modal">
-  <div class="modal">
-    <h3>Opening the live demo</h3>
-    <div class="status" id="demo-status">checking whether the demo
-      is awake</div>
-    <p id="demo-msg">The demo sleeps between visitors to stay cheap
-      to run. If it is waking up right now, it loads the full model
-      stack first, which takes about 15 minutes; after that, queries
-      answer in seconds. Production deployments stay warm.</p>
-    <div class="row">
-      <a class="btn" id="demo-go"
-         href="https://sudharshanr-elidedb-demo.hf.space"
-         target="_blank" rel="noopener">Open anyway</a>
-      <a class="btn ghost" id="demo-cancel" href="#demo">Close</a>
-    </div>
-  </div>
-</div>
-
+</main>
 <footer>
   <div class="wrap">
-    <span>ELIDEDB</span>
-    <span>the best read is the read elided</span>
-    <span class="foot-right">curious how it works inside? the demo
-      console has a live architecture view</span>
+    <span>ElideDB</span>
+    <a href="https://github.com/exploring-curiosity/ElideDB">source on GitHub</a>
+    <a href="https://github.com/exploring-curiosity/ElideDB/blob/main/LICENSE">PolyForm Noncommercial 1.0.0</a>
+    <a href="https://github.com/exploring-curiosity/ElideDB/issues">report a bug</a>
+    <a href="mailto:sr7431@nyu.edu">sr7431@nyu.edu</a>
+    <span class="foot-right">source-available for evaluation and research; commercial use by arrangement</span>
   </div>
 </footer>
-</main>
-
 <script>
 "use strict";
 /* binary rain: strictly 0 and 1, phosphor green, cheap to run */
@@ -485,60 +510,6 @@ action, so it says so instead of guessing</span></pre>
   } else {
     requestAnimationFrame(frame);
   }
-})();
-
-/* demo launch: check whether the demo is awake before sending
-   anyone into a cold start */
-(() => {
-  const DEMO_URL = "https://sudharshanr-elidedb-demo.hf.space";
-  const back = document.getElementById("demo-modal");
-  const status = document.getElementById("demo-status");
-  const msg = document.getElementById("demo-msg");
-  const go = document.getElementById("demo-go");
-  go.href = DEMO_URL;
-
-  const COLD = "The demo sleeps between visitors to stay cheap to " +
-    "run. It is waking up right now: it loads the full model stack " +
-    "first, which takes about 15 minutes, and the page may not " +
-    "respond until then. After that, queries answer in seconds. " +
-    "Production deployments stay warm.";
-  const WARM = "It is warm and answering in seconds. Every result " +
-    "is a playable clip; try describing an action with an object " +
-    "and a direction.";
-
-  function openModal() {
-    back.classList.add("on");
-    status.textContent = "checking whether the demo is awake";
-    status.classList.remove("ok");
-    go.textContent = "Open anyway";
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 6000);
-    fetch(DEMO_URL + "/api/version", {signal: ctl.signal})
-      .then(r => { if (!r.ok) throw new Error(); })
-      .then(() => {
-        clearTimeout(timer);
-        status.textContent = "the demo is awake";
-        status.classList.add("ok");
-        msg.textContent = WARM;
-        go.textContent = "Open the demo";
-      })
-      .catch(() => {
-        clearTimeout(timer);
-        status.textContent = "the demo is waking up";
-        msg.textContent = COLD;
-        go.textContent = "Open it while it warms";
-      });
-  }
-  for (const id of ["demo-link", "demo-link-2"]) {
-    document.getElementById(id).addEventListener("click", e => {
-      e.preventDefault(); openModal();
-    });
-  }
-  const close = () => back.classList.remove("on");
-  document.getElementById("demo-cancel").addEventListener("click",
-    e => { e.preventDefault(); close(); });
-  back.addEventListener("click", e => { if (e.target === back) close(); });
-  addEventListener("keydown", e => { if (e.key === "Escape") close(); });
 })();
 </script>
 </body>

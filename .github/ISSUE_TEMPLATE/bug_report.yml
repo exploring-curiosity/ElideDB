@@ -1,0 +1,57 @@
+name: Bug report
+description: Something broke, or a result is clearly wrong
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks. The troubleshooting table in [docs/USAGE.md](https://github.com/exploring-curiosity/ElideDB/blob/main/docs/USAGE.md#8-troubleshooting) covers the common failures; if yours is not there, this is the right place. Issues are triaged within two business days.
+  - type: textarea
+    id: what
+    attributes:
+      label: What you ran
+      description: The exact command or Python call.
+      placeholder: python -m relmo.cli query mystore /clips/incident.mp4 --top 10
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: Paste the full output, including any traceback. Do not trim it.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: store
+    attributes:
+      label: Store
+      description: Output of `python -m relmo.cli stats <store>`, or roughly how many recordings and hours.
+      placeholder: "798 recordings, 6.4 hours, median 21 s"
+  - type: input
+    id: video
+    attributes:
+      label: Video
+      description: Container, resolution, frame rate, typical length. `ffprobe <file>` is ideal.
+      placeholder: "mp4, 640x480, 10 fps content tagged 25/1, 20 to 40 s"
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: Paste the output of `python -c "import torch, transformers, platform; print(platform.platform(), torch.__version__, transformers.__version__, torch.cuda.is_available(), torch.backends.mps.is_available())"`
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: Output of `git rev-parse --short HEAD`.
+    validations:
+      required: true
