@@ -2742,3 +2742,9 @@ User wants review/testing open but commercial use closed. Chose PolyForm NC over
 
 2026-08-23 - Growth trajectory documented (docs/ROADMAP.md)
 User: not sticking to frozen models; corpus-aware wins in-domain but loses generalization. Plan: Phase 1 store-local stats (shipping), Phase 2 per-store learned rankers gated on that store's holdout with frozen fallback, Phase 3 opt-in fleet traces as the wide pool (the measured binding constraint) + query-outcome calibration, Phase 4 distilled encoder as the moat. Sealed-benchmark gate permanent.
+
+2026-08-23 - main is protected by a GitHub ruleset (id 21244637), admin-only updates
+Repo has three write collaborators (Aarya-Kul, ayushvjain, aruna-subbu). Ruleset on refs/heads/main: deletion, non_fast_forward, update, pull_request(1 approval); bypass = RepositoryRole admin (id 5) = owner only. "update" blocks merges and pushes by anyone without bypass, so only the owner can land anything on main. Local pushes by the owner are unaffected.
+
+2026-08-23 - README is what-and-vision only; USAGE.md and HOW_IT_WORKS.md carry how-to and mechanism
+Owner: never limit a reader by audience; docs index lists document -> subject. Store data dir is data/relmo at repo ROOT (not native/). Fast-vs-exact overlap is 0.56-0.72 (ledger), precision within 1.3 pts; never claim ~0.9.
